@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import { useEffect } from "react";
 import { Text, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -22,6 +23,8 @@ export interface CourseCardProps {
   periods: Period[];
   /** 当前正在进行中（带呼吸光效 + 胶囊标签） */
   active?: boolean;
+  /** 与其他课程时间冲突（显示琥珀色警示徽标） */
+  conflict?: boolean;
   /** 本卡片在列表中的序号，用于交错弹入 */
   index?: number;
   onPress?: (course: Course) => void;
@@ -35,6 +38,7 @@ export function CourseCard({
   course,
   periods,
   active = false,
+  conflict = false,
   index = 0,
   onPress,
   onLongPress,
@@ -136,16 +140,26 @@ export function CourseCard({
                 {course.name}
               </Text>
 
-              {/* 时间 */}
-              <Text
-                className={`mt-1.5 text-[11px] font-medium ${
-                  active
-                    ? "text-white/85"
-                    : "text-slate-500 dark:text-slate-400"
-                }`}
-              >
-                {time.startTime}–{time.endTime}
-              </Text>
+              {/* 时间 + 冲突提示 */}
+              <View className="mt-1.5 flex-row items-center">
+                <Text
+                  className={`text-[11px] font-medium ${
+                    active
+                      ? "text-white/85"
+                      : "text-slate-500 dark:text-slate-400"
+                  }`}
+                >
+                  {time.startTime}–{time.endTime}
+                </Text>
+                {conflict ? (
+                  <View className="ml-2 flex-row items-center rounded-full border border-amber-400/50 bg-amber-400/25 px-2 py-0.5">
+                    <Ionicons name="warning" size={9} color="#F59E0B" />
+                    <Text className="ml-1 text-[9px] font-bold text-amber-600 dark:text-amber-300">
+                      时间冲突
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
 
               {/* 教师 / 教室 */}
               <View className="mt-1 gap-y-0.5">

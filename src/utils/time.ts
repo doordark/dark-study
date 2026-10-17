@@ -65,11 +65,7 @@ export function addDays(date: Date, days: number): Date {
 
 /** 取该日期所在周的周一（周一开始为一周之始） */
 export function mondayOf(date: Date): Date {
-  const d = new Date(
-    date.getFullYear(),
-    date.getMonth(),
-    date.getDate(),
-  );
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   const offset = (d.getDay() + 6) % 7; // 周一 = 0 ... 周日 = 6
   return addDays(d, -offset);
 }
@@ -231,4 +227,89 @@ export function isCourseFinished(
 
 export function formatClock(date: Date = new Date()): string {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  课表冲突检测 & 不同作息之间的节次映射                                          */
+/* -------------------------------------------------------------------------- */
+
+/** 时间冲突：同一天、节次重叠、周次相交。返回 courseId -> 与之冲突的课程名列表 */
+export function findConflicts(courses: Course[]): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (let i = 0; i < courses.length; i++) {
+    for (let j = i + 1; j < courses.length; j++) {
+      const a = courses[i];
+      const b = courses[j];
+      if (a.weekday !== b.weekday) continue;
+      if (a.startPeriod > b.endPeriod || a.endPeriod < b.startPeriod) continue;
+      const weeksB = new Set(b.weeks);
+      if (!a.weeks.some((w) => weeksB.has(w))) continue;
+      map.set(a.id, [...(map.get(a.id) ?? []), b.name]);
+      map.set(b.id, [...(map.get(b.id) ?? []), a.name]);
+    }
+  }
+  return map;
+}
+
+/** 把上课时刻映射到目标作息中的节次（早于第一节归入第一节，晚于最后一节归入最后一节） */
+export function periodAtTime(periods: Period[], time: string): number | null {
+  if (!periods.length) return null;
+  const t = timeToMinutes(time);
+  for (const p of periods) {
+    if (t < timeToMinutes(p.endTime)) return p.index;
+  }
+  return periods[periods.length - 1].index;
+}
+
+/** 把下课时刻映射到目标作息中的节次（反向查找：该时刻之前的最后一节） */
+export function periodEndingAtTime(
+  periods: Period[],
+  time: string,
+): number | null {
+  if (!periods.length) return null;
+  const t = timeToMinutes(time);
+  for (let i = periods.length - 1; i >= 0; i--) {
+    if (t > timeToMinutes(periods[i].startTime)) return periods[i].index;
+  }
+  return periods[0].index;
+}
+
+/** 节次序号是否落在作息表范围内（用于防御非法数据） */
+export function clampPeriods(
+  periods: Period[],
+  startPeriod: number,
+  endPeriod: number,
+): { startPeriod: number; endPeriod: number } | null {
+  if (!periods.length) return null;
+  const min = periods[0].index;
+  const max = periods[periods.length - 1].index;
+  const start = Math.min(Math.max(startPeriod, min), max);
+  const end = Math.min(Math.max(endPeriod, start), max);
+  return { startPeriod: start, endPeriod: end };
+}
+
+/**
+ * 周数换算：把源课表某周的某一天换算成目标课表的周数。
+ * 两份课表开学日期不同时，按「同一个真实日期」对齐。
+ */
+export function mapWeeks(
+  weeks: number[],
+  weekday: number,
+  sourceStartDate: string,
+  targetStartDate: string,
+  targetTotalWeeks: number,
+): number[] {
+  const src = parseIsoDate(sourceStartDate);
+  const dst = parseIsoDate(targetStartDate);
+  const mapped = weeks.map(
+    (w) =>
+      Math.floor(
+        (addDays(src, (w - 1) * 7 + (weekday - 1)).getTime() - dst.getTime()) /
+          86400000 /
+          7,
+      ) + 1,
+  );
+  return [...new Set(mapped)]
+    .filter((w) => w >= 1 && w <= targetTotalWeeks)
+    .sort((a, b) => a - b);
 }

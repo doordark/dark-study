@@ -94,8 +94,8 @@ export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
-  /** 助手建议的课表操作，供用户一键应用 */
-  action?: ScheduleAction;
+  /** 助手建议的课表操作（可批量），供用户一键应用 */
+  actions?: ScheduleAction[];
   timestamp: number;
 }
 
@@ -108,4 +108,18 @@ export type ScheduleAction =
       courseId: string;
       courseName: string;
       patch: Partial<Course>;
-    };
+    }
+  /** 新建一份课表（如「外教课」），并切换为当前 */
+  | { type: "create_schedule"; scheduleName: string }
+  /** 把另一份课表的课程合并进当前课表（时间/周数自动换算） */
+  | { type: "merge_schedule"; sourceScheduleName: string };
+
+/** 课表合并结果报告 */
+export interface MergeReport {
+  /** 成功并入的课程数 */
+  added: number;
+  /** 因时间/周数无法映射而跳过的课程数 */
+  skipped: number;
+  /** 冲突描述，如 ["高等数学 × 大学英语"] */
+  conflicts: string[];
+}

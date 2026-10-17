@@ -3,11 +3,22 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { DEFAULT_GPA_RULES, SAMPLE_SCHEDULE } from "@/constants/sample";
-import type { Course, GpaRule, GradeRecord, Schedule } from "@/types";
+import type {
+  Course,
+  GpaRule,
+  GradeRecord,
+  MergeReport,
+  Schedule,
+} from "@/types";
 import {
   addDays,
+  findConflicts,
+  getCourseTime,
+  mapWeeks,
   mondayOf,
   parseIsoDate,
+  periodAtTime,
+  periodEndingAtTime,
   resolveSemester,
   toIsoDate,
   weeksFromDates,
@@ -43,6 +54,11 @@ interface AppState {
   removeSchedule: (id: string) => void;
   /** 更新课表信息（命名 / 开学、放假日期），日期变更后自动重算总周数 */
   updateScheduleMeta: (id: string, patch: ScheduleMetaPatch) => void;
+  /**
+   * 把另一份课表（id 或名称）合并进当前课表：
+   * 课程时间按真实时刻换算到当前作息，周数按真实日期换算，冲突在报告中列出。
+   */
+  mergeSchedule: (sourceIdOrName: string) => MergeReport;
 
   /* ---------------- 当前课表内容 ---------------- */
   /** 应用 DeepSeek 识别出的课表（替换当前课表的课程，保留命名与学期日期） */
@@ -63,7 +79,7 @@ interface AppState {
 
 export const useStore = create<AppState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       schedules: [SAMPLE_SCHEDULE],
       activeScheduleId: SAMPLE_SCHEDULE.id,
       grades: [],
@@ -104,9 +120,7 @@ export const useStore = create<AppState>()(
           return {
             schedules,
             activeScheduleId:
-              s.activeScheduleId === id
-                ? schedules[0].id
-                : s.activeScheduleId,
+              s.activeScheduleId === id ? schedules[0].id : s.activeScheduleId,
           };
         }),
 
@@ -132,6 +146,78 @@ export const useStore = create<AppState>()(
             };
           }),
         })),
+
+      mergeSchedule: (sourceIdOrName) => {
+        const s = get();
+        const src = s.schedules.find(
+          (x) => x.id === sourceIdOrName || x.name === sourceIdOrName,
+        );
+        const dst =
+          s.schedules.find((x) => x.id === s.activeScheduleId) ??
+          s.schedules[0];
+        const empty: MergeReport = { added: 0, skipped: 0, conflicts: [] };
+        if (!src || !dst || src.id === dst.id) return empty;
+
+        let skipped = 0;
+        const added: Course[] = [];
+        for (const c of src.courses) {
+          // 时间换算：源节次的真实时刻 -> 目标作息的节次
+          const { startTime, endTime } = getCourseTime(
+            src.periods,
+            c.startPeriod,
+            c.endPeriod,
+          );
+          const startP = periodAtTime(dst.periods, startTime);
+          const endP = periodEndingAtTime(dst.periods, endTime);
+          if (startP == null || endP == null) {
+            skipped++;
+            continue;
+          }
+          // 周数换算：开学日期相同时直接沿用，否则按真实日期对齐
+          const weeks =
+            src.startDate === dst.startDate
+              ? [
+                  ...new Set(
+                    c.weeks.filter((w) => w >= 1 && w <= dst.totalWeeks),
+                  ),
+                ].sort((a, b) => a - b)
+              : mapWeeks(
+                  c.weeks,
+                  c.weekday,
+                  src.startDate,
+                  dst.startDate,
+                  dst.totalWeeks,
+                );
+          if (!weeks.length) {
+            skipped++;
+            continue;
+          }
+          added.push({
+            ...c,
+            id: uid(),
+            startPeriod: startP,
+            endPeriod: Math.max(startP, endP),
+            weeks,
+          });
+        }
+
+        // 冲突检测（合并后的全量课程）
+        const merged = [...dst.courses, ...added];
+        const conflictMap = findConflicts(merged);
+        const pairs = new Set<string>();
+        for (const [id, names] of conflictMap) {
+          const me = merged.find((x) => x.id === id);
+          if (!me) continue;
+          for (const n of names) pairs.add([me.name, n].sort().join(" × "));
+        }
+
+        set({
+          schedules: s.schedules.map((x) =>
+            x.id === dst.id ? { ...x, courses: merged } : x,
+          ),
+        });
+        return { added: added.length, skipped, conflicts: [...pairs] };
+      },
 
       importSchedule: (incoming) =>
         set((s) =>

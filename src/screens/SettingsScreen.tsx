@@ -92,6 +92,7 @@ export function SettingsScreen() {
   const addSchedule = useStore((s) => s.addSchedule);
   const removeSchedule = useStore((s) => s.removeSchedule);
   const updateScheduleMeta = useStore((s) => s.updateScheduleMeta);
+  const mergeSchedule = useStore((s) => s.mergeSchedule);
   const grades = useStore((s) => s.grades);
   const resetToSample = useStore((s) => s.resetToSample);
 
@@ -164,6 +165,37 @@ export function SettingsScreen() {
           text: "删除",
           style: "destructive",
           onPress: () => removeSchedule(item.id),
+        },
+      ],
+    );
+  };
+
+  /** 把某份课表合并进当前课表（时间节次与周数自动换算） */
+  const confirmMerge = (item: Schedule) => {
+    const target = schedules.find((s) => s.id === activeScheduleId);
+    Alert.alert(
+      "合并课程表",
+      `把「${item.name}」的 ${item.courses.length} 门课并入当前课表「${target?.name ?? ""}」？\n\n时间节次与周数会按两份课表的作息和开学日期自动换算，时间冲突的课程会在课表中以琥珀色标出。`,
+      [
+        { text: "取消", style: "cancel" },
+        {
+          text: "合并",
+          onPress: () => {
+            const report = mergeSchedule(item.id);
+            const lines = [
+              `已并入 ${report.added} 门课` +
+                (report.skipped
+                  ? `，跳过 ${report.skipped} 门（时间或周数无法对应）`
+                  : ""),
+            ];
+            if (report.conflicts.length) {
+              lines.push(`⚠ 时间冲突：\n${report.conflicts.join("\n")}`);
+              lines.push("冲突课程已在课表中以琥珀色标出");
+            } else {
+              lines.push("无时间冲突");
+            }
+            Alert.alert("合并完成", lines.join("\n\n"));
+          },
         },
       ],
     );
@@ -307,7 +339,8 @@ export function SettingsScreen() {
                   学期时间
                 </Text>
                 <Text className="mb-3 text-[10.5px] text-slate-500 dark:text-slate-400">
-                  作用于「{schedule.name}」：开学日期决定当前第几周，放假日期决定课表总周数
+                  作用于「{schedule.name}
+                  」：开学日期决定当前第几周，放假日期决定课表总周数
                 </Text>
 
                 <DateRow
@@ -343,7 +376,7 @@ export function SettingsScreen() {
                   课程表
                 </Text>
                 <Text className="mb-3 text-[10.5px] text-slate-500 dark:text-slate-400">
-                  可为每个学期建立一份课表（如「大二下」），点按任意一行即可切换
+                  可为每个学期建立一份课表（如「大二下」），点按任意一行即可切换；其他课表可一键合并进当前课表
                 </Text>
 
                 {schedules.map((item) => {
@@ -369,9 +402,21 @@ export function SettingsScreen() {
                         </Text>
                       </View>
 
+                      {!isActive ? (
+                        <Pressable
+                          onPress={() => confirmMerge(item)}
+                          className="h-8 w-8 items-center justify-center rounded-full bg-white/20 dark:bg-white/[0.07]"
+                        >
+                          <Ionicons
+                            name="git-merge-outline"
+                            size={13}
+                            color="#38BDF8"
+                          />
+                        </Pressable>
+                      ) : null}
                       <Pressable
                         onPress={() => openRename(item)}
-                        className="h-8 w-8 items-center justify-center rounded-full bg-white/20 dark:bg-white/[0.07]"
+                        className="ml-2 h-8 w-8 items-center justify-center rounded-full bg-white/20 dark:bg-white/[0.07]"
                       >
                         <Ionicons name="pencil" size={13} color="#94A3B8" />
                       </Pressable>
@@ -380,7 +425,11 @@ export function SettingsScreen() {
                           onPress={() => confirmDelete(item)}
                           className="ml-2 h-8 w-8 items-center justify-center rounded-full bg-white/20 dark:bg-white/[0.07]"
                         >
-                          <Ionicons name="trash-outline" size={13} color="#F87171" />
+                          <Ionicons
+                            name="trash-outline"
+                            size={13}
+                            color="#F87171"
+                          />
                         </Pressable>
                       ) : null}
                       {isActive ? (
@@ -582,7 +631,8 @@ export function SettingsScreen() {
                     </Pressable>
 
                     <Text className="mt-2.5 text-[10px] text-slate-400 dark:text-slate-500">
-                      新课表会沿用当前作息时间，开学 / 放假日期可在「学期时间」中调整
+                      新课表会沿用当前作息时间，开学 /
+                      放假日期可在「学期时间」中调整
                     </Text>
                   </View>
                 </GlassContainer>

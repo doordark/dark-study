@@ -7,7 +7,12 @@ import {
   type ChatContent,
 } from "@/services/deepseek";
 import { DEFAULT_PERIODS } from "@/constants/sample";
-import { resolveSemester, addDays, parseIsoDate, toIsoDate } from "@/utils/time";
+import {
+  resolveSemester,
+  addDays,
+  parseIsoDate,
+  toIsoDate,
+} from "@/utils/time";
 import type {
   Course,
   CourseColor,
@@ -375,14 +380,16 @@ function nextMonday(): string {
 export interface AssistantContext {
   schedule: Schedule;
   weekIndex: number;
+  /** 全部课表（供新建 / 合并课表指令定位目标） */
+  schedules: { id: string; name: string }[];
 }
 
 export interface AssistantResult {
   reply: string;
-  action?: ScheduleAction;
+  actions: ScheduleAction[];
 }
 
-/** 自然语言改课表：模型返回对话文本 + 可一键应用的操作 */
+/** 自然语言改课表：模型返回对话文本 + 可一键应用的操作（支持批量） */
 export async function askAssistant(
   history: { role: "user" | "assistant"; content: string }[],
   ctx: AssistantContext,
@@ -397,22 +404,32 @@ export async function askAssistant(
     )
     .join("\n");
 
-  const system = `你是「课程表专属助手」，帮用户用自然语言调整和优化课表。当前是第 ${ctx.weekIndex} 周。
+  const system = `你是「课程表专属助手」，帮用户用自然语言调整和优化课表。当前是第 ${ctx.weekIndex} 周，本学期共 ${ctx.schedule.totalWeeks} 周。
+当前课表：「${ctx.schedule.name}」（所有操作默认作用于它）
+全部课表：${ctx.schedules.map((s) => `「${s.name}」`).join("、") || "（无）"}
 当前课程：
 ${coursesBrief || "（暂无课程）"}
-节次时间参考：
+节次时间参考（用户提到具体时间时，对照此表换算成节次）：
 ${ctx.schedule.periods.map((p) => `${p.index}. ${p.startTime}-${p.endTime}`).join("\n")}
 
-你需要回复一个严格 JSON：
+你需要回复一个严格 JSON（不要带注释或多余文本）：
 {
   "reply": "给用户的自然语言回复",
-  "action": null
+  "actions": []
 }
-或者在需要修改课表时返回 action：
-  添加：{"type":"add","course":{...同课程结构，不需要 id...}}
-  删除：{"type":"remove","courseId":"...","courseName":"..."}
-  修改：{"type":"update","courseId":"...","courseName":"...","patch":{仅需改动的字段}}
-如果用户只是提问或闲聊，action 返回 null。回复要简洁友好，中文回答。`;
+actions 是操作数组，一次可以放多个（用户一句话提出多件事时全部放进去）；不需要改课表时返回空数组。可用操作：
+  添加课程：{"type":"add","course":{"name":"","teacher":"","classroom":"","weekday":1,"startPeriod":1,"endPeriod":2,"weeks":[1,2,3],"color":"sky","credits":3,"note":""}}
+  删除课程：{"type":"remove","courseId":"...","courseName":"..."}
+  修改课程：{"type":"update","courseId":"...","courseName":"...","patch":{仅需改动的字段}}
+  新建课表：{"type":"create_schedule","scheduleName":"外教课"}
+  合并课表：{"type":"merge_schedule","sourceScheduleName":"外教课"}（把那份课表的课程并入当前课表）
+
+规则：
+- course.weeks 是开课周次数组；用户没说周次时默认整学期 [1..${ctx.schedule.totalWeeks}]
+- weekday 取 1-7（周一到周日）；startPeriod/endPeriod 必须取自节次参考表
+- 删除/修改课程时 courseId 必须来自当前课程列表的 [id]；拿不准就同时写 courseName（会按名称兜底）
+- 合并/新建课表时 scheduleName 必须来自全部课表列表（新建除外，名称由用户指定）
+- 回复简洁友好，全部使用中文`;
 
   const messages: ChatContent[] = [
     { role: "system", content: system },
@@ -425,9 +442,16 @@ ${ctx.schedule.periods.map((p) => `${p.index}. ${p.startTime}-${p.endTime}`).joi
     model: TEXT_MODEL,
     temperature: 0.6,
   });
+
+  // 兼容 action（单个）与 actions（数组）两种返回
+  const raw = parsed?.actions ?? parsed?.action;
+  const actions = (Array.isArray(raw) ? raw : raw ? [raw] : []).filter(
+    (a: any) => a && typeof a.type === "string",
+  ) as ScheduleAction[];
+
   return {
     reply: String(parsed?.reply ?? "我暂时没能理解，可以换个说法吗？"),
-    action: (parsed?.action ?? undefined) as ScheduleAction | undefined,
+    actions,
   };
 }
 

@@ -23,7 +23,12 @@ import { WeekGrid } from "@/components/WeekGrid";
 import { WEEKDAY_LABELS } from "@/constants/palette";
 import { useActiveSchedule, useStore } from "@/store/useStore";
 import type { Course } from "@/types";
-import { getDateInfo, isCourseActive, formatClock } from "@/utils/time";
+import {
+  findConflicts,
+  getDateInfo,
+  isCourseActive,
+  formatClock,
+} from "@/utils/time";
 
 type ViewMode = "day" | "week";
 
@@ -78,6 +83,12 @@ export function CourseScheduleScreen({
 
   const totalWeeks = Math.max(1, schedule.totalWeeks ?? 18);
   const activeWeek = Math.min(Math.max(weekIndex, 1), totalWeeks);
+
+  // 冲突检测：同天、节次重叠、周次相交的课程互相标记
+  const conflicts = useMemo(
+    () => findConflicts(schedule.courses),
+    [schedule.courses],
+  );
 
   const dayCourses = useMemo(
     () =>
@@ -344,6 +355,7 @@ export function CourseScheduleScreen({
                       course={course}
                       periods={schedule.periods}
                       index={i}
+                      conflict={conflicts.has(course.id)}
                       // 仅当浏览的就是「本周 + 今天」时才按真实时钟判定进行中，
                       // 避免翻看其他周/其他天时误标多门「进行中」
                       active={
@@ -380,6 +392,7 @@ export function CourseScheduleScreen({
                 periods={schedule.periods}
                 weekIndex={activeWeek}
                 selectedWeekday={weekday}
+                conflicts={conflicts}
                 onPickDay={setWeekday}
                 onPickCourse={(c) => openEdit(c)}
               />

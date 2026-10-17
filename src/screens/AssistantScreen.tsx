@@ -22,10 +22,11 @@ import { useSettings } from "@/store/useSettings";
 import { useActiveSchedule, useStore } from "@/store/useStore";
 import type { ChatMessage, Course, ScheduleAction } from "@/types";
 import { nowTs, uid } from "@/utils/id";
-import { getDateInfo } from "@/utils/time";
+import { clampPeriods, getDateInfo } from "@/utils/time";
 
 const SUGGESTIONS = [
   "把周三的体育课改到周五下午",
+  "新建一份叫「外教课」的课表",
   "帮我把周六的学术写作工作坊删掉",
   "这学期哪天的课最多？",
   "给周四加一门晚上 7 点的《人工智能导论》",
@@ -34,9 +35,12 @@ const SUGGESTIONS = [
 export function AssistantScreen() {
   const apiKey = useSettings((s) => s.apiKey);
   const schedule = useActiveSchedule();
+  const schedules = useStore((s) => s.schedules);
   const addCourse = useStore((s) => s.addCourse);
   const updateCourse = useStore((s) => s.updateCourse);
   const removeCourse = useStore((s) => s.removeCourse);
+  const addSchedule = useStore((s) => s.addSchedule);
+  const mergeSchedule = useStore((s) => s.mergeSchedule);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -94,7 +98,11 @@ export function AssistantScreen() {
       }));
       const result: AssistantResult = await askAssistant(
         history,
-        { schedule, weekIndex: dateInfo.weekIndex },
+        {
+          schedule,
+          weekIndex: dateInfo.weekIndex,
+          schedules: schedules.map((s) => ({ id: s.id, name: s.name })),
+        },
         apiKey,
       );
 
@@ -102,7 +110,7 @@ export function AssistantScreen() {
         id: uid(),
         role: "assistant",
         content: result.reply,
-        action: result.action,
+        actions: result.actions.length ? result.actions : undefined,
         timestamp: nowTs(),
       };
       setMessages((prev) => [...prev, botMsg]);
@@ -119,41 +127,116 @@ export function AssistantScreen() {
     }
   };
 
-  const applyAction = (action: ScheduleAction) => {
+  /** 校验并规范化模型返回的课程草稿（节次钳位、周次默认整学期） */
+  const normalizeDraft = (
+    draft: Omit<Course, "id">,
+  ): Omit<Course, "id"> | null => {
+    const clamped = clampPeriods(
+      schedule.periods,
+      Number(draft.startPeriod) || 1,
+      Number(draft.endPeriod) || 1,
+    );
+    if (!clamped) return null;
+    const totalWeeks = Math.max(1, schedule.totalWeeks ?? 18);
+    const weeks =
+      Array.isArray(draft.weeks) && draft.weeks.length
+        ? [
+            ...new Set(
+              draft.weeks.filter(
+                (w) => Number.isInteger(w) && w >= 1 && w <= totalWeeks,
+              ),
+            ),
+          ].sort((a, b) => a - b)
+        : Array.from({ length: totalWeeks }, (_, i) => i + 1);
+    return {
+      ...draft,
+      name: String(draft.name ?? "").trim() || "未命名课程",
+      weekday: Math.min(Math.max(Number(draft.weekday) || 1, 1), 7),
+      startPeriod: clamped.startPeriod,
+      endPeriod: clamped.endPeriod,
+      weeks: weeks.length ? weeks : [1],
+    };
+  };
+
+  /** 按 id 定位课程，找不到时按名称兜底（模型给的 id 可能不准） */
+  const resolveCourse = (courseId: string, courseName?: string) =>
+    schedule.courses.find((c) => c.id === courseId) ??
+    (courseName
+      ? schedule.courses.find((c) => c.name === courseName)
+      : undefined);
+
+  const applyAction = (action: ScheduleAction): string => {
     switch (action.type) {
       case "add": {
-        const id = addCourse(action.course);
-        setNotice({
-          type: "success",
-          text: `已添加课程：${action.course.name}（ID ${id.slice(0, 6)}）`,
-        });
-        break;
+        const draft = normalizeDraft(action.course);
+        if (!draft) return "添加失败：节次数据无效";
+        addCourse(draft);
+        return `已添加「${draft.name}」`;
       }
       case "remove": {
-        removeCourse(action.courseId);
-        setNotice({
-          type: "success",
-          text: `已删除课程：${action.courseName}`,
-        });
-        break;
+        const target = resolveCourse(action.courseId, action.courseName);
+        if (!target)
+          return `未找到课程「${action.courseName ?? action.courseId}」`;
+        removeCourse(target.id);
+        return `已删除「${target.name}」`;
       }
       case "update": {
-        const { id, ...patch } = {
-          id: action.courseId,
-          ...action.patch,
-        } as Course & {
-          id: string;
-        };
-        updateCourse(id, patch);
-        setNotice({
-          type: "success",
-          text: `已更新课程：${action.courseName}`,
-        });
-        break;
+        const target = resolveCourse(action.courseId, action.courseName);
+        if (!target)
+          return `未找到课程「${action.courseName ?? action.courseId}」`;
+        const patch: Partial<Course> = { ...action.patch };
+        if (patch.startPeriod != null || patch.endPeriod != null) {
+          const clamped = clampPeriods(
+            schedule.periods,
+            patch.startPeriod ?? target.startPeriod,
+            patch.endPeriod ?? target.endPeriod,
+          );
+          if (clamped) Object.assign(patch, clamped);
+        }
+        if (patch.weeks) {
+          const totalWeeks = Math.max(1, schedule.totalWeeks ?? 18);
+          patch.weeks = [
+            ...new Set(patch.weeks.filter((w) => w >= 1 && w <= totalWeeks)),
+          ].sort((a, b) => a - b);
+        }
+        updateCourse(target.id, patch);
+        return `已更新「${target.name}」`;
+      }
+      case "create_schedule": {
+        const name = String(action.scheduleName ?? "").trim();
+        if (!name) return "新建失败：缺少课表名称";
+        if (schedules.some((s) => s.name === name))
+          return `课表「${name}」已存在，无需重复新建`;
+        addSchedule(name);
+        return `已新建课表「${name}」并切换为当前`;
+      }
+      case "merge_schedule": {
+        const report = mergeSchedule(action.sourceScheduleName);
+        if (!report.added && !report.skipped)
+          return `未找到可合并的课表「${action.sourceScheduleName}」`;
+        return (
+          `已合并 ${report.added} 门课` +
+          (report.skipped ? `，跳过 ${report.skipped} 门` : "") +
+          (report.conflicts.length
+            ? `，⚠ 时间冲突：${report.conflicts.join("；")}`
+            : "，无时间冲突")
+        );
       }
     }
+  };
+
+  const applyActions = (actions: ScheduleAction[]) => {
+    const results = actions.map(applyAction);
+    setNotice({
+      type: results.some((r) => r.includes("失败") || r.includes("未找到"))
+        ? "error"
+        : "success",
+      text: results.join("\n"),
+    });
     setMessages((prev) =>
-      prev.map((m) => (m.action === action ? { ...m, action: undefined } : m)),
+      prev.map((m) =>
+        m.actions === actions ? { ...m, actions: undefined } : m,
+      ),
     );
   };
 
@@ -253,9 +336,9 @@ export function AssistantScreen() {
                           {m.content}
                         </Text>
 
-                        {m.action ? (
+                        {m.actions?.length ? (
                           <Pressable
-                            onPress={() => m.action && applyAction(m.action)}
+                            onPress={() => applyActions(m.actions!)}
                             className="mt-2.5 flex-row items-center self-start rounded-full bg-emerald-400/85 px-3.5 py-1.5"
                           >
                             <Ionicons
@@ -264,11 +347,17 @@ export function AssistantScreen() {
                               color="#fff"
                             />
                             <Text className="ml-1 text-[11px] font-bold text-white">
-                              {m.action.type === "add"
-                                ? "应用：添加这门课"
-                                : m.action.type === "remove"
-                                  ? "应用：删除这门课"
-                                  : "应用：更新这门课"}
+                              {m.actions.length > 1
+                                ? `一键应用 ${m.actions.length} 项操作`
+                                : m.actions[0].type === "add"
+                                  ? "应用：添加这门课"
+                                  : m.actions[0].type === "remove"
+                                    ? "应用：删除这门课"
+                                    : m.actions[0].type === "update"
+                                      ? "应用：更新这门课"
+                                      : m.actions[0].type === "create_schedule"
+                                        ? "应用：新建课表"
+                                        : "应用：合并课表"}
                             </Text>
                           </Pressable>
                         ) : null}
