@@ -1,56 +1,51 @@
-# Welcome to your Expo app 👋
+# CourseFlow 课程表
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+一款面向国内高校学生的智能课程表 App，采用小米澎湃 OS 4 / HyperOS 4 设计语言（大圆角扁平卡片、弹簧跟手动效、120fps UI 线程动画）。
 
-## Get started
+## 功能
 
-1. Install dependencies
+- **课程表**：日视图 / 周网格双模式，按真实时间线性对齐；「进行中」课程按当前时钟精确匹配，带呼吸光效
+- **多课表管理**：可为每个学期建立独立课表（如「大二下」），自由命名、一键切换
+- **学期时间**：自定义开学 / 放假日期，自动推算「当前第几周」与学期总周数
+- **AI 智能导入**：相册识图 / 拍照识别 / 文档导入，识别课表、作息时间、绩点规则与成绩单
+- **AI 助手**：对话式增删改课程，自动带上下文
+- **绩点计算**：自定义绩点换算规则，支持多规则（保研绩点 / 出国 4.0 制等）
+- **个性化**：深色 / 浅色 / 跟随系统主题，支持自定义背景图
 
-   ```bash
-   npm install
-   ```
+## 技术栈
 
-2. Start the app
+- [Expo SDK 58](https://docs.expo.dev/) + [Expo Router](https://docs.expo.dev/router/introduction)（文件路由）
+- [NativeWind v4](https://www.nativewind.dev/)（Tailwind CSS，`darkMode: "class"` 手动切换）
+- [react-native-reanimated](https://docs.swmansion.com/react-native-reanimated/) v4（UI 线程弹簧动效）
+- [react-native-gesture-handler](https://docs.swmansion.com/react-native-gesture-handler/)（跟手手势）
+- [zustand](https://github.com/pmndrs/zustand) + AsyncStorage（持久化）
+- DeepSeek API（多模态识图 `deepseek-flash` / 文本 `deepseek-chat`）
 
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **src/app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+## 开发
 
 ```bash
-npm run reset-project
+npm install        # 安装依赖
+npx expo start     # 启动开发服务器
+npx expo lint      # 代码检查
+npx tsc --noEmit   # 类型检查
 ```
 
-This command will move the starter code to the **example** directory and create a blank **src/app** directory where you can start developing.
+## 安全须知
 
-### Other setup steps
+- DeepSeek API Key **由使用者在 App「设置」中自行填写**，仅保存在本地设备（AsyncStorage），代码与仓库中不包含任何真实 Key
+- 请勿将 API Key 硬编码进代码或提交到仓库；生产环境请通过自有服务端中转调用
+- `.env`、密钥证书等敏感文件已被 `.gitignore` 排除
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+## 目录结构
 
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+```
+src/
+├── app/          # Expo Router 路由（每个文件即一个页面）
+├── screens/      # 页面主体 UI
+├── components/   # 通用组件（卡片、导航栏、弹窗面板等）
+├── store/        # zustand 状态（课表、成绩、设置）
+├── services/     # DeepSeek 接入、文件导入
+├── constants/    # 调色板、示例数据
+├── types/        # TypeScript 类型定义
+└── utils/        # 时间/学期计算等工具
+```
