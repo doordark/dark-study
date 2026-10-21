@@ -1,6 +1,8 @@
 const {
   withAppBuildGradle,
   withGradleProperties,
+  withProjectBuildGradle,
+  withSettingsGradle,
 } = require("@expo/config-plugins");
 
 /**
@@ -31,7 +33,36 @@ const GRADLE_PROPS = {
   // 不使用 RN Image 的 GIF/WebP 解码（图片统一走 expo-image），省掉对应 native 库
   "expo.gif.enabled": "false",
   "expo.webp.enabled": "false",
+  // 网络不稳定：短超时 + 重试，避免连接挂死后长时间无响应
+  "systemProp.org.gradle.internal.http.connectionTimeout": "30000",
+  "systemProp.org.gradle.internal.http.socketTimeout": "60000",
+  "systemProp.org.gradle.internal.repository.max.retries": "5",
+  "systemProp.org.gradle.internal.repository.initial.backoff": "500",
 };
+
+/** maven 镜像（国内直连 dl.google.com / repo1 经常挂死） */
+const MIRRORS = [
+  "https://maven.aliyun.com/repository/google",
+  "https://maven.aliyun.com/repository/central",
+  "https://mirrors.cloud.tencent.com/nexus/repository/maven-public/",
+];
+
+const mirrorLines = (indent) =>
+  MIRRORS.map((u) => `${indent}maven { url '${u}' }\n`).join("");
+
+/** 在 buildscript / allprojects 的 repositories 首位插入镜像 */
+function injectMirrorRepos(contents) {
+  if (contents.includes("maven.aliyun.com")) return contents;
+  return contents
+    .replace(
+      /(buildscript\s*\{\r?\n\s*repositories\s*\{\r?\n)/,
+      (m) => m + mirrorLines("    "),
+    )
+    .replace(
+      /(allprojects\s*\{\r?\n\s*repositories\s*\{\r?\n)/,
+      (m) => m + mirrorLines("    "),
+    );
+}
 
 function applyProps(props, map) {
   for (const [key, value] of Object.entries(map)) {
@@ -89,6 +120,29 @@ function withReleaseSigning(config) {
           "    }",
           "",
         ].join("\n"),
+      );
+    }
+    cfg.modResults.contents = contents;
+    return cfg;
+  });
+
+  // 3) android/build.gradle 与 settings.gradle 注入国内 maven 镜像
+  config = withProjectBuildGradle(config, (cfg) => {
+    cfg.modResults.contents = injectMirrorRepos(cfg.modResults.contents);
+    return cfg;
+  });
+  config = withSettingsGradle(config, (cfg) => {
+    let contents = cfg.modResults.contents;
+    if (!contents.includes("maven.aliyun.com")) {
+      contents = contents.replace(
+        /(pluginManagement\s*\{\r?\n)/,
+        (m) =>
+          m +
+          "  repositories {\n" +
+          mirrorLines("    ") +
+          "    maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }\n" +
+          "    gradlePluginPortal()\n" +
+          "  }\n",
       );
     }
     cfg.modResults.contents = contents;
