@@ -56,6 +56,24 @@ function withReleaseSigning(config) {
       /signingConfig signingConfigs\.debug/g,
       "signingConfig signingConfigs.release",
     );
+    // Windows 路径超长（>260 字符）修复：AGP 默认的 CMake 3.22.1
+    // 自带 ninja 不支持长路径，Fabric codegen 的 .o 文件路径必然超限。
+    // CMake 3.31.1 捆绑 ninja 1.12+，配合系统 LongPathsEnabled=1 可正常编译。
+    // RNGP 会动态补 path，这里只声明 version，两者自动合并。
+    if (!contents.includes("3.31.1")) {
+      contents = contents.replace(
+        /(android\s*\{\r?\n)/,
+        [
+          "$1",
+          "    externalNativeBuild {",
+          "        cmake {",
+          '            version "3.31.1"',
+          "        }",
+          "    }",
+          "",
+        ].join("\n"),
+      );
+    }
     cfg.modResults.contents = contents;
     return cfg;
   });
