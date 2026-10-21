@@ -1,4 +1,4 @@
-import type { GpaRule, Schedule } from "@/types";
+import type { GradeRule, GradeType, Schedule } from "@/types";
 import { resolveSemester } from "@/utils/time";
 
 /** 默认作息（12 节制，典型国内高校） */
@@ -171,42 +171,19 @@ export const SAMPLE_SCHEDULE: Schedule = {
   ],
 };
 
-/** 默认绩点规则（4.0 制，常见保研绩点算法） */
-export const DEFAULT_GPA_RULES: GpaRule[] = [
+/** 默认课程类型 */
+export const DEFAULT_GRADE_TYPES: GradeType[] = [
+  { id: "required", name: "必修课" },
+  { id: "elective", name: "选修课" },
+  { id: "general", name: "通识选修课" },
+];
+
+/** 默认计算规则：全部成绩计入（用户可复制为「综测」「保研」等命名规则） */
+export const DEFAULT_GRADE_RULES: GradeRule[] = [
   {
-    id: "r1",
-    name: "标准 4.0 制（保研）",
-    formula: "weighted",
-    description: "百分制按档位折算为绩点后，以学分加权平均",
-    bands: [
-      { grade: "A+", minScore: 95, maxScore: 100, gpa: 4.0 },
-      { grade: "A", minScore: 90, maxScore: 94, gpa: 4.0 },
-      { grade: "A-", minScore: 85, maxScore: 89, gpa: 3.7 },
-      { grade: "B+", minScore: 82, maxScore: 84, gpa: 3.3 },
-      { grade: "B", minScore: 78, maxScore: 81, gpa: 3.0 },
-      { grade: "B-", minScore: 75, maxScore: 77, gpa: 2.7 },
-      { grade: "C+", minScore: 72, maxScore: 74, gpa: 2.3 },
-      { grade: "C", minScore: 68, maxScore: 71, gpa: 2.0 },
-      { grade: "C-", minScore: 64, maxScore: 67, gpa: 1.5 },
-      { grade: "D", minScore: 60, maxScore: 63, gpa: 1.0 },
-      { grade: "F", minScore: 0, maxScore: 59, gpa: 0 },
-    ],
-  },
-  {
-    id: "r2",
-    name: "线性 4.0 制",
-    formula: "weighted",
-    description: "成绩线性映射：(分数 - 60) / 10，上限 4.0",
-    bands: [
-      { grade: "A+", minScore: 95, maxScore: 100, gpa: 4.0 },
-      { grade: "A", minScore: 90, maxScore: 94, gpa: 4.0 },
-      { grade: "B+", minScore: 85, maxScore: 89, gpa: 3.4 },
-      { grade: "B", minScore: 80, maxScore: 84, gpa: 2.9 },
-      { grade: "C", minScore: 75, maxScore: 79, gpa: 2.4 },
-      { grade: "D+", minScore: 70, maxScore: 74, gpa: 1.9 },
-      { grade: "D", minScore: 65, maxScore: 69, gpa: 1.4 },
-      { grade: "E", minScore: 60, maxScore: 64, gpa: 1.0 },
-      { grade: "F", minScore: 0, maxScore: 59, gpa: 0 },
-    ],
+    id: "default",
+    name: "全部计入",
+    excludedTypes: [],
+    excludedCourseIds: [],
   },
 ];

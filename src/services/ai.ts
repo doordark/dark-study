@@ -16,12 +16,13 @@ import {
 import type {
   Course,
   CourseColor,
-  GpaRule,
   GradeRecord,
   Period,
   Schedule,
   ScheduleAction,
+  SemesterKind,
 } from "@/types";
+import { normalizeGradeInput, normalizeSemester } from "@/utils/grades";
 
 const COLOR_VALUES: CourseColor[] = [
   "sky",
@@ -322,103 +323,31 @@ export async function recognizePeriods(
   return periods;
 }
 
-/** 从成绩换算规则（文本/图片）解析绩点档位 */
-export async function recognizeGpaRules(
-  source: { imageBase64?: string; text?: string },
-  apiKey: string,
-): Promise<GpaRule[]> {
-  const instruction = `请解析绩点/成绩换算规则。先判断输入是否确实是绩点/成绩换算规则；若不是，输出 {"error":"NOT_TARGET"}，绝不要凭空编造规则。输出严格 JSON：
-{
-  "rules": [
-    {
-      "name": "规则名称，如 保研绩点",
-      "formula": "weighted",      // weighted=学分加权，simple=简单平均
-      "description": "简述",
-      "bands": [
-        {"grade":"A","minScore":90,"maxScore":100,"gpa":4.0}
-      ]
-    }
-  ]
-}
-若无法确定 gpa 数值，用 null 并在 description 说明。${
-    source.text ? `\n规则内容：\n${source.text.slice(0, 10000)}` : ""
-  }`;
-
-  const parts: ChatContent["content"] = [];
-  if (source.imageBase64) {
-    parts.push(
-      { type: "text", text: instruction },
-      imagePart(source.imageBase64),
-    );
-  } else {
-    parts.push({ type: "text", text: instruction });
-  }
-
-  const parsed = await chatJson<any>(
-    [{ role: "user", content: parts }],
-    apiKey,
-    { model: source.imageBase64 ? VISION_MODEL : TEXT_MODEL, temperature: 0.1 },
-  );
-  ensureTarget(
-    parsed,
-    source.imageBase64
-      ? "这张图片不包含绩点换算规则，请更换正确的图片后重试"
-      : "该文档不包含绩点换算规则，请更换正确的文件后重试",
-  );
-
-  const raw = Array.isArray(parsed?.rules)
-    ? parsed.rules
-    : Array.isArray(parsed)
-      ? parsed
-      : [];
-  return raw
-    .map((r: any): GpaRule | null => {
-      const bands = Array.isArray(r?.bands)
-        ? r.bands
-            .map((b: any) => ({
-              grade: String(b?.grade ?? ""),
-              minScore: Number(b?.minScore),
-              maxScore: Number(b?.maxScore),
-              gpa: Number(b?.gpa),
-            }))
-            .filter(
-              (b: any) => Number.isFinite(b.minScore) && Number.isFinite(b.gpa),
-            )
-        : [];
-      if (!bands.length) return null;
-      return {
-        id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-        name: String(r?.name ?? "导入规则"),
-        formula: r?.formula === "simple" ? "simple" : "weighted",
-        description: String(r?.description ?? ""),
-        bands,
-      };
-    })
-    .filter((r: GpaRule | null): r is GpaRule => r !== null);
-}
-
-/** 从成绩单（图片/文本）解析成绩记录 */
+/** 从成绩单（图片/文本）解析成绩记录：分数、绩点、课程类型与学期 */
 export async function recognizeGrades(
   source: { imageBase64?: string; text?: string; mimeType?: string },
   apiKey: string,
-): Promise<GradeRecord[]> {
+  fallbackSemester: SemesterKind = "fall",
+): Promise<Omit<GradeRecord, "id">[]> {
   const instruction = `请识别成绩单/成绩截图中的全部课程成绩。先判断输入是否确实是成绩单；若不是，输出 {"error":"NOT_TARGET"}，绝不要凭空编造成绩。输出严格 JSON：
 {
   "grades": [
     {
       "name": "课程名",
-      "credit": 3,          // 学分
-      "score": 87,          // 百分制分数，若只有等级制则 null
-      "grade": "A",         // 等级制成绩，百分制则 null
-      "semester": "2026秋",  // 学期，未知则 null
-      "type": "required"    // required=必修 / elective=选修 / other=其他
+      "credit": 3,            // 学分（数字）
+      "scoreType": "numeric", // numeric=百分制数字 / letter=字母等级 / text=文字等级
+      "score": "87",          // 按成绩单原样输出：87 / A / B+ / 优秀 / 良好
+      "gpa": 3.7,             // 成绩单上已有的绩点，没有就 null，不要猜测
+      "type": "required",     // required=必修 / elective=选修 / general=通识选修
+      "semester": "fall"      // fall=上学期(秋) / spring=下学期(春) / summer=短学期，无法判断用 null
     }
   ]
 }
 注意：
 - 只输出 JSON，不要多余文字
-- 每门课一条记录，重复课程保留学分最高的或都保留
-- 学分/分数必须是数字，无法确定用 null${
+- 每门课一条记录；姓名、学号、总绩点、平均分等非课程行不要输出
+- score 必须保留成绩单上的原始写法（数字 / 字母 / 文字），不要擅自换算成百分制
+- gpa 只填成绩单上明确标注的数值（0-5），没有则填 null${
     source.text ? `\n成绩单内容：\n${source.text.slice(0, 10000)}` : ""
   }`;
 
@@ -438,6 +367,9 @@ export async function recognizeGrades(
     {
       model: source.imageBase64 ? VISION_MODEL : TEXT_MODEL,
       temperature: 0.1,
+      // 成绩识别是用户主动等待的交互任务：单次限时，失败立即回退本地离线识别
+      timeoutMs: 40_000,
+      attempts: 1,
     },
   );
   ensureTarget(
@@ -447,45 +379,18 @@ export async function recognizeGrades(
       : "该文档不是成绩单，请更换正确的文件后重试",
   );
 
-  const raw = Array.isArray(parsed?.grades)
+  const raw: any[] = Array.isArray(parsed?.grades)
     ? parsed.grades
     : Array.isArray(parsed)
       ? parsed
       : [];
 
   return raw
-    .map((g: any): GradeRecord | null => {
-      const name = String(g?.name ?? "").trim();
-      if (!name) return null;
-      const credit = Number(g?.credit);
-      if (!Number.isFinite(credit) || credit <= 0) return null;
-
-      const scoreRaw = g?.score;
-      const score =
-        scoreRaw != null && Number.isFinite(Number(scoreRaw))
-          ? Math.max(0, Math.min(100, Number(scoreRaw)))
-          : null;
-      const grade = g?.grade != null ? String(g.grade).trim() : null;
-      if (score == null && !grade) return null;
-
-      const type: GradeRecord["type"] =
-        g?.type === "elective"
-          ? "elective"
-          : g?.type === "other"
-            ? "other"
-            : "required";
-      return {
-        id: "",
-        name,
-        credit,
-        score,
-        grade: grade || null,
-        semester: String(g?.semester ?? ""),
-        type,
-        includedInGpa: true,
-      };
+    .map((g: any): Omit<GradeRecord, "id"> | null => {
+      const semester = normalizeSemester(g?.semester) ?? fallbackSemester;
+      return normalizeGradeInput({ ...g, semester });
     })
-    .filter((g: GradeRecord | null): g is GradeRecord => g !== null);
+    .filter((g): g is Omit<GradeRecord, "id"> => g !== null);
 }
 
 function nextMonday(): string {

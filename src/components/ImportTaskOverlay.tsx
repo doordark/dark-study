@@ -26,6 +26,7 @@ import { GlassContainer } from "@/components/GlassContainer";
 import { useImportTask, type TaskStatus } from "@/store/useImportTask";
 import { useStore } from "@/store/useStore";
 import type { MergeReport, Schedule } from "@/types";
+import { formatCourseGpa } from "@/utils/grades";
 
 const BALL_SIZE = 52;
 const EDGE_PAD = 10;
@@ -129,6 +130,7 @@ function TaskDialog() {
   const setPeriods = useStore((s) => s.setPeriods);
   const addScheduleWithData = useStore((s) => s.addScheduleWithData);
   const mergeIncoming = useStore((s) => s.mergeIncoming);
+  const addGrade = useStore((s) => s.addGrade);
   /** 当前课表已有课程时，导入前需选择：融合 / 新建 / 覆盖 */
   const hasCourses = useStore((s) => {
     const cur =
@@ -147,11 +149,23 @@ function TaskDialog() {
 
   /* ---------------- 课表适用周数：默认沿用识别出的每门课周次 ---------------- */
   /** null = 沿用识别结果（默认）；数组 = 手动勾选并统一覆盖全部课程 */
-  const [weekSel, setWeekSel] = React.useState<number[] | null>(null);
   const scheduleResult =
     result?.type === "schedule" ? result.schedule : undefined;
-  // 每次新的识别结果都回到「沿用识别周次」，避免上一次的手动选择误覆盖
-  React.useEffect(() => setWeekSel(null), [scheduleResult]);
+  const scheduleKey = scheduleResult?.id ?? "none";
+  // 以识别结果 id 为 key：新结果自动回到「沿用识别周次」，无需 effect 重置
+  const [weekSelState, setWeekSelState] = React.useState<{
+    key: string;
+    value: number[] | null;
+  }>({ key: scheduleKey, value: null });
+  const weekSel = weekSelState.key === scheduleKey ? weekSelState.value : null;
+  const setWeekSel: React.Dispatch<
+    React.SetStateAction<number[] | null>
+  > = (next) =>
+    setWeekSelState((prev) => {
+      const current = prev.key === scheduleKey ? prev.value : null;
+      const value = typeof next === "function" ? next(current) : next;
+      return { key: scheduleKey, value };
+    });
   const totalWeeks = Math.max(1, scheduleResult?.totalWeeks ?? 18);
   const allWeeks = React.useMemo(
     () => Array.from({ length: totalWeeks }, (_, i) => i + 1),
@@ -210,12 +224,20 @@ function TaskDialog() {
     ack(`已覆盖当前课表，导入 ${result.schedule.courses.length} 门课程`);
   };
 
+  const applyGrades = () => {
+    if (!result || result.type !== "grades") return;
+    result.grades.forEach((g) => addGrade(g));
+    ack(
+      `已导入 ${result.grades.length} 条成绩，可在「成绩」页按学期查看和修改`,
+    );
+  };
+
   const meta = STATUS_META[status === "idle" ? "analyzing" : status];
   /** 未进入识别流程就失败（如未填 API Key）时 label 为空，给兜底标题 */
   const titleLabel = label || "AI 智能导入";
 
   /** 关闭弹窗并跳转（已在目标页则不重复跳转） */
-  const goto = (path: "/import" | "/gpa") => {
+  const goto = (path: "/import" | "/grades") => {
     clear();
     if (pathname !== path) router.push(path);
   };
@@ -389,6 +411,50 @@ function TaskDialog() {
                 ))}
                 <Text className="mt-1 text-[10px] text-slate-400">
                   共 {result.periods.length} 节…
+                </Text>
+              </View>
+            ) : null}
+            {result?.type === "grades" ? (
+              <View className="mt-2.5 rounded-2xl bg-white/20 px-3.5 py-2.5 dark:bg-white/[0.05]">
+                <View className="flex-row items-center pb-1">
+                  <Text className="flex-1 text-[10px] font-semibold text-slate-400 dark:text-slate-500">
+                    课程
+                  </Text>
+                  <Text className="w-12 text-right text-[10px] font-semibold text-slate-400 dark:text-slate-500">
+                    学分
+                  </Text>
+                  <Text className="w-12 text-right text-[10px] font-semibold text-slate-400 dark:text-slate-500">
+                    分数
+                  </Text>
+                  <Text className="w-12 text-right text-[10px] font-semibold text-slate-400 dark:text-slate-500">
+                    绩点
+                  </Text>
+                </View>
+                <View>
+                  {result.grades.slice(0, 5).map((g, i) => (
+                    <View key={`${g.name}-${i}`} className="flex-row items-center py-0.5">
+                      <Text
+                        numberOfLines={1}
+                        className="flex-1 text-[10.5px] text-slate-600 dark:text-slate-300"
+                      >
+                        {g.name}
+                      </Text>
+                      <Text className="w-12 text-right text-[10.5px] text-slate-500 dark:text-slate-400">
+                        {g.credit}
+                      </Text>
+                      <Text className="w-12 text-right text-[10.5px] text-slate-500 dark:text-slate-400">
+                        {g.score || "--"}
+                      </Text>
+                      <Text className="w-12 text-right text-[10.5px] font-semibold text-sky-500 dark:text-sky-300">
+                        {formatCourseGpa(g.gpa)}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+                <Text className="mt-1 text-[10px] text-slate-400">
+                  共 {result.grades.length} 条成绩
+                  {result.grades.length > 5 ? "（仅展示前 5 条）" : ""} ·
+                  将按学期归入「成绩」页
                 </Text>
               </View>
             ) : null}
@@ -566,6 +632,25 @@ function TaskDialog() {
                     </Text>
                   </Pressable>
                 </>
+              ) : result?.type === "grades" ? (
+                <>
+                  <Pressable
+                    onPress={clear}
+                    className="flex-1 items-center rounded-2xl border border-white/20 bg-white/15 py-2.5 dark:border-white/10 dark:bg-white/[0.05]"
+                  >
+                    <Text className="text-[12px] font-semibold text-slate-600 dark:text-slate-300">
+                      放弃
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={applyGrades}
+                    className="flex-1 items-center rounded-2xl bg-sky-500/85 py-2.5"
+                  >
+                    <Text className="text-[12px] font-bold text-white">
+                      导入 {result.grades.length} 条成绩
+                    </Text>
+                  </Pressable>
+                </>
               ) : result?.type === "count" ? (
                 <>
                   <Pressable
@@ -577,11 +662,11 @@ function TaskDialog() {
                     </Text>
                   </Pressable>
                   <Pressable
-                    onPress={() => goto("/gpa")}
+                    onPress={() => goto("/grades")}
                     className="flex-1 items-center rounded-2xl bg-sky-500/85 py-2.5"
                   >
                     <Text className="text-[12px] font-bold text-white">
-                      去「绩点」查看
+                      去「成绩」查看
                     </Text>
                   </Pressable>
                 </>

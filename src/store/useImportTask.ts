@@ -1,13 +1,14 @@
 import { create } from "zustand";
 
-import type { Period, Schedule } from "@/types";
+import type { GradeRecord, Period, Schedule } from "@/types";
 
-export type TaskKind = "schedule" | "periods" | "rules" | "grades";
+export type TaskKind = "schedule" | "periods" | "grades";
 export type TaskStatus = "idle" | "analyzing" | "done" | "error";
 
 export type TaskResult =
   | { type: "schedule"; schedule: Schedule }
   | { type: "periods"; periods: Period[] }
+  | { type: "grades"; grades: Omit<GradeRecord, "id">[] }
   | { type: "count"; count: number };
 
 export interface ImportTaskState {
@@ -39,8 +40,7 @@ export interface ImportTaskState {
 const KIND_LABEL: Record<TaskKind, string> = {
   schedule: "课程表识别",
   periods: "作息表识别",
-  rules: "绩点规则识别",
-  grades: "成绩单识别",
+  grades: "成绩识别",
 };
 
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -90,8 +90,12 @@ export const useImportTask = create<ImportTaskState>((set, get) => ({
         next < 35
           ? `${sourceLabel}已导入，正在上传…`
           : next < 70
-            ? "AI 正在解析画面内容…"
-            : "正在整理结构化数据…";
+            ? s.kind === "grades"
+              ? "正在提取课程、学分与成绩…"
+              : "AI 正在解析画面内容…"
+            : s.kind === "grades"
+              ? "正在整理成绩数据…"
+              : "正在整理结构化数据…";
       set({ progress: next, phase });
     }, 700);
   },

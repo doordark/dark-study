@@ -55,38 +55,41 @@ export interface Schedule {
   courses: Course[];
 }
 
+/** 分数录入方式：百分制数字 / 字母等级 / 文字等级 */
+export type GradeScoreType = "numeric" | "letter" | "text";
+
 /** 成绩记录 */
 export interface GradeRecord {
   id: string;
   name: string;
+  /** 学分 */
   credit: number;
-  /** 百分制成绩，可为空（只记录等第） */
-  score: number | null;
-  /** 等第，如 A+ / B / 通过 */
-  grade: string | null;
-  semester: string;
-  /** 必修 / 选修 / 其他 */
-  type: "required" | "elective" | "other";
-  /** 是否计入绩点 */
-  includedInGpa: boolean;
+  /** 分数类型 */
+  scoreType: GradeScoreType;
+  /** 原始分数，按上传内容原样展示，如 "87" / "A" / "优秀" */
+  score: string;
+  /** 绩点（识别自成绩单，或由分数换算），无法换算时为 null */
+  gpa: number | null;
+  /** 所属学期 */
+  semester: SemesterKind;
+  /** 课程类型 id（必修课 / 选修课 / 通识选修课 / 用户自定义） */
+  type: string;
 }
 
-/** 绩点换算档位 */
-export interface GpaBand {
-  grade: string;
-  minScore: number;
-  maxScore: number;
-  gpa: number;
-}
-
-/** 绩点规则（如"保研绩点"、"出国 4.0 制"） */
-export interface GpaRule {
+/** 课程类型 */
+export interface GradeType {
   id: string;
   name: string;
-  bands: GpaBand[];
-  /** weighted = 按学分加权平均；simple = 简单平均 */
-  formula: "weighted" | "simple";
-  description?: string;
+}
+
+/** 成绩计算规则：命名后可反复切换，如「综测绩点」「保研绩点」 */
+export interface GradeRule {
+  id: string;
+  name: string;
+  /** 不计入的课程类型 id（规则里一键排除） */
+  excludedTypes: string[];
+  /** 手动勾除的课程 id */
+  excludedCourseIds: string[];
 }
 
 /** 课表助手消息 */

@@ -687,7 +687,7 @@ export function SettingsScreen() {
                       DeepSeek API Key
                     </Text>
                     <Text className="text-[10.5px] text-slate-500 dark:text-slate-400">
-                      用于课表识图、助手与绩点规则识别
+                      用于课表识图、AI 助手与成绩识别
                     </Text>
                   </View>
                 </View>

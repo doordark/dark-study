@@ -48,8 +48,8 @@ export interface CourseScheduleScreenProps {
   onImport: () => void;
   /** 打开课程表助手 */
   onAssistant: () => void;
-  /** 打开绩点 */
-  onGpa: () => void;
+  /** 打开成绩 */
+  onGrades: () => void;
   /** 打开设置 */
   onSettings: () => void;
   /** 外部控制的主题层容器样式 */
@@ -59,7 +59,7 @@ export interface CourseScheduleScreenProps {
 export function CourseScheduleScreen({
   onImport,
   onAssistant,
-  onGpa,
+  onGrades,
   onSettings,
   style,
 }: CourseScheduleScreenProps) {
@@ -197,7 +197,7 @@ export function CourseScheduleScreen({
       primary: true,
       onPress: onImport,
     },
-    { key: "gpa", icon: "calculator", label: "绩点", onPress: onGpa },
+    { key: "grades", icon: "school", label: "成绩", onPress: onGrades },
     { key: "settings", icon: "options", label: "设置", onPress: onSettings },
   ];
 

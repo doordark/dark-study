@@ -4,7 +4,7 @@ import { extractJson } from "@/utils/base64";
  * DeepSeek 接入层。
  *
  * - 文本任务：`deepseek-chat`
- * - 图片识别（课表截图 / 作息表 / 绩点规则图）：`deepseek-flash`（多模态视觉模型）
+ * - 图片识别（课表截图 / 作息表 / 成绩单）：`deepseek-flash`（多模态视觉模型）
  *
  * 安全提示：API Key 由用户在「设置」中填写并仅保存在本地设备，
  * 切勿硬编码进代码或提交到仓库；生产环境应放在自有服务端中转。
@@ -83,11 +83,18 @@ export async function chat(
 export async function chatJson<T>(
   messages: ChatContent[],
   apiKey: string,
-  opts: { model?: string; temperature?: number } = {},
+  opts: {
+    model?: string;
+    temperature?: number;
+    timeoutMs?: number;
+    /** 最多尝试次数，默认 3；成绩识别等交互任务可缩短，避免长时间转圈 */
+    attempts?: number;
+  } = {},
 ): Promise<T> {
   let lastError: unknown = null;
+  const attempts = Math.max(1, opts.attempts ?? 3);
 
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     // 第 1 次走 JSON 输出模式，后续降级为普通模式（个别模型/场景对 json_object 支持不稳）
     const jsonMode = attempt === 0;
     const reqMessages: ChatContent[] =
@@ -100,8 +107,9 @@ export async function chatJson<T>(
 
     try {
       const raw = await chat(reqMessages, apiKey, {
-        ...opts,
+        model: opts.model,
         jsonMode,
+        timeoutMs: opts.timeoutMs,
         temperature: attempt === 0 ? (opts.temperature ?? 0.4) : 0.1,
       });
       const parsed = extractJson<T>(raw);

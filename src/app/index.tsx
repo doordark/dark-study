@@ -11,7 +11,7 @@ export default function Home() {
       key={`${schedule.id}:${schedule.startDate}`}
       onImport={() => router.push('/import')}
       onAssistant={() => router.push('/assistant')}
-      onGpa={() => router.push('/gpa')}
+      onGrades={() => router.push('/grades')}
       onSettings={() => router.push('/settings')}
     />
   );

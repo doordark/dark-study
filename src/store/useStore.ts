@@ -1,13 +1,15 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-import { DEFAULT_GPA_RULES, SAMPLE_SCHEDULE } from "@/constants/sample";
+import { DEFAULT_GRADE_RULES, DEFAULT_GRADE_TYPES, SAMPLE_SCHEDULE } from "@/constants/sample";
 import type {
   Course,
-  GpaRule,
   GradeRecord,
+  GradeRule,
+  GradeType,
   MergeReport,
   Schedule,
+  SemesterKind,
 } from "@/types";
 import {
   addDays,
@@ -23,6 +25,7 @@ import {
   weeksFromDates,
 } from "@/utils/time";
 import { migratingStorage } from "@/utils/storage";
+import { normalizeGradeInput } from "@/utils/grades";
 
 const uid = () =>
   `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
@@ -151,7 +154,14 @@ interface AppState {
   /** 当前选中的课表 id */
   activeScheduleId: string;
   grades: GradeRecord[];
-  gpaRules: GpaRule[];
+  /** 课程类型（必修 / 选修 / 通识选修 / 自定义） */
+  gradeTypes: GradeType[];
+  /** 成绩计算规则（如「保研绩点」） */
+  gradeRules: GradeRule[];
+  /** 当前使用的计算规则 */
+  activeGradeRuleId: string;
+  /** 当前浏览的学期（总成绩页不写入，导入成绩时作为归属学期） */
+  activeGradeSemester: SemesterKind;
 
   /* ---------------- 课表管理 ---------------- */
   setActiveSchedule: (id: string) => void;
@@ -188,8 +198,14 @@ interface AppState {
   addGrade: (grade: Omit<GradeRecord, "id">) => string;
   updateGrade: (id: string, patch: Partial<GradeRecord>) => void;
   removeGrade: (id: string) => void;
-  addGpaRule: (rule: Omit<GpaRule, "id">) => string;
-  removeGpaRule: (id: string) => void;
+  /** 添加课程类型，返回类型 id（同名的直接复用） */
+  addGradeType: (name: string) => string;
+  /** 新建计算规则并切换为当前，返回规则 id */
+  addGradeRule: (name: string) => string;
+  updateGradeRule: (id: string, patch: Partial<GradeRule>) => void;
+  removeGradeRule: (id: string) => void;
+  setActiveGradeRule: (id: string) => void;
+  setActiveGradeSemester: (semester: SemesterKind) => void;
   resetToSample: () => void;
 }
 
@@ -199,7 +215,10 @@ export const useStore = create<AppState>()(
       schedules: [SAMPLE_SCHEDULE],
       activeScheduleId: SAMPLE_SCHEDULE.id,
       grades: [],
-      gpaRules: DEFAULT_GPA_RULES,
+      gradeTypes: DEFAULT_GRADE_TYPES,
+      gradeRules: DEFAULT_GRADE_RULES,
+      activeGradeRuleId: DEFAULT_GRADE_RULES[0].id,
+      activeGradeSemester: resolveSemester().kind,
 
       setActiveSchedule: (id) => set({ activeScheduleId: id }),
 
@@ -389,26 +408,75 @@ export const useStore = create<AppState>()(
       removeGrade: (id) =>
         set((s) => ({ grades: s.grades.filter((g) => g.id !== id) })),
 
-      addGpaRule: (rule) => {
-        const id = uid();
-        set((s) => ({ gpaRules: [...s.gpaRules, { ...rule, id }] }));
+      addGradeType: (name) => {
+        const trimmed = name.trim();
+        if (!trimmed) return "";
+        const existing = get().gradeTypes.find((t) => t.name === trimmed);
+        if (existing) return existing.id;
+        const id = `type-${uid()}`;
+        set((s) => ({
+          gradeTypes: [...s.gradeTypes, { id, name: trimmed }],
+        }));
         return id;
       },
 
-      removeGpaRule: (id) =>
-        set((s) => ({ gpaRules: s.gpaRules.filter((r) => r.id !== id) })),
+      addGradeRule: (name) => {
+        const id = uid();
+        set((s) => ({
+          gradeRules: [
+            ...s.gradeRules,
+            {
+              id,
+              name: name.trim() || `规则 ${s.gradeRules.length + 1}`,
+              excludedTypes: [],
+              excludedCourseIds: [],
+            },
+          ],
+          activeGradeRuleId: id,
+        }));
+        return id;
+      },
+
+      updateGradeRule: (id, patch) =>
+        set((s) => ({
+          gradeRules: s.gradeRules.map((r) =>
+            r.id === id ? { ...r, ...patch } : r,
+          ),
+        })),
+
+      removeGradeRule: (id) =>
+        set((s) => {
+          // 至少保留一条规则
+          if (s.gradeRules.length <= 1) return {};
+          const gradeRules = s.gradeRules.filter((r) => r.id !== id);
+          return {
+            gradeRules,
+            activeGradeRuleId:
+              s.activeGradeRuleId === id
+                ? gradeRules[0].id
+                : s.activeGradeRuleId,
+          };
+        }),
+
+      setActiveGradeRule: (id) => set({ activeGradeRuleId: id }),
+
+      setActiveGradeSemester: (semester) =>
+        set({ activeGradeSemester: semester }),
 
       resetToSample: () =>
         set({
           schedules: [SAMPLE_SCHEDULE],
           activeScheduleId: SAMPLE_SCHEDULE.id,
           grades: [],
-          gpaRules: DEFAULT_GPA_RULES,
+          gradeTypes: DEFAULT_GRADE_TYPES,
+          gradeRules: DEFAULT_GRADE_RULES,
+          activeGradeRuleId: DEFAULT_GRADE_RULES[0].id,
+          activeGradeSemester: resolveSemester().kind,
         }),
     }),
     {
       name: "dark-study-storage",
-      version: 4,
+      version: 5,
       storage: createJSONStorage(() => migratingStorage("courseflow-storage")),
       migrate: (persisted, version) => {
         const s = (persisted ?? {}) as Record<string, any>;
@@ -457,6 +525,30 @@ export const useStore = create<AppState>()(
             ...x,
             courses: rekeyCourses(x.courses ?? []),
           }));
+        }
+
+        // v<5：成绩升级为「学期 + 课程类型 + 命名计算规则」结构。
+        // 旧版百分制分数 / 等第 / includedInGpa 统一迁移，绩点按分数换算补齐。
+        if (version < 5) {
+          s.gradeTypes = DEFAULT_GRADE_TYPES.map((t) => ({ ...t }));
+          s.gradeRules = DEFAULT_GRADE_RULES.map((r) => ({
+            ...r,
+            excludedTypes: [],
+            excludedCourseIds: [],
+          }));
+          s.activeGradeRuleId = s.gradeRules[0].id;
+          s.activeGradeSemester = resolveSemester().kind;
+          s.grades = (Array.isArray(s.grades) ? s.grades : [])
+            .map((g: any) => {
+              const normalized = normalizeGradeInput({
+                ...g,
+                semester: g?.semester ?? resolveSemester().kind,
+              });
+              if (!normalized) return null;
+              return { id: g?.id || uid(), ...normalized };
+            })
+            .filter(Boolean);
+          delete s.gpaRules;
         }
 
         return s as unknown as AppState;

@@ -1,7 +1,8 @@
 import { recognizeText } from "rn-mlkit-ocr";
 
 import { DEFAULT_PERIODS } from "@/constants/sample";
-import type { Course, CourseColor, Schedule } from "@/types";
+import type { Course, CourseColor, GradeRecord, Schedule, SemesterKind } from "@/types";
+import { normalizeGradeInput } from "@/utils/grades";
 import {
   addDays,
   parseIsoDate,
@@ -495,4 +496,499 @@ export function recognizeScheduleFromTextOffline(text: string): Schedule {
     );
   }
   return buildSchedule(courses);
+}
+
+/* ------------------------------------------------------------------ */
+/*  成绩单解析                                                          */
+/* ------------------------------------------------------------------ */
+
+type GradeDraft = Omit<GradeRecord, "id">;
+type GradeColumnKey = "name" | "credit" | "score" | "gpa" | "type" | "semester";
+
+const GRADE_HEADER_PATTERNS: [GradeColumnKey, RegExp][] = [
+  ["type", /课程性质|课程类型|课程属性|类别|属性/],
+  ["credit", /学分/],
+  ["gpa", /绩点|GPA/i],
+  ["score", /成绩|分数/],
+  ["semester", /学期/],
+  ["name", /课程名称|课程名|科目|^课程$/],
+];
+
+const GRADE_TYPE_WORD =
+  /通识|公选|通选|必修|学位|选修|任选|限选/;
+
+const GRADE_SUMMARY_RE =
+  /^(合计|总计|总学分|已修学分|平均分|平均成绩|平均绩点|总成绩|备注|说明|学期|学号|姓名)/;
+
+function gradeHeaderKey(text: string): GradeColumnKey | null {
+  const t = text.replace(/\s/g, "").replace(/[:：]/g, "");
+  if (!t) return null;
+  for (const [key, re] of GRADE_HEADER_PATTERNS) {
+    if (re.test(t)) return key;
+  }
+  return null;
+}
+
+/** 一行里可能同时包含多个表头词（OCR 合并单元格） */
+function gradeHeaderKeys(text: string): GradeColumnKey[] {
+  const t = text.replace(/\s/g, "").replace(/[:：]/g, "");
+  if (!t) return [];
+  return GRADE_HEADER_PATTERNS.filter(([, re]) => re.test(t)).map(
+    ([key]) => key,
+  );
+}
+
+function detectGradeSemester(text: string): SemesterKind | null {
+  if (/第一学期|上学期|秋季|秋学期/.test(text)) return "fall";
+  if (/第二学期|下学期|春季|春学期/.test(text)) return "spring";
+  if (/短学期|小学期|夏季|夏学期/.test(text)) return "summer";
+  return null;
+}
+
+function parseGradeType(text: string): string | null {
+  if (/通识|公选|通选/.test(text)) return "general";
+  if (/必修|学位/.test(text)) return "required";
+  if (/选修|任选|限选/.test(text)) return "elective";
+  return null;
+}
+
+/** 解析学分：0.5 ~ 30 */
+function parseCreditValue(text: string): number | null {
+  const cleaned = text.replace(/学分|credit/gi, "").trim();
+  const m = cleaned.match(/\d{1,2}(?:\.\d{1,2})?/);
+  if (!m) return null;
+  const n = Number(m[0]);
+  return Number.isFinite(n) && n >= 0.5 && n <= 30 ? n : null;
+}
+
+/** 解析绩点：0 ~ 5 */
+function parseGpaValue(text: string): number | null {
+  const cleaned = text.replace(/绩点|gpa/gi, "").trim();
+  const m = cleaned.match(/\d(?:\.\d{1,2})?/);
+  if (!m) return null;
+  const n = Number(m[0]);
+  return Number.isFinite(n) && n >= 0 && n <= 5 ? n : null;
+}
+
+interface ParsedScore {
+  score: string;
+  scoreType: "numeric" | "letter" | "text";
+}
+
+/** 解析成绩单元格：数字 / A+ / 优秀 / 合格等，原样保留 */
+function parseScoreCell(text: string): ParsedScore | null {
+  const cleaned = text
+    .replace(/成绩|分数/g, "")
+    .replace(/绩点|gpa/gi, "")
+    .trim();
+  if (!cleaned) return null;
+
+  const letter = cleaned.match(/A\+|A-|A|B\+|B-|B|C\+|C-|C|D\+|D-|D|F/i);
+  if (letter) {
+    return { score: letter[0].toUpperCase(), scoreType: "letter" };
+  }
+
+  const word = cleaned.match(
+    /优秀|良好|中等|及格|不及格|合格|不合格|通过|未通过|缓考|免修/,
+  );
+  if (word) return { score: word[0], scoreType: "text" };
+
+  const num = cleaned.match(/\d{1,3}(?:\.\d{1,2})?/);
+  if (num) {
+    const n = Number(num[0]);
+    if (n >= 0 && n <= 100) return { score: String(n), scoreType: "numeric" };
+  }
+  return null;
+}
+
+/** 整行解析时只把「完整 token」视作成绩，避免把课程名里的 A / C 当成分数 */
+function parseScoreTokenStrict(token: string): ParsedScore | null {
+  const t = token.replace(/成绩|分数/g, "").trim();
+  if (!t) return null;
+  if (/^(A\+|A-|A|B\+|B-|B|C\+|C-|C|D\+|D-|D|F)$/i.test(t)) {
+    return { score: t.toUpperCase(), scoreType: "letter" };
+  }
+  if (/^(优秀|良好|中等|及格|不及格|合格|不合格|通过|未通过|缓考|免修)$/.test(t)) {
+    return { score: t, scoreType: "text" };
+  }
+  if (/^\d{1,3}(?:\.\d{1,2})?$/.test(t)) {
+    const n = Number(t);
+    if (n >= 20 && n <= 100) return { score: String(n), scoreType: "numeric" };
+  }
+  return null;
+}
+
+function cleanGradeName(raw: string): string {
+  return raw
+    .replace(/^\s*\d{1,3}\s*[.、)）]?\s*/, "")
+    .replace(
+      /课程名称|课程名|学分|成绩|分数|绩点|课程性质|课程类型|类型|学期/g,
+      " ",
+    )
+    .replace(/[|,，;；:：]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** 无表头时的整行兜底解析 */
+function parseLooseGradeRow(
+  raw: string,
+  fallbackSemester: SemesterKind,
+): GradeDraft | null {
+  const text = raw.replace(/\s+/g, " ").trim();
+  if (!text || text.length < 2 || GRADE_SUMMARY_RE.test(text)) return null;
+
+  const tokens = text.split(/[\s,，;；|]+/).filter(Boolean);
+  if (!tokens.length) return null;
+
+  const consumed = new Set<number>();
+  let score = "";
+  let scoreType: "numeric" | "letter" | "text" = "numeric";
+
+  // 字母 / 文字成绩
+  tokens.forEach((token, i) => {
+    if (score) return;
+    const parsed = parseScoreTokenStrict(token);
+    if (parsed) {
+      score = parsed.score;
+      scoreType = parsed.scoreType;
+      consumed.add(i);
+    }
+  });
+
+  interface NumToken {
+    value: number;
+    index: number;
+  }
+  const nums: NumToken[] = [];
+  tokens.forEach((token, i) => {
+    if (consumed.has(i)) return;
+    const cleaned = token.replace(/学分|分|绩点|成绩/gi, "");
+    if (!/^\d{1,3}(?:\.\d{1,2})?$/.test(cleaned)) return;
+    const value = Number(cleaned);
+    if (Number.isFinite(value)) nums.push({ value, index: i });
+  });
+
+  let credit: number | null = null;
+  let gpa: number | null = null;
+
+  if (!score) {
+    const scoreToken = nums.find((n) => n.value >= 20 && n.value <= 100);
+    if (scoreToken) {
+      score = String(scoreToken.value);
+      scoreType = "numeric";
+      consumed.add(scoreToken.index);
+    }
+  }
+
+  const remaining = nums.filter((n) => !consumed.has(n.index));
+  if (remaining.length >= 2) {
+    credit = remaining.find((n) => n.value >= 0.5 && n.value <= 30)?.value ?? null;
+    const gpaToken = [...remaining]
+      .reverse()
+      .find((n) => n.value >= 0 && n.value <= 5 && n.value !== credit);
+    gpa = gpaToken ? gpaToken.value : null;
+    remaining.forEach((n) => consumed.add(n.index));
+  } else if (remaining.length === 1) {
+    const one = remaining[0];
+    if (one.value >= 0.5 && one.value <= 30 && score) {
+      credit = one.value;
+    } else if (!score) {
+      if (one.value >= 20) {
+        score = String(one.value);
+        scoreType = "numeric";
+      } else {
+        credit = one.value >= 0.5 ? one.value : null;
+      }
+    }
+    consumed.add(one.index);
+  }
+
+  // 课程名：去掉已消费的成绩/学分 token 后剩余部分
+  let name = tokens
+    .filter((_, i) => !consumed.has(i))
+    .filter((t) => !GRADE_TYPE_WORD.test(t))
+    .join(" ")
+    .trim();
+  name = cleanGradeName(name);
+
+  if (!name && tokens.length === 1) {
+    name = cleanGradeName(
+      text
+        .replace(/\d{1,3}(?:\.\d{1,2})?\s*(学分|分|绩点)?/g, " ")
+        .replace(/(?:^|\s)(A\+|A-|A|B\+|B-|B|C\+|C-|C|D\+|D-|D|F)(?=\s|$)/gi, " "),
+    );
+  }
+  if (!name || name.length < 2) return null;
+  if (!credit || (!score && gpa == null)) return null;
+
+  return normalizeGradeInput({
+    name,
+    credit,
+    score,
+    scoreType,
+    gpa,
+    type: parseGradeType(text) ?? "required",
+    semester: detectGradeSemester(text) ?? fallbackSemester,
+  });
+}
+
+/** OCR 表格：用表头关键字估算列中心，按行聚类后按列取单元格 */
+function parseGradeTable(
+  lines: OcrLine[],
+  fallbackSemester: SemesterKind,
+): GradeDraft[] {
+  const sorted = [...lines].sort((a, b) => centerY(a) - centerY(b));
+  const headerCandidates = sorted.filter(
+    (l) => l.text.trim().length <= 24 && gradeHeaderKeys(l.text).length > 0,
+  );
+  if (!headerCandidates.length) return [];
+
+  // 表头可能被 OCR 拆成同一行的多个单元格，按 y 聚类后取关键字最多的一组
+  const groups: OcrLine[][] = [];
+  for (const line of headerCandidates) {
+    const group = groups.find(
+      (g) =>
+        Math.abs(
+          g.reduce((sum, l) => sum + centerY(l), 0) / g.length - centerY(line),
+        ) <= 28,
+    );
+    if (group) group.push(line);
+    else groups.push([line]);
+  }
+  const keyCount = (g: OcrLine[]) =>
+    new Set(g.flatMap((l) => gradeHeaderKeys(l.text))).size;
+  const header = groups.sort((a, b) => keyCount(b) - keyCount(a))[0];
+  if (!header || keyCount(header) < 2) return [];
+
+  const ranges = new Map<GradeColumnKey, { start: number; end: number }[]>();
+  for (const line of header) {
+    for (const [key, re] of GRADE_HEADER_PATTERNS) {
+      const global = new RegExp(
+        re.source,
+        re.flags.includes("g") ? re.flags : `${re.flags}g`,
+      );
+      for (const match of line.text.matchAll(global)) {
+        const index = match.index ?? 0;
+        const len = Math.max(1, line.text.length);
+        const start =
+          line.frame.x + line.frame.width * (index / len);
+        const end =
+          line.frame.x +
+          line.frame.width * ((index + match[0].length) / len);
+        ranges.set(key, [...(ranges.get(key) ?? []), { start, end }]);
+      }
+    }
+  }
+  const columns = [...ranges.entries()].map(([key, xs]) => {
+    const start = xs.reduce((a, b) => a + b.start, 0) / xs.length;
+    const end = xs.reduce((a, b) => a + b.end, 0) / xs.length;
+    return { key, start, end, cx: (start + end) / 2 };
+  });
+  if (!columns.length) return [];
+
+  const headerBottom = Math.max(
+    ...header.map((l) => l.frame.y + l.frame.height),
+  );
+
+  const bodyLines = sorted.filter(
+    (l) =>
+      centerY(l) > headerBottom &&
+      !header.includes(l) &&
+      !GRADE_SUMMARY_RE.test(l.text.trim()),
+  );
+  if (!bodyLines.length) return [];
+
+  // 按 y 聚类成行
+  const rows: OcrLine[][] = [];
+  for (const line of bodyLines) {
+    const last = rows[rows.length - 1];
+    const lastY = last
+      ? last.reduce((sum, l) => sum + centerY(l), 0) / last.length
+      : -Infinity;
+    if (last && Math.abs(centerY(line) - lastY) <= 20) last.push(line);
+    else rows.push([line]);
+  }
+
+  const drafts: GradeDraft[] = [];
+  for (const row of rows) {
+    const cells = new Map<GradeColumnKey, string[]>();
+    for (const line of row) {
+      const lineStart = line.frame.x;
+      const lineEnd = line.frame.x + line.frame.width;
+      let bestKey: GradeColumnKey = columns[0].key;
+      let bestOverlap = 0;
+      for (const col of columns) {
+        const overlap = Math.max(
+          0,
+          Math.min(lineEnd, col.end) - Math.max(lineStart, col.start),
+        );
+        if (overlap > bestOverlap) {
+          bestOverlap = overlap;
+          bestKey = col.key;
+        }
+      }
+      if (bestOverlap <= 0) {
+        // 与所有列都不重叠时退回最近中心
+        let bestDx = Infinity;
+        for (const col of columns) {
+          const d = Math.abs(centerX(line) - col.cx);
+          if (d < bestDx) {
+            bestDx = d;
+            bestKey = col.key;
+          }
+        }
+      }
+      cells.set(bestKey, [...(cells.get(bestKey) ?? []), line.text]);
+    }
+
+    const cellText = (key: GradeColumnKey) =>
+      (cells.get(key) ?? []).join(" ").trim();
+    const name = cleanGradeName(cellText("name"));
+    const credit = parseCreditValue(cellText("credit"));
+    const score = parseScoreCell(cellText("score"));
+    const gpa = parseGpaValue(cellText("gpa"));
+
+    if (name && name.length >= 2 && credit && (score || gpa != null)) {
+      const draft = normalizeGradeInput({
+        name,
+        credit,
+        score: score?.score ?? "",
+        scoreType: score?.scoreType,
+        gpa,
+        type: parseGradeType(cellText("type")) ?? parseGradeType(row.map((l) => l.text).join(" ")) ?? "required",
+        semester:
+          detectGradeSemester(cellText("semester")) ??
+          detectGradeSemester(row.map((l) => l.text).join(" ")) ??
+          fallbackSemester,
+      });
+      if (draft) drafts.push(draft);
+      continue;
+    }
+
+    // 单元格没对齐（OCR 行被合并）时整行兜底
+    const loose = parseLooseGradeRow(
+      row.map((l) => l.text).join(" "),
+      fallbackSemester,
+    );
+    if (loose) drafts.push(loose);
+  }
+
+  return drafts;
+}
+
+function dedupeGrades(list: GradeDraft[]): GradeDraft[] {
+  const seen = new Set<string>();
+  return list.filter((g) => {
+    const key = `${g.semester}|${g.name}|${g.credit}|${g.score}|${g.gpa}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** 纯文本 / CSV 成绩解析 */
+export function recognizeGradesFromTextOffline(
+  text: string,
+  fallbackSemester: SemesterKind = "fall",
+): GradeDraft[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (!lines.length) throw new Error("文件内容为空");
+
+  const detectDelimiter = (line: string) =>
+    /\t/.test(line) ? /\t/ : /[,，;；]/.test(line) ? /[,，;；]/ : /\s{2,}|\s/;
+
+  let headerIndex = -1;
+  let headerColumns = new Map<GradeColumnKey, number>();
+  for (let i = 0; i < Math.min(lines.length, 6); i++) {
+    const cells = lines[i].split(detectDelimiter(lines[i]));
+    const map = new Map<GradeColumnKey, number>();
+    cells.forEach((cell, index) => {
+      const key = gradeHeaderKey(cell);
+      if (key && !map.has(key)) map.set(key, index);
+    });
+    if (map.size >= 2 && (map.has("credit") || map.has("score") || map.has("gpa"))) {
+      headerIndex = i;
+      headerColumns = map;
+      break;
+    }
+  }
+
+  const drafts: GradeDraft[] = [];
+  const start = headerIndex >= 0 ? headerIndex + 1 : 0;
+  for (let i = start; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line || GRADE_SUMMARY_RE.test(line)) continue;
+
+    if (headerIndex >= 0) {
+      const cells = line.split(detectDelimiter(lines[headerIndex]));
+      const pick = (key: GradeColumnKey) =>
+        headerColumns.has(key)
+          ? (cells[headerColumns.get(key)!] ?? "").trim()
+          : "";
+      const name = cleanGradeName(pick("name"));
+      const credit = parseCreditValue(pick("credit"));
+      const score = parseScoreCell(pick("score"));
+      const gpa = parseGpaValue(pick("gpa"));
+      if (name && name.length >= 2 && credit && (score || gpa != null)) {
+        const draft = normalizeGradeInput({
+          name,
+          credit,
+          score: score?.score ?? "",
+          scoreType: score?.scoreType,
+          gpa,
+          type:
+            parseGradeType(pick("type")) ?? parseGradeType(line) ?? "required",
+          semester:
+            detectGradeSemester(pick("semester")) ??
+            detectGradeSemester(line) ??
+            fallbackSemester,
+        });
+        if (draft) {
+          drafts.push(draft);
+          continue;
+        }
+      }
+    }
+
+    const loose = parseLooseGradeRow(line, fallbackSemester);
+    if (loose) drafts.push(loose);
+  }
+
+  const result = dedupeGrades(drafts);
+  if (!result.length) {
+    throw new Error(
+      "离线解析未找到成绩记录。请保证表格包含「课程名称 / 学分 / 成绩」列，或每行形如：高等数学 3 87 3.7",
+    );
+  }
+  return result;
+}
+
+/** 离线识别成绩单图片（ML Kit 设备端 OCR，不联网） */
+export async function recognizeGradesOffline(
+  uri: string,
+  fallbackSemester: SemesterKind = "fall",
+): Promise<GradeDraft[]> {
+  const result = await recognizeText(uri, "chinese");
+  const lines = flattenLines(result);
+  if (!lines.length) {
+    throw new Error("未能从图片中识别到文字，请确认图片清晰、光线充足");
+  }
+
+  let drafts = parseGradeTable(lines, fallbackSemester);
+  if (!drafts.length) {
+    drafts = lines
+      .map((l) => parseLooseGradeRow(l.text, fallbackSemester))
+      .filter((g): g is GradeDraft => g !== null);
+  }
+  drafts = dedupeGrades(drafts);
+  if (!drafts.length) {
+    throw new Error(
+      "离线识别未能解析出成绩（需要「课程名称 / 学分 / 成绩 / 绩点」表格）。可换一张更清晰的成绩单截图，或联网使用 AI 识别",
+    );
+  }
+  return drafts;
 }
