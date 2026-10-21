@@ -25,7 +25,8 @@ import {
 } from "@/services/offlineImport";
 import { useImportTask, type TaskKind } from "@/store/useImportTask";
 import { useSettings } from "@/store/useSettings";
-import { useStore } from "@/store/useStore";
+import { useActiveSchedule, useStore } from "@/store/useStore";
+import { toIsoDate } from "@/utils/time";
 
 type From = "image" | "camera" | "text";
 type Source =
@@ -71,6 +72,7 @@ export function ImportScreen() {
   const apiKey = useSettings((s) => s.apiKey);
   const addGpaRule = useStore((s) => s.addGpaRule);
   const addGrade = useStore((s) => s.addGrade);
+  const activeSchedule = useActiveSchedule();
 
   /** 统一取源：相册 / 拍照 / 文档三选一，取消返回 null */
   const pickSource = async (from: From): Promise<Source | null> => {
@@ -136,14 +138,21 @@ export function ImportScreen() {
       const useAI = online && !!apiKey;
 
       let schedule;
+      // 当前课表的开学日期 / 总周数：让模型把图片里的具体日期换算成周次
+      const ctx = {
+        startDate: activeSchedule.startDate,
+        totalWeeks: activeSchedule.totalWeeks,
+        today: toIsoDate(new Date()),
+      };
       if (useAI) {
         schedule =
           "text" in source
-            ? await recognizeScheduleFromText(source.text, apiKey)
+            ? await recognizeScheduleFromText(source.text, apiKey, ctx)
             : await recognizeScheduleFromImage(
                 source.imageBase64,
                 apiKey,
                 source.mimeType,
+                ctx,
               );
       } else {
         task.setPhase(

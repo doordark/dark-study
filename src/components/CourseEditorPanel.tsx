@@ -128,8 +128,12 @@ export function CourseEditorPanel({
     };
   }, []);
 
-  /** 弹窗可视区高度扣除键盘，面板压缩为可滚动 */
-  const bodyMaxH = Math.max(240, winH - kbH - 24);
+  /** 面板高度固定为屏高的固定比例：从任何入口打开位置都一致；
+      键盘弹出时收缩并整体上移（KAV 负责），内容在内部滚动 */
+  const sheetH = Math.max(
+    300,
+    Math.min(Math.round(winH * 0.82), winH - kbH - 16),
+  );
 
   /** 聚焦时回到内容顶部：三个文本输入框都在顶部区域，
       保证键盘弹出后输入框始终在可视区内（Android 不会自动滚动） */
@@ -162,11 +166,11 @@ export function CourseEditorPanel({
                 radius={32}
                 intensity={62}
                 borderOpacity={0.3}
-                style={{ paddingBottom: 16 }}
+                style={{ height: sheetH, paddingBottom: 16 }}
               >
                 <ScrollView
                   ref={scrollRef}
-                  style={{ maxHeight: bodyMaxH }}
+                  style={{ flex: 1 }}
                   contentContainerStyle={{ paddingBottom: 4 }}
                   className="px-5 pt-5"
                   keyboardShouldPersistTaps="handled"

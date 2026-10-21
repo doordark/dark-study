@@ -32,7 +32,25 @@ const COLOR_VALUES: CourseColor[] = [
   "cyan",
 ];
 
-const SCHEDULE_SCHEMA_HINT = `请把识别到的课表输出为严格的 JSON（不要多余文字），结构如下：
+/** 导入上下文：课表开学日期 / 总周数，用于把图片里的具体日期换算成周次 */
+export interface ScheduleImportContext {
+  /** 目标课表第一周的周一（yyyy-MM-dd） */
+  startDate?: string;
+  /** 目标课表总周数 */
+  totalWeeks?: number;
+  /** 今天（yyyy-MM-dd） */
+  today?: string;
+}
+
+const scheduleSchemaHint = (ctx?: ScheduleImportContext) => {
+  const totalWeeks = ctx?.totalWeeks ?? 18;
+  const semester =
+    ctx?.startDate && ctx?.totalWeeks
+      ? `学期信息：第 1 周的周一是 ${ctx.startDate}，本学期共 ${ctx.totalWeeks} 周${
+          ctx.today ? `，今天是 ${ctx.today}` : ""
+        }。`
+      : `学期信息：本学期共 ${totalWeeks} 周。`;
+  return `请把识别到的课表输出为严格的 JSON（不要多余文字），结构如下：
 {
   "name": "学期名称",
   "startDate": "yyyy-MM-dd",
@@ -44,23 +62,87 @@ const SCHEDULE_SCHEMA_HINT = `请把识别到的课表输出为严格的 JSON（
       "weekday": 1,          // 1=周一 ... 7=周日
       "startPeriod": 1,      // 开始节次
       "endPeriod": 2,        // 结束节次
-      "weeks": [1,2,3],      // 上课周次列表
+      "weeks": [1,2,3],      // 实际上课的周次列表
+      "dates": ["2026-10-08"], // 若图中标注了具体日期，把日期填在这里
       "credits": 3,          // 学分，未知则 null
       "color": "sky"         // 从 sky/violet/emerald/amber/rose/cyan 中选择
     }
   ]
 }
+${semester}
 要求：
 - 课程名必须完整，禁止使用省略号或任何形式的截断
-- 若无法确定 startDate，使用 null。`;
+- 若无法确定 startDate，使用 null
+- weeks 只写实际有课的周次：图片里若标了具体日期（如 10月8日）或「第3周」，必须按学期起始日换算后只写这些周次，同时把日期填进 dates；绝不能默认把整学期都填上
+- 只有在完全没有任何日期与周次信息时，才把整学期 ${totalWeeks} 周全部写入 weeks
+- 同一门课在不同星期 / 不同节次 / 不同教室的每次上课都要拆成独立的课程记录（例如 Lecture 与 LAB 分开），禁止合并或只保留一条
+- 日期落在学期范围外的记录直接忽略，禁止编造`;
+};
 
 /** 模型判断输入不是目标内容时输出 {"error":"NOT_TARGET"}，统一转为明确失败 */
 function ensureTarget(parsed: any, message: string): void {
   if (parsed && typeof parsed.error === "string") throw new Error(message);
 }
 
-function normalizeCourses(raw: any): Course[] {
+/** 宽松解析周次：支持 [1,3]、"1-5"、"1~5,8"、"第3周" 等写法 */
+function parseWeeksValue(input: unknown, totalWeeks: number): number[] {
+  const out: number[] = [];
+  const push = (n: number) => {
+    const w = Math.round(n);
+    if (w >= 1 && w <= totalWeeks) out.push(w);
+  };
+  const collect = (v: unknown) => {
+    if (Array.isArray(v)) {
+      v.forEach(collect);
+      return;
+    }
+    if (typeof v === "number") {
+      push(v);
+      return;
+    }
+    if (typeof v !== "string") return;
+    // 去掉「第 / 周 / 到 / 空白」，再按分隔符拆成区间
+    const norm = v.replace(/[第周\s]/g, "");
+    for (const part of norm.split(/[,，、;；]/)) {
+      const m = part.match(/^(\d+)(?:[-~至](\d+))?$/);
+      if (!m) continue;
+      const a = Number(m[1]);
+      const b = m[2] ? Number(m[2]) : a;
+      for (let w = Math.min(a, b); w <= Math.max(a, b); w++) push(w);
+    }
+  };
+  collect(input);
+  return [...new Set(out)].sort((a, b) => a - b);
+}
+
+/** 具体日期 → 学期周次（按第 1 周周一对齐） */
+function weeksFromDates(
+  dates: unknown,
+  startDate: string | undefined,
+  totalWeeks: number,
+): number[] {
+  if (!startDate || !Array.isArray(dates)) return [];
+  const start = parseIsoDate(startDate).getTime();
+  if (Number.isNaN(start)) return [];
+  const out: number[] = [];
+  for (const raw of dates) {
+    const m = String(raw).match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (!m) continue;
+    const t = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
+    if (Number.isNaN(t)) continue;
+    const w = Math.floor((t - start) / 86400000 / 7) + 1;
+    if (w >= 1 && w <= totalWeeks) out.push(w);
+  }
+  return [...new Set(out)].sort((a, b) => a - b);
+}
+
+function normalizeCourses(
+  raw: any,
+  ctx?: ScheduleImportContext & { startDate?: string },
+): Course[] {
   if (!Array.isArray(raw)) return [];
+  const totalWeeks = ctx?.totalWeeks ?? 18;
+  const allWeeks = Array.from({ length: totalWeeks }, (_, k) => k + 1);
   return raw
     .map((c: any, i: number): Course | null => {
       const name = String(c?.name ?? "").trim();
@@ -71,11 +153,14 @@ function normalizeCourses(raw: any): Course[] {
       if (!weekday || weekday < 1 || weekday > 7) return null;
       const s = Number.isFinite(start) ? Math.max(1, start) : 1;
       const e = Number.isFinite(end) ? Math.max(s, end) : s;
-      const weeks: number[] = Array.isArray(c?.weeks)
-        ? c.weeks
-            .map(Number)
-            .filter((n: number) => Number.isFinite(n) && n >= 1)
-        : Array.from({ length: 18 }, (_, k) => k + 1);
+      // 优先用具体日期换算周次（最精确）；否则用 weeks，最后才默认整学期
+      const fromDates = weeksFromDates(c?.dates, ctx?.startDate, totalWeeks);
+      const fromWeeks = parseWeeksValue(c?.weeks, totalWeeks);
+      const weeks = fromDates.length
+        ? fromDates
+        : fromWeeks.length
+          ? fromWeeks
+          : allWeeks;
       const color: CourseColor = COLOR_VALUES.includes(c?.color)
         ? (c.color as CourseColor)
         : COLOR_VALUES[i % COLOR_VALUES.length];
@@ -87,9 +172,7 @@ function normalizeCourses(raw: any): Course[] {
         weekday,
         startPeriod: s,
         endPeriod: e,
-        weeks: weeks.length
-          ? weeks
-          : Array.from({ length: 18 }, (_, k) => k + 1),
+        weeks,
         color,
         credits: Number.isFinite(Number(c?.credits))
           ? Number(c.credits)
@@ -105,6 +188,7 @@ export async function recognizeScheduleFromImage(
   base64: string,
   apiKey: string,
   mimeType = "image/jpeg",
+  ctx?: ScheduleImportContext,
 ): Promise<Schedule> {
   const messages: ChatContent[] = [
     {
@@ -117,7 +201,7 @@ export async function recognizeScheduleFromImage(
       content: [
         {
           type: "text",
-          text: `请识别这张课程表图片中的全部课程。\n先判断这张图片是否确实是课程表；若不是，输出 {"error":"NOT_TARGET"}，绝不要凭空编造课程。\n${SCHEDULE_SCHEMA_HINT}`,
+          text: `请识别这张课程表图片中的全部课程。\n先判断这张图片是否确实是课程表；若不是，输出 {"error":"NOT_TARGET"}，绝不要凭空编造课程。\n${scheduleSchemaHint(ctx)}`,
         },
         imagePart(base64, mimeType),
       ],
@@ -130,28 +214,40 @@ export async function recognizeScheduleFromImage(
   });
   ensureTarget(parsed, "这张图片不是课程表，请更换正确的图片后重试");
 
-  return buildSchedule(parsed);
+  return buildSchedule(parsed, ctx);
 }
 
 /** 把模型解析结果组装成 Schedule（含学期类型与总周数） */
-function buildSchedule(parsed: any): Schedule {
-  const courses = normalizeCourses(parsed?.courses);
-  const startDate =
+function buildSchedule(parsed: any, ctx?: ScheduleImportContext): Schedule {
+  const parsedStart =
     typeof parsed?.startDate === "string" &&
     /^\d{4}-\d{2}-\d{2}$/.test(parsed.startDate)
       ? parsed.startDate
-      : nextMonday();
+      : undefined;
+  // 优先沿用当前课表的开学日：模型对「第 N 周」的换算必须和本学期的周次一致，
+  // 否则外教课这类按日期排的课表会整体错位
+  const startDate =
+    (ctx?.startDate && /^\d{4}-\d{2}-\d{2}$/.test(ctx.startDate)
+      ? ctx.startDate
+      : undefined) ??
+    parsedStart ??
+    nextMonday();
   const sem = resolveSemester(new Date(`${startDate}T00:00:00`));
+  const totalWeeks = ctx?.totalWeeks ?? sem.totalWeeks;
+  // 周次换算必须以最终采用的开学日期为基准，否则日期→周次会整体错位
+  const courses = normalizeCourses(parsed?.courses, {
+    ...ctx,
+    startDate,
+    totalWeeks,
+  });
   return {
     // 导入预览的占位 id：真正导入时保留当前课表的 id 与用户命名
     id: "import-preview",
     name: String(parsed?.name ?? sem.name),
     kind: sem.kind,
     startDate,
-    endDate: toIsoDate(
-      addDays(parseIsoDate(startDate), sem.totalWeeks * 7 - 1),
-    ),
-    totalWeeks: sem.totalWeeks,
+    endDate: toIsoDate(addDays(parseIsoDate(startDate), totalWeeks * 7 - 1)),
+    totalWeeks,
     periods: DEFAULT_PERIODS,
     courses,
   };
@@ -161,12 +257,13 @@ function buildSchedule(parsed: any): Schedule {
 export async function recognizeScheduleFromText(
   text: string,
   apiKey: string,
+  ctx?: ScheduleImportContext,
 ): Promise<Schedule> {
   const messages: ChatContent[] = [
     { role: "system", content: "你是一个精准的中文课程表解析助手。" },
     {
       role: "user",
-      content: `请把以下课表文本（可能是 CSV / JSON / 复制粘贴的表格）解析为课程。\n先判断内容是否确实是课表；若不是，输出 {"error":"NOT_TARGET"}，绝不要凭空编造课程。\n${SCHEDULE_SCHEMA_HINT}\n\n课表内容：\n${text.slice(0, 12000)}`,
+      content: `请把以下课表文本（可能是 CSV / JSON / 复制粘贴的表格）解析为课程。\n先判断内容是否确实是课表；若不是，输出 {"error":"NOT_TARGET"}，绝不要凭空编造课程。\n${scheduleSchemaHint(ctx)}\n\n课表内容：\n${text.slice(0, 12000)}`,
     },
   ];
   const parsed = await chatJson<any>(messages, apiKey, {
@@ -174,7 +271,7 @@ export async function recognizeScheduleFromText(
     temperature: 0.1,
   });
   ensureTarget(parsed, "该文档不是课程表，请更换正确的文件后重试");
-  return buildSchedule(parsed);
+  return buildSchedule(parsed, ctx);
 }
 
 /** 从作息表图片/文本识别节次时间 */

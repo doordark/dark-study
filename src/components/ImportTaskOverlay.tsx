@@ -37,6 +37,29 @@ const RING_C = 2 * Math.PI * RING_R;
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
+/** [1,2,3,5] → "1-3,5"，用于预览每门课实际的上课周次 */
+function weeksLabel(weeks: number[]): string {
+  const sorted = [...weeks].sort((a, b) => a - b);
+  if (!sorted.length) return "-";
+  const parts: string[] = [];
+  let start = sorted[0];
+  let prev = sorted[0];
+  const flush = () => {
+    parts.push(start === prev ? `${start}` : `${start}-${prev}`);
+  };
+  for (const w of sorted.slice(1)) {
+    if (w === prev + 1) {
+      prev = w;
+      continue;
+    }
+    flush();
+    start = w;
+    prev = w;
+  }
+  flush();
+  return parts.join(",");
+}
+
 const STATUS_META: Record<
   Exclude<TaskStatus, "idle">,
   {
@@ -122,22 +145,25 @@ function TaskDialog() {
     null,
   );
 
-  /* ---------------- 课表适用周数：默认整学期全部周 ---------------- */
-  /** null = 整学期全部周（默认）；数组 = 手动勾选的周次 */
+  /* ---------------- 课表适用周数：默认沿用识别出的每门课周次 ---------------- */
+  /** null = 沿用识别结果（默认）；数组 = 手动勾选并统一覆盖全部课程 */
   const [weekSel, setWeekSel] = React.useState<number[] | null>(null);
   const scheduleResult =
     result?.type === "schedule" ? result.schedule : undefined;
+  // 每次新的识别结果都回到「沿用识别周次」，避免上一次的手动选择误覆盖
+  React.useEffect(() => setWeekSel(null), [scheduleResult]);
   const totalWeeks = Math.max(1, scheduleResult?.totalWeeks ?? 18);
   const allWeeks = React.useMemo(
     () => Array.from({ length: totalWeeks }, (_, i) => i + 1),
     [totalWeeks],
   );
   const applyWeeks = weekSel?.length ? weekSel : allWeeks;
-  /** 把所选周数写入全部课程（覆盖识别出的周次），融合/新建/覆盖统一生效 */
-  const withWeeks = (s: Schedule): Schedule => ({
-    ...s,
-    courses: s.courses.map((c) => ({ ...c, weeks: applyWeeks })),
-  });
+  /** 把所选周数写入全部课程（覆盖识别出的周次），融合/新建/覆盖统一生效；
+      未手动选择时保留每门课识别出的周次（同一门课可能只在少数周上课） */
+  const withWeeks = (s: Schedule): Schedule =>
+    weekSel?.length
+      ? { ...s, courses: s.courses.map((c) => ({ ...c, weeks: weekSel })) }
+      : s;
   const toggleWeek = (w: number) =>
     setWeekSel((prev) => {
       const cur = prev ?? allWeeks;
@@ -292,7 +318,7 @@ function TaskDialog() {
                   </Text>
                   <Pressable hitSlop={6} onPress={() => setWeekSel(null)}>
                     <Text className="text-[10px] font-semibold text-sky-500 dark:text-sky-300">
-                      整学期全部周（默认）
+                      沿用识别周次（默认）
                     </Text>
                   </Pressable>
                 </View>
@@ -303,7 +329,7 @@ function TaskDialog() {
                   contentContainerStyle={{ gap: 5, paddingRight: 6 }}
                 >
                   {allWeeks.map((w) => {
-                    const on = applyWeeks.includes(w);
+                    const on = weekSel?.includes(w) ?? false;
                     return (
                       <Pressable
                         key={w}
@@ -329,8 +355,8 @@ function TaskDialog() {
                 </ScrollView>
                 <Text className="mt-1 text-[9.5px] text-slate-400 dark:text-slate-500">
                   {weekSel == null
-                    ? `默认整学期 ${totalWeeks} 周全部按此课表`
-                    : `已选 ${applyWeeks.length} 周，其余周不安排这些课`}
+                    ? "默认保留每门课识别出的周次；点选上方周次可统一覆盖全部课程"
+                    : `已选 ${applyWeeks.length} 周，将统一覆盖全部课程的周次`}
                 </Text>
 
                 <ScrollView className="mt-2 max-h-[110px]">
@@ -341,7 +367,8 @@ function TaskDialog() {
                       className="py-0.5 text-[10.5px] text-slate-600 dark:text-slate-300"
                     >
                       · {c.name}（周{c.weekday} 第{c.startPeriod}–{c.endPeriod}
-                      节{c.classroom ? ` · ${c.classroom}` : ""}）
+                      节{c.classroom ? ` · ${c.classroom}` : ""} · 第
+                      {weeksLabel(c.weeks)}周）
                     </Text>
                   ))}
                 </ScrollView>

@@ -237,13 +237,21 @@ export function formatClock(date: Date = new Date()): string {
 /*  课表冲突检测 & 不同作息之间的节次映射                                          */
 /* -------------------------------------------------------------------------- */
 
-/** 时间冲突：同一天、节次重叠、周次相交。返回 courseId -> 与之冲突的课程名列表 */
-export function findConflicts(courses: Course[]): Map<string, string[]> {
+/** 时间冲突：同一天、节次重叠、周次相交。返回 courseId -> 与之冲突的课程名列表
+ *  weekIndex 传入时只检测该周真正同时上课的课程，避免「不同周同一时段」被误判冲突 */
+export function findConflicts(
+  courses: Course[],
+  weekIndex?: number,
+): Map<string, string[]> {
   const map = new Map<string, string[]>();
-  for (let i = 0; i < courses.length; i++) {
-    for (let j = i + 1; j < courses.length; j++) {
-      const a = courses[i];
-      const b = courses[j];
+  const list =
+    weekIndex == null
+      ? courses
+      : courses.filter((c) => c.weeks.includes(weekIndex));
+  for (let i = 0; i < list.length; i++) {
+    for (let j = i + 1; j < list.length; j++) {
+      const a = list[i];
+      const b = list[j];
       if (a.weekday !== b.weekday) continue;
       if (a.startPeriod > b.endPeriod || a.endPeriod < b.startPeriod) continue;
       const weeksB = new Set(b.weeks);

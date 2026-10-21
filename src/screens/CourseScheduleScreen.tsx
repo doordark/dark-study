@@ -95,10 +95,10 @@ export function CourseScheduleScreen({
   const totalWeeks = Math.max(1, schedule.totalWeeks ?? 18);
   const activeWeek = Math.min(Math.max(weekIndex, 1), totalWeeks);
 
-  // 冲突检测：同天、节次重叠、周次相交的课程互相标记
+  // 冲突检测：同天、节次重叠、且当前周同时上课的课程互相标记
   const conflicts = useMemo(
-    () => findConflicts(schedule.courses),
-    [schedule.courses],
+    () => findConflicts(schedule.courses, activeWeek),
+    [schedule.courses, activeWeek],
   );
 
   const dayCourses = useMemo(
