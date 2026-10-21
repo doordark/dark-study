@@ -107,29 +107,40 @@ export function isNewer(latest: ReleaseInfo): boolean {
   return compareVersions(latest.version, currentVersion()) > 0;
 }
 
-const apkFileUri = () => {
+const apkDirUri = () => {
   const cache = FileSystem.cacheDirectory;
   if (!cache) throw new Error("无法访问应用缓存目录");
-  return `${cache}${APK_DIR}/${APK_NAME}`;
+  return `${cache}${APK_DIR}`;
 };
+
+const apkFileUri = () => `${apkDirUri()}/${APK_NAME}`;
 
 /** 下载到本地缓存，返回 promise 与取消句柄；onProgress 以 0..1 上报 */
 export function createApkDownload(
   url: string,
   onProgress: (p: number) => void,
 ): { promise: Promise<string>; cancel: () => void } {
-  const fileUri = apkFileUri();
-  const task = FileSystem.createDownloadResumable(url, fileUri, {}, (p) => {
-    const total = p.totalBytesExpectedToWrite;
-    if (total > 0) onProgress(Math.min(1, p.totalBytesWritten / total));
-  });
+  let task: FileSystem.DownloadResumable | null = null;
+
+  const promise = (async () => {
+    // Android 上 createDownloadResumable 不会自动建目录，目录不存在会直接抛
+    // IOException，这里必须先确保缓存子目录存在
+    await FileSystem.makeDirectoryAsync(apkDirUri(), {
+      intermediates: true,
+    }).catch(() => {});
+    task = FileSystem.createDownloadResumable(url, apkFileUri(), {}, (p) => {
+      const total = p.totalBytesExpectedToWrite;
+      if (total > 0) onProgress(Math.min(1, p.totalBytesWritten / total));
+    });
+    const r = await task.downloadAsync();
+    if (!r?.uri) throw new Error("下载未完成");
+    return r.uri;
+  })();
+
   return {
-    promise: task.downloadAsync().then((r) => {
-      if (!r?.uri) throw new Error("下载未完成");
-      return r.uri;
-    }),
+    promise,
     cancel: () => {
-      task.cancelAsync().catch(() => {});
+      task?.cancelAsync().catch(() => {});
     },
   };
 }
