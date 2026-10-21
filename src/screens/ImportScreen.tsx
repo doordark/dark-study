@@ -1,13 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React, { useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  Text,
-  View,
-} from "react-native";
+import React from "react";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 
 import { Backdrop } from "@/components/Backdrop";
@@ -24,27 +18,15 @@ import {
   recognizeScheduleFromImage,
   recognizeScheduleFromText,
 } from "@/services/ai";
+import { useImportTask, type TaskKind } from "@/store/useImportTask";
 import { useSettings } from "@/store/useSettings";
 import { useStore } from "@/store/useStore";
-import type { Period, Schedule } from "@/types";
 
-type Busy =
-  | "schedule-image"
-  | "schedule-text"
-  | "periods"
-  | "rules"
-  | "grades"
-  | null;
 type From = "image" | "camera" | "text";
+type Source = { imageBase64: string; mimeType: string } | { text: string };
 
 /** 统一导入方式行：相册识图 / 拍照识别 / 文档导入，四个模块一致 */
-function MethodRow({
-  busy,
-  onPick,
-}: {
-  busy: boolean;
-  onPick: (from: From) => void;
-}) {
+function MethodRow({ onPick }: { onPick: (from: From) => void }) {
   const items = [
     { key: "image" as const, icon: "image" as const, label: "相册识图" },
     { key: "camera" as const, icon: "camera" as const, label: "拍照识别" },
@@ -58,16 +40,10 @@ function MethodRow({
           onPress={() => onPick(it.key)}
           className="flex-1 items-center rounded-2xl border border-white/25 bg-white/25 py-3 dark:border-white/10 dark:bg-white/[0.06]"
         >
-          {busy ? (
-            <ActivityIndicator size="small" color="#38BDF8" />
-          ) : (
-            <>
-              <Ionicons name={it.icon} size={18} color="#38BDF8" />
-              <Text className="mt-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
-                {it.label}
-              </Text>
-            </>
-          )}
+          <Ionicons name={it.icon} size={18} color="#38BDF8" />
+          <Text className="mt-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+            {it.label}
+          </Text>
         </Pressable>
       ))}
     </View>
@@ -76,43 +52,11 @@ function MethodRow({
 
 export function ImportScreen() {
   const apiKey = useSettings((s) => s.apiKey);
-  const importSchedule = useStore((s) => s.importSchedule);
-  const setPeriods = useStore((s) => s.setPeriods);
   const addGpaRule = useStore((s) => s.addGpaRule);
   const addGrade = useStore((s) => s.addGrade);
 
-  const [busy, setBusy] = useState<Busy>(null);
-  const [preview, setPreview] = useState<Schedule | null>(null);
-  const [periodPreview, setPeriodPreview] = useState<Period[] | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-
-  const guard = () => {
-    if (!apiKey) {
-      setMessage("请先在「设置」中填写 DeepSeek API Key");
-      return false;
-    }
-    return true;
-  };
-
-  const run = async (key: Exclude<Busy, null>, fn: () => Promise<void>) => {
-    if (!guard()) return;
-    setBusy(key);
-    setMessage(null);
-    try {
-      await fn();
-    } catch (e) {
-      setMessage(e instanceof Error ? e.message : "识别失败，请重试");
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  /** 统一取源：相册 / 拍照 / 文档三选一 */
-  const pickSource = async (
-    from: From,
-  ): Promise<
-    { imageBase64: string; mimeType: string } | { text: string } | null
-  > => {
+  /** 统一取源：相册 / 拍照 / 文档三选一，取消返回 null */
+  const pickSource = async (from: From): Promise<Source | null> => {
     if (from === "text") {
       const doc = await pickTextDocument();
       return doc ? { text: doc.text } : null;
@@ -124,11 +68,51 @@ export function ImportScreen() {
     return img ? { imageBase64: img.base64, mimeType: img.mimeType } : null;
   };
 
+  /**
+   * 识别任务统一入口：
+   * 选完素材即弹出全局进度弹窗，分析转后台（可收起为悬浮进度球），
+   * 成功 / 失败都由全局弹窗明确反馈，不依赖停留在本页
+   */
+  const startTask = async (
+    kind: TaskKind,
+    from: From,
+    analyze: (source: Source) => Promise<void>,
+  ) => {
+    const task = useImportTask.getState();
+    if (!apiKey) {
+      task.fail("请先在「设置」中填写 DeepSeek API Key，再使用 AI 导入");
+      return;
+    }
+    // 已有分析进行中：把进度弹窗带回前台，不打断后台任务
+    if (task.status === "analyzing") {
+      task.setExpanded(true);
+      return;
+    }
+
+    let source: Source | null = null;
+    try {
+      source = await pickSource(from);
+    } catch (e) {
+      useImportTask
+        .getState()
+        .fail(e instanceof Error ? e.message : "读取素材失败，请重试");
+      return;
+    }
+    if (!source) return; // 用户取消选择
+
+    useImportTask.getState().open(kind, from === "text" ? "文档" : "照片");
+    try {
+      await analyze(source);
+    } catch (e) {
+      useImportTask
+        .getState()
+        .fail(e instanceof Error ? e.message : "识别失败，请重试");
+    }
+  };
+
   /** 课程表识别：图片走视觉模型，文本走文本模型 */
-  const onSchedule = async (from: From) => {
-    await run("schedule-image", async () => {
-      const source = await pickSource(from);
-      if (!source) return;
+  const onSchedule = (from: From) =>
+    startTask("schedule", from, async (source) => {
       const schedule =
         "text" in source
           ? await recognizeScheduleFromText(source.text, apiKey)
@@ -137,64 +121,70 @@ export function ImportScreen() {
               apiKey,
               source.mimeType,
             );
+      const task = useImportTask.getState();
       if (!schedule.courses.length) {
-        setMessage("未识别到有效课程，请更换图片或补充文字说明后重试");
+        task.fail("未识别到有效课程，请更换图片或补充文字说明后重试");
         return;
       }
-      setPreview(schedule);
-      setMessage(
+      task.complete(
+        { type: "schedule", schedule },
         `识别完成：共 ${schedule.courses.length} 门课程，请确认后导入`,
       );
     });
-  };
 
-  const onPeriods = async (from: From) => {
-    await run("periods", async () => {
-      const source = await pickSource(from);
-      if (!source) return;
+  const onPeriods = (from: From) =>
+    startTask("periods", from, async (source) => {
       const periods = await recognizePeriods(source, apiKey);
-      setPeriodPreview(periods);
-      setMessage(`作息表识别完成：${periods.length} 个节次`);
+      const task = useImportTask.getState();
+      if (!periods.length) {
+        task.fail("未识别到有效作息节次，请确认素材是作息表后重试");
+        return;
+      }
+      task.complete(
+        { type: "periods", periods },
+        `作息表识别完成：${periods.length} 个节次，请确认后应用`,
+      );
     });
-  };
 
-  const onRules = async (from: From) => {
-    await run("rules", async () => {
-      const source = await pickSource(from);
-      if (!source) return;
+  const onRules = (from: From) =>
+    startTask("rules", from, async (source) => {
       const rules = await recognizeGpaRules(source, apiKey);
+      const task = useImportTask.getState();
       if (!rules.length) {
-        setMessage("未识别到换算规则，请更换图片或补充文字说明后重试");
+        task.fail("未识别到换算规则，请更换图片或补充文字说明后重试");
         return;
       }
       rules.forEach((r) => {
         const { id: _id, ...rest } = r;
         addGpaRule(rest);
       });
-      setMessage(`已导入 ${rules.length} 条绩点规则，可在「绩点」页查看`);
+      task.complete(
+        { type: "count", count: rules.length },
+        `已导入 ${rules.length} 条绩点规则，可在「绩点」页查看`,
+      );
     });
-  };
 
   /** 成绩单识别：识别课程成绩并批量写入 */
-  const onGrades = async (from: From) => {
-    await run("grades", async () => {
-      const source = await pickSource(from);
-      if (!source) return;
+  const onGrades = (from: From) =>
+    startTask("grades", from, async (source) => {
       const grades = await recognizeGrades(
         "text" in source ? { text: source.text } : source,
         apiKey,
       );
+      const task = useImportTask.getState();
       if (!grades.length) {
-        setMessage("未识别到有效成绩，请更换图片或补充文字说明后重试");
+        task.fail("未识别到有效成绩，请更换图片或补充文字说明后重试");
         return;
       }
       grades.forEach((g) => {
         const { id: _id, ...rest } = g;
         addGrade(rest);
       });
-      setMessage(`已导入 ${grades.length} 条成绩，可在「绩点」页查看`);
+      task.complete(
+        { type: "count", count: grades.length },
+        `已导入 ${grades.length} 条成绩，可在「绩点」页查看`,
+      );
     });
-  };
 
   return (
     <View className="flex-1">
@@ -225,7 +215,7 @@ export function ImportScreen() {
               <Ionicons name="information-circle" size={14} color="#94A3B8" />
               <Text className="ml-1.5 flex-1 text-[11px] leading-4 text-slate-600 dark:text-slate-300">
                 每个模块都支持「相册识图 / 拍照识别 /
-                文档导入」三种方式；文档支持 CSV、JSON、TXT 等文本格式
+                文档导入」三种方式；选择素材后会弹出分析进度弹窗，可收起为悬浮球后台分析
               </Text>
             </View>
           </Animated.View>
@@ -248,10 +238,7 @@ export function ImportScreen() {
                   </View>
                 </View>
 
-                <MethodRow
-                  busy={busy === "schedule-image"}
-                  onPick={(f) => onSchedule(f)}
-                />
+                <MethodRow onPick={onSchedule} />
               </View>
             </GlassContainer>
           </Animated.View>
@@ -272,44 +259,11 @@ export function ImportScreen() {
                       作息表识别
                     </Text>
                     <Text className="text-[11px] text-slate-500 dark:text-slate-400">
-                      识别节次与起止时间，自动替换当前作息
+                      识别节次与起止时间，确认后替换当前作息
                     </Text>
                   </View>
                 </View>
-                <MethodRow
-                  busy={busy === "periods"}
-                  onPick={(f) => onPeriods(f)}
-                />
-
-                {periodPreview?.length ? (
-                  <View className="mt-3 rounded-2xl bg-white/25 px-3 py-2.5 dark:bg-white/[0.05]">
-                    {periodPreview.slice(0, 4).map((p) => (
-                      <Text
-                        key={p.index}
-                        className="text-[10.5px] text-slate-600 dark:text-slate-300"
-                      >
-                        {p.label} · {p.startTime}–{p.endTime}
-                      </Text>
-                    ))}
-                    <Text className="mt-1 text-[10px] text-slate-400">
-                      共 {periodPreview.length} 节…
-                    </Text>
-                    <Pressable
-                      onPress={() => {
-                        if (periodPreview) {
-                          setPeriods(periodPreview);
-                          setMessage("作息表已应用到当前课表");
-                          setPeriodPreview(null);
-                        }
-                      }}
-                      className="mt-2 items-center rounded-xl bg-violet-500/80 py-2"
-                    >
-                      <Text className="text-[11px] font-bold text-white">
-                        应用作息表
-                      </Text>
-                    </Pressable>
-                  </View>
-                ) : null}
+                <MethodRow onPick={onPeriods} />
               </View>
             </GlassContainer>
           </Animated.View>
@@ -334,7 +288,7 @@ export function ImportScreen() {
                     </Text>
                   </View>
                 </View>
-                <MethodRow busy={busy === "rules"} onPick={(f) => onRules(f)} />
+                <MethodRow onPick={onRules} />
               </View>
             </GlassContainer>
           </Animated.View>
@@ -359,90 +313,10 @@ export function ImportScreen() {
                     </Text>
                   </View>
                 </View>
-                <MethodRow
-                  busy={busy === "grades"}
-                  onPick={(f) => onGrades(f)}
-                />
+                <MethodRow onPick={onGrades} />
               </View>
             </GlassContainer>
           </Animated.View>
-
-          {/* 状态提示 */}
-          {message ? (
-            <Animated.View entering={FadeInDown.springify()} className="mt-4">
-              <View className="rounded-2xl border border-sky-300/30 bg-sky-400/15 px-4 py-3 dark:border-sky-400/30 dark:bg-sky-500/15">
-                <Text className="text-[11.5px] leading-4 text-sky-700 dark:text-sky-200">
-                  {message}
-                </Text>
-              </View>
-            </Animated.View>
-          ) : null}
-
-          {/* 识别结果预览 + 导入 */}
-          {preview ? (
-            <Animated.View entering={FadeInDown.springify()} className="mt-4">
-              <GlassContainer radius={24} intensity={46} borderOpacity={0.24}>
-                <View className="px-4 py-4">
-                  <View className="flex-row items-center justify-between">
-                    <Text className="text-[14px] font-bold text-slate-800 dark:text-white">
-                      识别结果 · {preview.courses.length} 门课
-                    </Text>
-                    <Pressable onPress={() => setPreview(null)}>
-                      <Ionicons name="close-circle" size={20} color="#94A3B8" />
-                    </Pressable>
-                  </View>
-                  <ScrollView className="mt-2 max-h-[220px]">
-                    {preview.courses.map((c, i) => (
-                      <View
-                        key={`${c.name}-${i}`}
-                        className="flex-row items-center border-b border-white/10 py-2"
-                      >
-                        <View className="flex-1">
-                          <Text
-                            numberOfLines={1}
-                            className="text-[12px] font-semibold text-slate-700 dark:text-slate-200"
-                          >
-                            {c.name}
-                          </Text>
-                          <Text className="text-[10px] text-slate-500 dark:text-slate-400">
-                            周{c.weekday} · 第{c.startPeriod}–{c.endPeriod}节 ·{" "}
-                            {c.classroom} · {c.teacher}
-                          </Text>
-                        </View>
-                      </View>
-                    ))}
-                  </ScrollView>
-                  <View className="mt-3 flex-row gap-x-2.5">
-                    <Pressable
-                      onPress={() => setPreview(null)}
-                      className="flex-1 items-center rounded-2xl border border-white/20 bg-white/15 py-2.5"
-                    >
-                      <Text className="text-[12px] font-semibold text-slate-500 dark:text-slate-400">
-                        放弃
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => {
-                        if (preview) {
-                          importSchedule(preview);
-                          setMessage(
-                            "已导入当前课表，可在首页查看；开学/放假日期可在「设置」中调整",
-                          );
-                          setPreview(null);
-                          router.back();
-                        }
-                      }}
-                      className="flex-1 items-center rounded-2xl bg-sky-500/85 py-2.5"
-                    >
-                      <Text className="text-[12px] font-bold text-white">
-                        导入课表
-                      </Text>
-                    </Pressable>
-                  </View>
-                </View>
-              </GlassContainer>
-            </Animated.View>
-          ) : null}
         </ScrollView>
       </Backdrop>
     </View>

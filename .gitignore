@@ -18,6 +18,9 @@ expo-env.d.ts
 *.key
 *.mobileprovision
 
+# 签名密钥（本地备份！丢失后新版本无法覆盖安装旧版本）
+keystore/
+
 # Metro
 .metro-health-check*
 

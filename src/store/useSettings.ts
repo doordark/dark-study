@@ -1,6 +1,7 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+
+import { migratingStorage } from "@/utils/storage";
 
 interface SettingsState {
   apiKey: string;
@@ -26,8 +27,8 @@ export const useSettings = create<SettingsState>()(
       setBackgroundImage: (backgroundImage) => set({ backgroundImage }),
     }),
     {
-      name: "courseflow-settings",
-      storage: createJSONStorage(() => AsyncStorage),
+      name: "dark-study-settings",
+      storage: createJSONStorage(() => migratingStorage("courseflow-settings")),
     },
   ),
 );

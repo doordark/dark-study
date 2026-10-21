@@ -65,7 +65,11 @@ export function addDays(date: Date, days: number): Date {
 
 /** 取该日期所在周的周一（周一开始为一周之始） */
 export function mondayOf(date: Date): Date {
-  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const d = new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+  );
   const offset = (d.getDay() + 6) % 7; // 周一 = 0 ... 周日 = 6
   return addDays(d, -offset);
 }

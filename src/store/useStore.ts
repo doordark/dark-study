@@ -1,4 +1,3 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -23,9 +22,51 @@ import {
   toIsoDate,
   weeksFromDates,
 } from "@/utils/time";
+import { migratingStorage } from "@/utils/storage";
 
 const uid = () =>
   `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+
+/**
+ * 保证课程 id 唯一且非空。
+ * AI 识别产出的课程 id 为空串，直接入库会让列表 key 全部重复
+ * （React 每次渲染都报 key 错误，且编辑/冲突标记会错乱），入库前统一补齐。
+ */
+const rekeyCourses = (courses: Course[]): Course[] => {
+  const seen = new Set<string>();
+  return courses.map((c) => {
+    const id = c.id && !seen.has(c.id) ? c.id : uid();
+    seen.add(id);
+    return id === c.id ? c : { ...c, id };
+  });
+};
+
+/**
+ * 同一门课可能按每次上课拆成多条记录（如周一 3-4 节 + 周三 1-2 节），
+ * 判定为同一门课：名称 + 教师 + 教室一致。
+ */
+const sameIdentity = (a: Course, b: Course) =>
+  a.name === b.name && a.teacher === b.teacher && a.classroom === b.classroom;
+
+/** 同一门课的共享字段：改动需同步到该课的全部上课时间记录 */
+const SHARED_FIELDS = [
+  "name",
+  "teacher",
+  "classroom",
+  "color",
+  "credits",
+  "note",
+] as const;
+
+/** 从 patch 中挑出共享字段（时间字段 weekday/节次/周次 不同步，仅改本条） */
+const pickShared = (patch: Partial<Course>): Partial<Course> => {
+  const out: Partial<Course> = {};
+  for (const k of SHARED_FIELDS) {
+    const v = patch[k];
+    if (v !== undefined) (out as Record<string, unknown>)[k] = v;
+  }
+  return out;
+};
 
 /** 只更新当前选中课表 */
 const mapActive = (
@@ -34,6 +75,71 @@ const mapActive = (
 ): Partial<AppState> => ({
   schedules: s.schedules.map((x) => (x.id === s.activeScheduleId ? fn(x) : x)),
 });
+
+/**
+ * 融合计划（纯计算）：把 src 的课程换算进 dst 的作息节次与周数，
+ * 时间按真实时刻映射、周数按真实日期对齐，合并后全量冲突检测。
+ */
+function planMerge(
+  dst: Schedule,
+  src: Schedule,
+): { merged: Course[]; report: MergeReport } {
+  let skipped = 0;
+  const added: Course[] = [];
+  for (const c of src.courses) {
+    // 时间换算：源节次的真实时刻 -> 目标作息的节次
+    const { startTime, endTime } = getCourseTime(
+      src.periods,
+      c.startPeriod,
+      c.endPeriod,
+    );
+    const startP = periodAtTime(dst.periods, startTime);
+    const endP = periodEndingAtTime(dst.periods, endTime);
+    if (startP == null || endP == null) {
+      skipped++;
+      continue;
+    }
+    // 周数换算：开学日期相同时直接沿用，否则按真实日期对齐
+    const weeks =
+      src.startDate === dst.startDate
+        ? [
+            ...new Set(c.weeks.filter((w) => w >= 1 && w <= dst.totalWeeks)),
+          ].sort((a, b) => a - b)
+        : mapWeeks(
+            c.weeks,
+            c.weekday,
+            src.startDate,
+            dst.startDate,
+            dst.totalWeeks,
+          );
+    if (!weeks.length) {
+      skipped++;
+      continue;
+    }
+    added.push({
+      ...c,
+      id: uid(),
+      startPeriod: startP,
+      endPeriod: Math.max(startP, endP),
+      weeks,
+    });
+  }
+
+  // 冲突检测（合并后的全量课程）
+  const merged = [...dst.courses, ...added];
+  const conflictMap = findConflicts(merged);
+  const pairs = new Set<string>();
+  for (const [id, names] of conflictMap) {
+    const me = merged.find((x) => x.id === id);
+    if (!me) continue;
+    for (const n of names) pairs.add([me.name, n].sort().join(" × "));
+  }
+
+  return {
+    merged,
+    report: { added: added.length, skipped, conflicts: [...pairs] },
+  };
+}
 
 export type ScheduleMetaPatch = Partial<
   Pick<Schedule, "name" | "kind" | "startDate" | "endDate">
@@ -59,10 +165,20 @@ interface AppState {
    * 课程时间按真实时刻换算到当前作息，周数按真实日期换算，冲突在报告中列出。
    */
   mergeSchedule: (sourceIdOrName: string) => MergeReport;
+  /**
+   * 把识别出的课表融合进当前课表（时间/周数换算同 mergeSchedule）。
+   * opts.dryRun 为 true 时只做冲突预检，不写库。
+   */
+  mergeIncoming: (
+    incoming: Schedule,
+    opts?: { dryRun?: boolean },
+  ) => MergeReport;
 
   /* ---------------- 当前课表内容 ---------------- */
   /** 应用 DeepSeek 识别出的课表（替换当前课表的课程，保留命名与学期日期） */
   importSchedule: (schedule: Schedule) => void;
+  /** 把识别出的课表存为一份新课表，并切换为当前 */
+  addScheduleWithData: (incoming: Schedule) => string;
   addCourse: (course: Omit<Course, "id">) => string;
   updateCourse: (id: string, patch: Partial<Course>) => void;
   removeCourse: (id: string) => void;
@@ -158,75 +274,60 @@ export const useStore = create<AppState>()(
         const empty: MergeReport = { added: 0, skipped: 0, conflicts: [] };
         if (!src || !dst || src.id === dst.id) return empty;
 
-        let skipped = 0;
-        const added: Course[] = [];
-        for (const c of src.courses) {
-          // 时间换算：源节次的真实时刻 -> 目标作息的节次
-          const { startTime, endTime } = getCourseTime(
-            src.periods,
-            c.startPeriod,
-            c.endPeriod,
-          );
-          const startP = periodAtTime(dst.periods, startTime);
-          const endP = periodEndingAtTime(dst.periods, endTime);
-          if (startP == null || endP == null) {
-            skipped++;
-            continue;
-          }
-          // 周数换算：开学日期相同时直接沿用，否则按真实日期对齐
-          const weeks =
-            src.startDate === dst.startDate
-              ? [
-                  ...new Set(
-                    c.weeks.filter((w) => w >= 1 && w <= dst.totalWeeks),
-                  ),
-                ].sort((a, b) => a - b)
-              : mapWeeks(
-                  c.weeks,
-                  c.weekday,
-                  src.startDate,
-                  dst.startDate,
-                  dst.totalWeeks,
-                );
-          if (!weeks.length) {
-            skipped++;
-            continue;
-          }
-          added.push({
-            ...c,
-            id: uid(),
-            startPeriod: startP,
-            endPeriod: Math.max(startP, endP),
-            weeks,
-          });
-        }
-
-        // 冲突检测（合并后的全量课程）
-        const merged = [...dst.courses, ...added];
-        const conflictMap = findConflicts(merged);
-        const pairs = new Set<string>();
-        for (const [id, names] of conflictMap) {
-          const me = merged.find((x) => x.id === id);
-          if (!me) continue;
-          for (const n of names) pairs.add([me.name, n].sort().join(" × "));
-        }
-
+        const { merged, report } = planMerge(dst, src);
         set({
           schedules: s.schedules.map((x) =>
             x.id === dst.id ? { ...x, courses: merged } : x,
           ),
         });
-        return { added: added.length, skipped, conflicts: [...pairs] };
+        return report;
+      },
+
+      mergeIncoming: (incoming, opts) => {
+        const s = get();
+        const dst =
+          s.schedules.find((x) => x.id === s.activeScheduleId) ??
+          s.schedules[0];
+        const empty: MergeReport = { added: 0, skipped: 0, conflicts: [] };
+        if (!dst || !incoming?.courses?.length) return empty;
+
+        const { merged, report } = planMerge(dst, incoming);
+        if (!opts?.dryRun) {
+          set({
+            schedules: s.schedules.map((x) =>
+              x.id === dst.id ? { ...x, courses: merged } : x,
+            ),
+          });
+        }
+        return report;
       },
 
       importSchedule: (incoming) =>
         set((s) =>
           mapActive(s, (cur) => ({
             ...cur,
-            courses: incoming.courses,
+            courses: rekeyCourses(incoming.courses),
             periods: incoming.periods.length ? incoming.periods : cur.periods,
           })),
         ),
+
+      addScheduleWithData: (incoming) => {
+        const id = uid();
+        set((s) => ({
+          schedules: [
+            ...s.schedules,
+            {
+              ...incoming,
+              id,
+              courses: rekeyCourses(incoming.courses),
+              name:
+                incoming.name?.trim() || `导入课表 ${s.schedules.length + 1}`,
+            },
+          ],
+          activeScheduleId: id,
+        }));
+        return id;
+      },
 
       addCourse: (course) => {
         const id = uid();
@@ -241,20 +342,34 @@ export const useStore = create<AppState>()(
 
       updateCourse: (id, patch) =>
         set((s) =>
-          mapActive(s, (cur) => ({
-            ...cur,
-            courses: cur.courses.map((c) =>
-              c.id === id ? { ...c, ...patch } : c,
-            ),
-          })),
+          mapActive(s, (cur) => {
+            const target = cur.courses.find((c) => c.id === id);
+            if (!target) return cur;
+            // 共享字段（名称/教师/教室/颜色/学分/备注）同步到同一门课的
+            // 全部上课时间记录，保证日视图/周视图/AI 修改看到同一份数据；
+            // 时间字段（星期/节次/周次）只改本条记录
+            const shared = pickShared(patch);
+            return {
+              ...cur,
+              courses: cur.courses.map((c) => {
+                if (c.id === id) return { ...c, ...patch };
+                return sameIdentity(c, target) ? { ...c, ...shared } : c;
+              }),
+            };
+          }),
         ),
 
       removeCourse: (id) =>
         set((s) =>
-          mapActive(s, (cur) => ({
-            ...cur,
-            courses: cur.courses.filter((c) => c.id !== id),
-          })),
+          mapActive(s, (cur) => {
+            const target = cur.courses.find((c) => c.id === id);
+            if (!target) return cur;
+            // 「删除课程」= 删除整门课（含其全部上课时间记录）
+            return {
+              ...cur,
+              courses: cur.courses.filter((c) => !sameIdentity(c, target)),
+            };
+          }),
         ),
 
       setPeriods: (periods) =>
@@ -292,9 +407,9 @@ export const useStore = create<AppState>()(
         }),
     }),
     {
-      name: "courseflow-storage",
-      version: 2,
-      storage: createJSONStorage(() => AsyncStorage),
+      name: "dark-study-storage",
+      version: 4,
+      storage: createJSONStorage(() => migratingStorage("courseflow-storage")),
       migrate: (persisted, version) => {
         const s = (persisted ?? {}) as Record<string, any>;
         let legacy = s.schedule as Schedule | undefined;
@@ -333,6 +448,15 @@ export const useStore = create<AppState>()(
           s.schedules = [full];
           s.activeScheduleId = full.id;
           delete s.schedule;
+        }
+
+        // v<4：强制修复课程空 id / 重复 id（v3 存量与新导入统一覆盖，
+        // 否则列表 key 重复、编辑错乱、同一门课无法同步）
+        if (version < 4 && Array.isArray(s.schedules)) {
+          s.schedules = (s.schedules as Schedule[]).map((x) => ({
+            ...x,
+            courses: rekeyCourses(x.courses ?? []),
+          }));
         }
 
         return s as unknown as AppState;

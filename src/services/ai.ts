@@ -50,7 +50,14 @@ const SCHEDULE_SCHEMA_HINT = `请把识别到的课表输出为严格的 JSON（
     }
   ]
 }
-若无法确定 startDate，使用 null。`;
+要求：
+- 课程名必须完整，禁止使用省略号或任何形式的截断
+- 若无法确定 startDate，使用 null。`;
+
+/** 模型判断输入不是目标内容时输出 {"error":"NOT_TARGET"}，统一转为明确失败 */
+function ensureTarget(parsed: any, message: string): void {
+  if (parsed && typeof parsed.error === "string") throw new Error(message);
+}
 
 function normalizeCourses(raw: any): Course[] {
   if (!Array.isArray(raw)) return [];
@@ -110,7 +117,7 @@ export async function recognizeScheduleFromImage(
       content: [
         {
           type: "text",
-          text: `请识别这张课程表图片中的全部课程。\n${SCHEDULE_SCHEMA_HINT}`,
+          text: `请识别这张课程表图片中的全部课程。\n先判断这张图片是否确实是课程表；若不是，输出 {"error":"NOT_TARGET"}，绝不要凭空编造课程。\n${SCHEDULE_SCHEMA_HINT}`,
         },
         imagePart(base64, mimeType),
       ],
@@ -121,6 +128,7 @@ export async function recognizeScheduleFromImage(
     model: VISION_MODEL,
     temperature: 0.1,
   });
+  ensureTarget(parsed, "这张图片不是课程表，请更换正确的图片后重试");
 
   return buildSchedule(parsed);
 }
@@ -158,13 +166,14 @@ export async function recognizeScheduleFromText(
     { role: "system", content: "你是一个精准的中文课程表解析助手。" },
     {
       role: "user",
-      content: `请把以下课表文本（可能是 CSV / JSON / 复制粘贴的表格）解析为课程。\n${SCHEDULE_SCHEMA_HINT}\n\n课表内容：\n${text.slice(0, 12000)}`,
+      content: `请把以下课表文本（可能是 CSV / JSON / 复制粘贴的表格）解析为课程。\n先判断内容是否确实是课表；若不是，输出 {"error":"NOT_TARGET"}，绝不要凭空编造课程。\n${SCHEDULE_SCHEMA_HINT}\n\n课表内容：\n${text.slice(0, 12000)}`,
     },
   ];
   const parsed = await chatJson<any>(messages, apiKey, {
     model: TEXT_MODEL,
     temperature: 0.1,
   });
+  ensureTarget(parsed, "该文档不是课程表，请更换正确的文件后重试");
   return buildSchedule(parsed);
 }
 
@@ -174,7 +183,7 @@ export async function recognizePeriods(
   apiKey: string,
 ): Promise<Period[]> {
   const parts: ChatContent["content"] = [];
-  const text = `请识别作息表中的节次与起止时间。输出严格 JSON：{"periods":[{"index":1,"label":"第1节","startTime":"08:00","endTime":"08:45"}]}，时间用 24 小时制 HH:mm。${
+  const text = `请识别作息表中的节次与起止时间。先判断输入是否确实是作息表（上下课时间表）；若不是，输出 {"error":"NOT_TARGET"}，绝不要凭空编造时间。输出严格 JSON：{"periods":[{"index":1,"label":"第1节","startTime":"08:00","endTime":"08:45"}]}，时间用 24 小时制 HH:mm。${
     source.text ? `\n作息内容：\n${source.text.slice(0, 8000)}` : ""
   }`;
   if (source.imageBase64) {
@@ -187,6 +196,12 @@ export async function recognizePeriods(
     [{ role: "user", content: parts }],
     apiKey,
     { model: source.imageBase64 ? VISION_MODEL : TEXT_MODEL, temperature: 0.1 },
+  );
+  ensureTarget(
+    parsed,
+    source.imageBase64
+      ? "这张图片不是作息表，请更换正确的作息表（上下课时间表）后重试"
+      : "该文档不是作息表，请更换正确的作息表（上下课时间表）后重试",
   );
 
   const periods = Array.isArray(parsed?.periods)
@@ -206,7 +221,8 @@ export async function recognizePeriods(
         )
         .map((p: Period, i: number) => ({ ...p, index: i + 1 }))
     : [];
-  return periods.length ? periods : DEFAULT_PERIODS;
+  // 不兜底默认作息：识别不出就明确失败，绝不凭空编造时间
+  return periods;
 }
 
 /** 从成绩换算规则（文本/图片）解析绩点档位 */
@@ -214,7 +230,7 @@ export async function recognizeGpaRules(
   source: { imageBase64?: string; text?: string },
   apiKey: string,
 ): Promise<GpaRule[]> {
-  const instruction = `请解析绩点/成绩换算规则。输出严格 JSON：
+  const instruction = `请解析绩点/成绩换算规则。先判断输入是否确实是绩点/成绩换算规则；若不是，输出 {"error":"NOT_TARGET"}，绝不要凭空编造规则。输出严格 JSON：
 {
   "rules": [
     {
@@ -245,6 +261,12 @@ export async function recognizeGpaRules(
     [{ role: "user", content: parts }],
     apiKey,
     { model: source.imageBase64 ? VISION_MODEL : TEXT_MODEL, temperature: 0.1 },
+  );
+  ensureTarget(
+    parsed,
+    source.imageBase64
+      ? "这张图片不包含绩点换算规则，请更换正确的图片后重试"
+      : "该文档不包含绩点换算规则，请更换正确的文件后重试",
   );
 
   const raw = Array.isArray(parsed?.rules)
@@ -283,7 +305,7 @@ export async function recognizeGrades(
   source: { imageBase64?: string; text?: string; mimeType?: string },
   apiKey: string,
 ): Promise<GradeRecord[]> {
-  const instruction = `请识别成绩单/成绩截图中的全部课程成绩。输出严格 JSON：
+  const instruction = `请识别成绩单/成绩截图中的全部课程成绩。先判断输入是否确实是成绩单；若不是，输出 {"error":"NOT_TARGET"}，绝不要凭空编造成绩。输出严格 JSON：
 {
   "grades": [
     {
@@ -320,6 +342,12 @@ export async function recognizeGrades(
       model: source.imageBase64 ? VISION_MODEL : TEXT_MODEL,
       temperature: 0.1,
     },
+  );
+  ensureTarget(
+    parsed,
+    source.imageBase64
+      ? "这张图片不是成绩单，请更换正确的图片后重试"
+      : "该文档不是成绩单，请更换正确的文件后重试",
   );
 
   const raw = Array.isArray(parsed?.grades)

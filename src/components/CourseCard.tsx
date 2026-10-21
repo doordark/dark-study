@@ -104,117 +104,126 @@ export function CourseCard({
   }));
 
   return (
-    <Animated.View
-      entering={FadeInDown.delay(index * 70).springify()}
-      style={pressStyle}
-    >
-      <GestureDetector gesture={gesture}>
-        <View>
-          <GlassContainer
-            radius={24}
-            borderOpacity={active ? 0 : 0.16}
-            style={
-              active
-                ? { backgroundColor: palette.solid, borderColor: "transparent" }
-                : { opacity: 0.94 }
-            }
-          >
-            <View className="relative px-4 py-3.5">
-              {/* 进行中 胶囊标签 */}
-              {active ? (
-                <View className="absolute right-10 top-10 flex-row items-center rounded-full border border-white/40 bg-white/25 px-2.5 py-1">
-                  <View className="mr-1.5 h-1.5 w-1.5 rounded-full bg-white" />
-                  <Text className="text-[10px] font-semibold tracking-wide text-white">
-                    进行中
-                  </Text>
-                </View>
-              ) : null}
-
-              {/* 课程名 */}
-              <Text
-                numberOfLines={2}
-                className={`pr-12 text-[15px] font-bold leading-5 ${
-                  active ? "text-white" : "text-slate-800 dark:text-slate-100"
-                }`}
-              >
-                {course.name}
-              </Text>
-
-              {/* 时间 + 冲突提示 */}
-              <View className="mt-1.5 flex-row items-center">
-                <Text
-                  className={`text-[11px] font-medium ${
-                    active
-                      ? "text-white/85"
-                      : "text-slate-500 dark:text-slate-400"
-                  }`}
-                >
-                  {time.startTime}–{time.endTime}
-                </Text>
-                {conflict ? (
-                  <View className="ml-2 flex-row items-center rounded-full border border-amber-400/50 bg-amber-400/25 px-2 py-0.5">
-                    <Ionicons name="warning" size={9} color="#F59E0B" />
-                    <Text className="ml-1 text-[9px] font-bold text-amber-600 dark:text-amber-300">
-                      时间冲突
+    /* 入场动画与按压缩放必须分层：布局动画(FadeInDown)会写 transform，
+       与 pressStyle 的 scale 挂在同一节点会冲突（Reanimated 告警 + Android 端
+       卡片卸载时反复抛原生错误），按官方建议外层管入场、内层管缩放 */
+    <Animated.View entering={FadeInDown.delay(index * 70).springify()}>
+      <Animated.View style={pressStyle}>
+        <GestureDetector gesture={gesture}>
+          <View>
+            <GlassContainer
+              radius={24}
+              borderOpacity={active ? 0 : 0.16}
+              style={
+                active
+                  ? {
+                      backgroundColor: palette.solid,
+                      borderColor: "transparent",
+                    }
+                  : { opacity: 0.94 }
+              }
+            >
+              <View className="relative px-4 py-3.5">
+                {/* 进行中 胶囊标签 */}
+                {active ? (
+                  <View className="absolute right-10 top-10 flex-row items-center rounded-full border border-white/40 bg-white/25 px-2.5 py-1">
+                    <View className="mr-1.5 h-1.5 w-1.5 rounded-full bg-white" />
+                    <Text className="text-[10px] font-semibold tracking-wide text-white">
+                      进行中
                     </Text>
                   </View>
                 ) : null}
-              </View>
 
-              {/* 教师 / 教室 */}
-              <View className="mt-1 gap-y-0.5">
+                {/* 课程名：不设 lineHeight —— Android 端 lineHeight + numberOfLines
+                  会按 lineHeight×行数算高度，第二行被提前省略号截断；
+                  右侧留白仅在显示「进行中」胶囊时需要 */}
                 <Text
-                  numberOfLines={1}
-                  className={`text-[11px] ${
+                  numberOfLines={2}
+                  className={`text-[15px] font-bold ${
                     active
-                      ? "text-white/85"
-                      : "text-slate-500 dark:text-slate-400"
+                      ? "pr-12 text-white"
+                      : "text-slate-800 dark:text-slate-100"
                   }`}
                 >
-                  {course.teacher}
+                  {course.name}
                 </Text>
-                <View className="flex-row items-center">
-                  <View
-                    className={`mr-1 h-1.5 w-1.5 rounded-full ${
-                      active ? "bg-white/85" : palette.bar
-                    }`}
-                  />
+
+                {/* 时间 + 冲突提示 */}
+                <View className="mt-1.5 flex-row items-center">
                   <Text
-                    numberOfLines={1}
-                    className={`flex-1 text-[11px] font-medium ${
-                      active ? "text-white/95" : palette.text
+                    className={`text-[11px] font-medium ${
+                      active
+                        ? "text-white/85"
+                        : "text-slate-500 dark:text-slate-400"
                     }`}
                   >
-                    {course.classroom}
+                    {time.startTime}–{time.endTime}
                   </Text>
+                  {conflict ? (
+                    <View className="ml-2 flex-row items-center rounded-full border border-amber-400/50 bg-amber-400/25 px-2 py-0.5">
+                      <Ionicons name="warning" size={9} color="#F59E0B" />
+                      <Text className="ml-1 text-[9px] font-bold text-amber-600 dark:text-amber-300">
+                        时间冲突
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+
+                {/* 教师 / 教室 */}
+                <View className="mt-1 gap-y-0.5">
+                  <Text
+                    numberOfLines={1}
+                    className={`text-[11px] ${
+                      active
+                        ? "text-white/85"
+                        : "text-slate-500 dark:text-slate-400"
+                    }`}
+                  >
+                    {course.teacher}
+                  </Text>
+                  <View className="flex-row items-center">
+                    <View
+                      className={`mr-1 h-1.5 w-1.5 rounded-full ${
+                        active ? "bg-white/85" : palette.bar
+                      }`}
+                    />
+                    <Text
+                      numberOfLines={1}
+                      className={`flex-1 text-[11px] font-medium ${
+                        active ? "text-white/95" : palette.text
+                      }`}
+                    >
+                      {course.classroom}
+                    </Text>
+                  </View>
                 </View>
               </View>
-            </View>
-          </GlassContainer>
+            </GlassContainer>
 
-          {/* 呼吸光晕（覆盖在卡片上层的描边，靠 opacity 呼吸）：
+            {/* 呼吸光晕（覆盖在卡片上层的描边，靠 opacity 呼吸）：
               不用 Android elevation 阴影 —— 转场/缩放动画时会被光栅化成
               实心灰块，且会强制抬升 z 层级盖住卡片内容 */}
-          {active ? (
-            <Animated.View
-              pointerEvents="none"
-              style={[
-                {
-                  position: "absolute",
-                  top: 0,
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  borderRadius: 24,
-                  borderWidth: 2,
-                  borderColor: "#FFFFFF",
-                },
-                glowStyle,
-              ]}
-            />
-          ) : null}
-        </View>
-      </GestureDetector>
+            {active ? (
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  {
+                    position: "absolute",
+                    top: 0,
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    borderRadius: 24,
+                    borderWidth: 2,
+                    borderColor: "#FFFFFF",
+                  },
+                  glowStyle,
+                ]}
+              />
+            ) : null}
+          </View>
+        </GestureDetector>
+      </Animated.View>
     </Animated.View>
   );
 }

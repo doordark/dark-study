@@ -6,6 +6,7 @@ import { router } from "expo-router";
 import { colorScheme } from "nativewind";
 import React, { useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Image,
   Modal,
@@ -24,7 +25,14 @@ import {
   GlassTargetProvider,
 } from "@/components/GlassContainer";
 import { pickImageForBackground } from "@/services/fileImport";
+import {
+  currentVersion,
+  formatBytes,
+  isAndroid,
+  openInstallPermissionSettings,
+} from "@/services/updater";
 import { useSettings } from "@/store/useSettings";
+import { useUpdateTask } from "@/store/useUpdateTask";
 import { useActiveSchedule, useStore } from "@/store/useStore";
 import type { Schedule } from "@/types";
 import {
@@ -73,6 +81,213 @@ function DateRow({
         color="#94A3B8"
         style={{ marginLeft: 3 }}
       />
+    </Pressable>
+  );
+}
+
+/** 「检查更新」卡片：GitHub Releases 发现新版本 → 下载 APK → 调起安装器覆盖安装 */
+function UpdateCard() {
+  const phase = useUpdateTask((s) => s.phase);
+  const info = useUpdateTask((s) => s.info);
+  const progress = useUpdateTask((s) => s.progress);
+  const message = useUpdateTask((s) => s.message);
+  const check = useUpdateTask((s) => s.check);
+  const download = useUpdateTask((s) => s.download);
+  const cancelDownload = useUpdateTask((s) => s.cancelDownload);
+  const install = useUpdateTask((s) => s.install);
+
+  const version = currentVersion();
+
+  /* 非 Android 端仅作展示（网页 / iOS 无 APK 安装通道） */
+  if (!isAndroid()) {
+    return (
+      <Animated.View
+        entering={FadeInDown.delay(420).springify()}
+        className="mt-3.5"
+      >
+        <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
+          <View className="px-4 py-4">
+            <Text className="text-[14px] font-bold text-slate-800 dark:text-white">
+              检查更新
+            </Text>
+            <Text className="mt-1 text-[10.5px] text-slate-500 dark:text-slate-400">
+              当前版本 v{version} · 应用内更新仅支持 Android
+            </Text>
+          </View>
+        </GlassContainer>
+      </Animated.View>
+    );
+  }
+
+  return (
+    <Animated.View
+      entering={FadeInDown.delay(420).springify()}
+      className="mt-3.5"
+    >
+      <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
+        <View className="px-4 py-4">
+          <View className="mb-3 flex-row items-center">
+            <View className="h-9 w-9 items-center justify-center rounded-[13px] bg-sky-400/25">
+              <Ionicons
+                name="cloud-download-outline"
+                size={16}
+                color="#38BDF8"
+              />
+            </View>
+            <View className="ml-2.5 flex-1">
+              <Text className="text-[14px] font-bold text-slate-800 dark:text-white">
+                检查更新
+              </Text>
+              <Text className="text-[10.5px] text-slate-500 dark:text-slate-400">
+                当前版本 v{version} · 新版本发布在 GitHub Releases
+              </Text>
+            </View>
+          </View>
+
+          {phase === "idle" ? (
+            <>
+              <Text className="mb-3 text-[11px] text-slate-500 dark:text-slate-400">
+                检查是否有新版本，下载后覆盖安装，课程与设置数据自动保留
+              </Text>
+              <PrimaryBtn label="检查更新" onPress={check} />
+            </>
+          ) : null}
+
+          {phase === "checking" ? (
+            <View className="flex-row items-center rounded-2xl bg-white/20 px-3.5 py-3 dark:bg-white/[0.05]">
+              <ActivityIndicator size="small" color="#38BDF8" />
+              <Text className="ml-2.5 text-[12px] text-slate-600 dark:text-slate-300">
+                正在检查新版本…
+              </Text>
+            </View>
+          ) : null}
+
+          {phase === "upToDate" ? (
+            <View className="flex-row items-center rounded-2xl bg-emerald-400/15 px-3.5 py-3">
+              <Ionicons name="checkmark-circle" size={16} color="#34D399" />
+              <Text className="ml-2 flex-1 text-[12px] font-semibold text-emerald-600 dark:text-emerald-300">
+                已是最新版本 v{info?.version ?? version}
+              </Text>
+              <Pressable onPress={check} hitSlop={8}>
+                <Text className="text-[11px] font-semibold text-sky-600 dark:text-sky-300">
+                  再查一次
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {phase === "available" && info ? (
+            <>
+              <View className="rounded-2xl bg-white/20 px-3.5 py-3 dark:bg-white/[0.05]">
+                <View className="flex-row items-center">
+                  <Ionicons name="arrow-up-circle" size={15} color="#38BDF8" />
+                  <Text className="ml-1.5 flex-1 text-[12.5px] font-bold text-slate-700 dark:text-slate-200">
+                    发现新版本 v{info.version}
+                    {info.apkSize ? ` · ${formatBytes(info.apkSize)}` : ""}
+                  </Text>
+                </View>
+                {info.publishedAt ? (
+                  <Text className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">
+                    发布于 {formatDateLabel(info.publishedAt.slice(0, 10))}
+                  </Text>
+                ) : null}
+                {info.notes ? (
+                  <View className="mt-2 rounded-xl border border-white/15 bg-white/15 px-2.5 py-2 dark:border-white/10 dark:bg-white/[0.04]">
+                    <Text className="text-[10.5px] text-slate-500 dark:text-slate-400">
+                      {info.notes}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+              {message ? (
+                <Text className="mt-2 text-[10.5px] text-amber-600 dark:text-amber-300">
+                  {message}
+                </Text>
+              ) : null}
+              <PrimaryBtn
+                label={`下载更新${info.apkSize ? `（${formatBytes(info.apkSize)}）` : ""}`}
+                onPress={download}
+              />
+            </>
+          ) : null}
+
+          {phase === "downloading" ? (
+            <>
+              <View className="h-1.5 overflow-hidden rounded-full bg-sky-400/15">
+                <View
+                  className="h-full rounded-full bg-sky-400"
+                  style={{
+                    width: `${Math.max(2, Math.round(progress * 100))}%`,
+                  }}
+                />
+              </View>
+              <View className="mt-2 flex-row items-center justify-between">
+                <Text className="text-[11px] text-slate-500 dark:text-slate-400">
+                  下载中 {Math.round(progress * 100)}%
+                </Text>
+                <Pressable onPress={cancelDownload} hitSlop={8}>
+                  <Text className="text-[11px] font-semibold text-rose-400">
+                    取消
+                  </Text>
+                </Pressable>
+              </View>
+            </>
+          ) : null}
+
+          {phase === "downloaded" ? (
+            <>
+              <View className="flex-row items-center rounded-2xl bg-emerald-400/15 px-3.5 py-3">
+                <Ionicons name="checkmark-circle" size={16} color="#34D399" />
+                <Text className="ml-2 flex-1 text-[12px] font-semibold text-emerald-600 dark:text-emerald-300">
+                  安装包已就绪
+                </Text>
+              </View>
+              <PrimaryBtn label="立即安装" onPress={install} />
+              <Text className="mt-2 text-[10px] text-slate-400 dark:text-slate-500">
+                覆盖安装不会丢失数据；如无反应，请先在
+                <Text
+                  className="text-sky-500 dark:text-sky-300"
+                  onPress={() => {
+                    openInstallPermissionSettings().catch(() => {});
+                  }}
+                >
+                  系统设置
+                </Text>
+                中允许本应用「安装未知应用」
+              </Text>
+            </>
+          ) : null}
+
+          {phase === "error" ? (
+            <>
+              <View className="rounded-2xl bg-rose-400/15 px-3.5 py-3">
+                <Text className="text-[11.5px] text-rose-500 dark:text-rose-300">
+                  {message || "检查更新失败，请检查网络后重试"}
+                </Text>
+              </View>
+              <PrimaryBtn label="重试" onPress={check} />
+            </>
+          ) : null}
+        </View>
+      </GlassContainer>
+    </Animated.View>
+  );
+}
+
+/** 更新卡片的主按钮 */
+function PrimaryBtn({
+  label,
+  onPress,
+}: {
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      className="mt-3 items-center rounded-2xl bg-sky-500/85 py-2.5"
+    >
+      <Text className="text-[12px] font-bold text-white">{label}</Text>
     </Pressable>
   );
 }
@@ -554,8 +769,11 @@ export function SettingsScreen() {
             </GlassContainer>
           </Animated.View>
 
+          {/* 检查更新 */}
+          <UpdateCard />
+
           <Text className="mt-6 text-center text-[10px] text-slate-400 dark:text-slate-500">
-            CourseFlow · HyperOS 4 Design System
+            dark-study v{currentVersion()} · HyperOS 4 Design System
           </Text>
         </ScrollView>
 

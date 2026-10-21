@@ -6,10 +6,20 @@ import {
   ScrollView,
   Text,
   View,
+  useWindowDimensions,
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import Animated, { FadeInDown, FadeOutDown } from "react-native-reanimated";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, {
+  FadeInDown,
+  FadeOutDown,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from "react-native-reanimated";
 
 import { ActionBar, type ActionItem } from "@/components/ActionBar";
 import { Backdrop } from "@/components/Backdrop";
@@ -97,6 +107,60 @@ export function CourseScheduleScreen({
         .sort((a, b) => a.startPeriod - b.startPeriod),
     [schedule.courses, weekday, activeWeek],
   );
+
+  /* ---------------- 日视图：左右滑动切换星期 ---------------- */
+  const winW = useWindowDimensions().width;
+  const dayTx = useSharedValue(0);
+  const prevWeekdayRef = React.useRef(weekday);
+
+  // 星期变化（滑动/点选）后新内容从对应侧滑入
+  React.useEffect(() => {
+    if (prevWeekdayRef.current === weekday) return;
+    const dir = weekday > prevWeekdayRef.current ? 1 : -1;
+    prevWeekdayRef.current = weekday;
+    dayTx.value = dir * winW;
+    dayTx.value = withSpring(0, { damping: 18, stiffness: 160 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weekday]);
+
+  const dayGesture = React.useMemo(
+    () =>
+      Gesture.Pan()
+        // 横向明显移动才激活，纵向滑动交还给列表滚动
+        .activeOffsetX([-20, 20])
+        .failOffsetY([-12, 12])
+        .onUpdate((e) => {
+          let t = e.translationX;
+          // 边界阻尼：周一继续右滑 / 周日继续左滑产生阻力
+          if ((weekday === 1 && t > 0) || (weekday === 7 && t < 0)) t *= 0.25;
+          dayTx.value = t;
+        })
+        .onEnd((e) => {
+          const dir = e.translationX < 0 ? 1 : -1;
+          const next = weekday + dir;
+          const go =
+            (Math.abs(e.translationX) > 60 || Math.abs(e.velocityX) > 500) &&
+            next >= 1 &&
+            next <= 7;
+          if (go) {
+            // 旧内容滑出后切换星期，effect 再把新内容滑入
+            dayTx.value = withTiming(
+              -dir * winW,
+              { duration: 180 },
+              (fin) => {
+                if (fin) runOnJS(setWeekday)(next);
+              },
+            );
+          } else {
+            dayTx.value = withSpring(0, { damping: 18, stiffness: 160 });
+          }
+        }),
+    [weekday, winW, dayTx],
+  );
+
+  const daySlideStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: dayTx.value }],
+  }));
 
   const handleSave = (draft: Omit<Course, "id"> & { id?: string }) => {
     if (draft.id) {
@@ -259,8 +323,9 @@ export function CourseScheduleScreen({
           </ScrollView>
         </Animated.View>
 
-        {/* ---------- 星期选择 ---------- */}
-        <Animated.View entering={FadeInDown.delay(140).springify()}>
+        {/* ---------- 星期选择（仅日视图：周视图由网格自带星期表头，避免冗余） ---------- */}
+        {mode === "day" ? (
+          <Animated.View entering={FadeInDown.delay(140).springify()}>
           <View className="mt-1.5 px-4">
             <GlassContainer radius={16} intensity={42} borderOpacity={0.2}>
               <View className="flex-row p-1">
@@ -302,11 +367,15 @@ export function CourseScheduleScreen({
               </View>
             </GlassContainer>
           </View>
-        </Animated.View>
+          </Animated.View>
+        ) : null}
 
         {/* ---------- 内容 ---------- */}
         <View className="mt-2 flex-1">
           {mode === "day" ? (
+            /* 左右滑动切换星期：横向拖动手势，纵向滑动交还列表 */
+            <GestureDetector gesture={dayGesture}>
+              <Animated.View style={[{ flex: 1 }, daySlideStyle]}>
             <ScrollView
               className="flex-1"
               contentContainerStyle={{
@@ -385,16 +454,20 @@ export function CourseScheduleScreen({
                 </View>
               )}
             </ScrollView>
+              </Animated.View>
+            </GestureDetector>
           ) : (
             <View className="flex-1 px-2">
               <WeekGrid
                 courses={schedule.courses}
                 periods={schedule.periods}
                 weekIndex={activeWeek}
+                weekCount={totalWeeks}
                 selectedWeekday={weekday}
                 conflicts={conflicts}
                 onPickDay={setWeekday}
                 onPickCourse={(c) => openEdit(c)}
+                onWeekChange={setWeekIndex}
               />
             </View>
           )}
