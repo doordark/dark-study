@@ -33,6 +33,10 @@ yarn-error.*
 .DS_Store
 *.pem
 
+# build artifacts (发版产物走 GitHub Releases，不入库)
+*.apk
+*.aab
+
 # local env files
 .env
 .env.*

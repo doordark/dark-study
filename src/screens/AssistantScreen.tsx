@@ -8,13 +8,13 @@ import {
   Pressable,
   ScrollView,
   Text,
-  TextInput,
   View,
   type ScrollViewInstance,
 } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 
 import { Backdrop } from "@/components/Backdrop";
+import { ChatInputBar } from "@/components/ChatInputBar";
 import { GlassContainer } from "@/components/GlassContainer";
 import { askAssistant } from "@/services/ai";
 import type { AssistantResult } from "@/services/ai";
@@ -402,36 +402,14 @@ export function AssistantScreen() {
             ) : null}
           </ScrollView>
 
-          {/* 输入区 */}
-          <View className="px-5 pb-3">
-            <GlassContainer radius={22} intensity={54} borderOpacity={0.26}>
-              <View className="flex-row items-center px-3 py-2">
-                <TextInput
-                  value={input}
-                  onChangeText={setInput}
-                  placeholder="例如：把周四的课和周五的换一下…"
-                  placeholderTextColor="rgba(148,163,184,0.7)"
-                  className="flex-1 px-2 py-1.5 text-[13px] text-slate-800 dark:text-slate-100"
-                  onSubmitEditing={() => send(input)}
-                  returnKeyType="send"
-                  editable={!busy}
-                />
-                <Pressable
-                  onPress={() => send(input)}
-                  disabled={busy || !input.trim()}
-                  className={`ml-2 h-9 w-9 items-center justify-center rounded-full ${
-                    busy || !input.trim() ? "bg-slate-300/50" : "bg-sky-500/85"
-                  }`}
-                >
-                  {busy ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Ionicons name="arrow-up" size={16} color="#fff" />
-                  )}
-                </Pressable>
-              </View>
-            </GlassContainer>
-          </View>
+          {/* 输入区：独立组件，实心表面与背景彻底分离 */}
+          <ChatInputBar
+            value={input}
+            onChangeText={setInput}
+            onSend={() => send(input)}
+            busy={busy}
+            bottomInset={kbHeight > 0 ? 10 : undefined}
+          />
         </View>
       </Backdrop>
     </View>

@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import * as Network from "expo-network";
 import { router } from "expo-router";
 import React from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
@@ -18,12 +19,28 @@ import {
   recognizeScheduleFromImage,
   recognizeScheduleFromText,
 } from "@/services/ai";
+import {
+  recognizeScheduleFromTextOffline,
+  recognizeScheduleOffline,
+} from "@/services/offlineImport";
 import { useImportTask, type TaskKind } from "@/store/useImportTask";
 import { useSettings } from "@/store/useSettings";
 import { useStore } from "@/store/useStore";
 
 type From = "image" | "camera" | "text";
-type Source = { imageBase64: string; mimeType: string } | { text: string };
+type Source =
+  | { imageBase64: string; mimeType: string; uri: string }
+  | { text: string };
+
+/** 网络可用性：连不上或不可达都按离线处理 */
+async function isOnline(): Promise<boolean> {
+  try {
+    const state = await Network.getNetworkStateAsync();
+    return !!state.isConnected && state.isInternetReachable !== false;
+  } catch {
+    return true;
+  }
+}
 
 /** 统一导入方式行：相册识图 / 拍照识别 / 文档导入，四个模块一致 */
 function MethodRow({ onPick }: { onPick: (from: From) => void }) {
@@ -65,7 +82,9 @@ export function ImportScreen() {
       from === "image"
         ? await pickImageFromLibrary()
         : await pickImageFromCamera();
-    return img ? { imageBase64: img.base64, mimeType: img.mimeType } : null;
+    return img
+      ? { imageBase64: img.base64, mimeType: img.mimeType, uri: img.uri }
+      : null;
   };
 
   /**
@@ -79,10 +98,6 @@ export function ImportScreen() {
     analyze: (source: Source) => Promise<void>,
   ) => {
     const task = useImportTask.getState();
-    if (!apiKey) {
-      task.fail("请先在「设置」中填写 DeepSeek API Key，再使用 AI 导入");
-      return;
-    }
     // 已有分析进行中：把进度弹窗带回前台，不打断后台任务
     if (task.status === "analyzing") {
       task.setExpanded(true);
@@ -110,32 +125,59 @@ export function ImportScreen() {
     }
   };
 
-  /** 课程表识别：图片走视觉模型，文本走文本模型 */
+  /**
+   * 课程表识别：联网且已配置 Key 时走云端视觉模型（准确率更高），
+   * 否则自动切换设备端离线识别（ML Kit OCR + 规则解析），不联网也能导入。
+   */
   const onSchedule = (from: From) =>
     startTask("schedule", from, async (source) => {
-      const schedule =
-        "text" in source
-          ? await recognizeScheduleFromText(source.text, apiKey)
-          : await recognizeScheduleFromImage(
-              source.imageBase64,
-              apiKey,
-              source.mimeType,
-            );
       const task = useImportTask.getState();
+      const online = await isOnline();
+      const useAI = online && !!apiKey;
+
+      let schedule;
+      if (useAI) {
+        schedule =
+          "text" in source
+            ? await recognizeScheduleFromText(source.text, apiKey)
+            : await recognizeScheduleFromImage(
+                source.imageBase64,
+                apiKey,
+                source.mimeType,
+              );
+      } else {
+        task.setPhase(
+          "text" in source
+            ? "离线模式：正在按规则解析文本…"
+            : "离线模式：正在本地识别图片文字…",
+          40,
+        );
+        schedule =
+          "text" in source
+            ? recognizeScheduleFromTextOffline(source.text)
+            : await recognizeScheduleOffline(source.uri);
+      }
+
       if (!schedule.courses.length) {
         task.fail("未识别到有效课程，请更换图片或补充文字说明后重试");
         return;
       }
       task.complete(
         { type: "schedule", schedule },
-        `识别完成：共 ${schedule.courses.length} 门课程，请确认后导入`,
+        `${useAI ? "AI 识别" : "离线识别"}完成：共 ${schedule.courses.length} 门课程，请确认后导入`,
       );
     });
 
   const onPeriods = (from: From) =>
     startTask("periods", from, async (source) => {
-      const periods = await recognizePeriods(source, apiKey);
       const task = useImportTask.getState();
+      if (!apiKey) {
+        task.fail(
+          "作息表识别暂只支持在线模式，请先在「设置」填写 DeepSeek API Key",
+        );
+        return;
+      }
+      const periods = await recognizePeriods(source, apiKey);
       if (!periods.length) {
         task.fail("未识别到有效作息节次，请确认素材是作息表后重试");
         return;
@@ -148,8 +190,14 @@ export function ImportScreen() {
 
   const onRules = (from: From) =>
     startTask("rules", from, async (source) => {
-      const rules = await recognizeGpaRules(source, apiKey);
       const task = useImportTask.getState();
+      if (!apiKey) {
+        task.fail(
+          "绩点规则识别暂只支持在线模式，请先在「设置」填写 DeepSeek API Key",
+        );
+        return;
+      }
+      const rules = await recognizeGpaRules(source, apiKey);
       if (!rules.length) {
         task.fail("未识别到换算规则，请更换图片或补充文字说明后重试");
         return;
@@ -167,11 +215,17 @@ export function ImportScreen() {
   /** 成绩单识别：识别课程成绩并批量写入 */
   const onGrades = (from: From) =>
     startTask("grades", from, async (source) => {
+      const task = useImportTask.getState();
+      if (!apiKey) {
+        task.fail(
+          "成绩单识别暂只支持在线模式，请先在「设置」填写 DeepSeek API Key",
+        );
+        return;
+      }
       const grades = await recognizeGrades(
         "text" in source ? { text: source.text } : source,
         apiKey,
       );
-      const task = useImportTask.getState();
       if (!grades.length) {
         task.fail("未识别到有效成绩，请更换图片或补充文字说明后重试");
         return;
@@ -215,7 +269,8 @@ export function ImportScreen() {
               <Ionicons name="information-circle" size={14} color="#94A3B8" />
               <Text className="ml-1.5 flex-1 text-[11px] leading-4 text-slate-600 dark:text-slate-300">
                 每个模块都支持「相册识图 / 拍照识别 /
-                文档导入」三种方式；选择素材后会弹出分析进度弹窗，可收起为悬浮球后台分析
+                文档导入」三种方式。课程表识别在联网且有 API Key 时走
+                AI，断网或无 Key 时自动切换本地离线识别
               </Text>
             </View>
           </Animated.View>

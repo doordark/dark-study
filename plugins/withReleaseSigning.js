@@ -22,18 +22,35 @@ const DEFAULTS = {
   KEY_PASSWORD: "darkstudy2026",
 };
 
+/** 构建期 gradle 属性：控制产物体积（prebuild 重生成时自动补回） */
+const GRADLE_PROPS = {
+  // 只打 arm64-v8a：真机无需其他 ABI，APK 直接减半
+  reactNativeArchitectures: "arm64-v8a",
+  // 资源裁剪（移除未被引用的 drawable/布局/字符串）
+  "android.enableShrinkResourcesInReleaseBuilds": "true",
+  // 不使用 RN Image 的 GIF/WebP 解码（图片统一走 expo-image），省掉对应 native 库
+  "expo.gif.enabled": "false",
+  "expo.webp.enabled": "false",
+};
+
+function applyProps(props, map) {
+  for (const [key, value] of Object.entries(map)) {
+    const existing = props.find((p) => p.type === "property" && p.key === key);
+    if (existing) existing.value = value;
+    else props.push({ type: "property", key, value });
+  }
+}
+
 function withReleaseSigning(config) {
-  // 1) 写入 gradle.properties：签名参数
+  // 1) 写入 gradle.properties：签名参数 + 体积优化开关
   config = withGradleProperties(config, (cfg) => {
     const props = cfg.modResults;
+    const signing = {};
     for (const [suffix, value] of Object.entries(DEFAULTS)) {
-      const key = PREFIX + suffix;
-      const existing = props.find(
-        (p) => p.type === "property" && p.key === key,
-      );
-      if (existing) existing.value = value;
-      else props.push({ type: "property", key, value });
+      signing[PREFIX + suffix] = value;
     }
+    applyProps(props, signing);
+    applyProps(props, GRADLE_PROPS);
     return cfg;
   });
 

@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
+  Easing,
   FadeInDown,
   FadeOutDown,
   runOnJS,
@@ -113,13 +114,16 @@ export function CourseScheduleScreen({
   const dayTx = useSharedValue(0);
   const prevWeekdayRef = React.useRef(weekday);
 
-  // 星期变化（滑动/点选）后新内容从对应侧滑入
+  // 星期变化（滑动/点选）后新内容从对应侧滑入：缓动进入，不做回弹
   React.useEffect(() => {
     if (prevWeekdayRef.current === weekday) return;
     const dir = weekday > prevWeekdayRef.current ? 1 : -1;
     prevWeekdayRef.current = weekday;
     dayTx.value = dir * winW;
-    dayTx.value = withSpring(0, { damping: 18, stiffness: 160 });
+    dayTx.value = withTiming(0, {
+      duration: 210,
+      easing: Easing.out(Easing.cubic),
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weekday]);
 
@@ -144,15 +148,15 @@ export function CourseScheduleScreen({
             next <= 7;
           if (go) {
             // 旧内容滑出后切换星期，effect 再把新内容滑入
-            dayTx.value = withTiming(
-              -dir * winW,
-              { duration: 180 },
-              (fin) => {
-                if (fin) runOnJS(setWeekday)(next);
-              },
-            );
+            dayTx.value = withTiming(-dir * winW, { duration: 180 }, (fin) => {
+              if (fin) runOnJS(setWeekday)(next);
+            });
           } else {
-            dayTx.value = withSpring(0, { damping: 18, stiffness: 160 });
+            dayTx.value = withSpring(0, {
+              damping: 26,
+              stiffness: 240,
+              mass: 1,
+            });
           }
         }),
     [weekday, winW, dayTx],
@@ -326,47 +330,47 @@ export function CourseScheduleScreen({
         {/* ---------- 星期选择（仅日视图：周视图由网格自带星期表头，避免冗余） ---------- */}
         {mode === "day" ? (
           <Animated.View entering={FadeInDown.delay(140).springify()}>
-          <View className="mt-1.5 px-4">
-            <GlassContainer radius={16} intensity={42} borderOpacity={0.2}>
-              <View className="flex-row p-1">
-                {WEEKDAY_LABELS.map((label, i) => {
-                  const day = i + 1;
-                  const isToday = day === dateInfo.weekday;
-                  const isSel = day === weekday;
-                  return (
-                    <Pressable
-                      key={label}
-                      onPress={() => setWeekday(day)}
-                      className="flex-1"
-                    >
-                      <View
-                        className={`items-center rounded-[11px] border py-1.5 ${
-                          isSel
-                            ? "border-white/35 bg-white/30 dark:border-white/15 dark:bg-white/[0.12]"
-                            : "border-transparent"
-                        }`}
+            <View className="mt-1.5 px-4">
+              <GlassContainer radius={16} intensity={42} borderOpacity={0.2}>
+                <View className="flex-row p-1">
+                  {WEEKDAY_LABELS.map((label, i) => {
+                    const day = i + 1;
+                    const isToday = day === dateInfo.weekday;
+                    const isSel = day === weekday;
+                    return (
+                      <Pressable
+                        key={label}
+                        onPress={() => setWeekday(day)}
+                        className="flex-1"
                       >
-                        <Text
-                          className={`text-[11.5px] font-semibold ${
+                        <View
+                          className={`items-center rounded-[11px] border py-1.5 ${
                             isSel
-                              ? "text-sky-600 dark:text-sky-300"
-                              : "text-slate-500 dark:text-slate-400"
+                              ? "border-white/35 bg-white/30 dark:border-white/15 dark:bg-white/[0.12]"
+                              : "border-transparent"
                           }`}
                         >
-                          {label}
-                        </Text>
-                        <View
-                          className={`mt-0.5 h-1 w-1 rounded-full ${
-                            isToday ? "bg-sky-400" : "bg-transparent"
-                          }`}
-                        />
-                      </View>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </GlassContainer>
-          </View>
+                          <Text
+                            className={`text-[11.5px] font-semibold ${
+                              isSel
+                                ? "text-sky-600 dark:text-sky-300"
+                                : "text-slate-500 dark:text-slate-400"
+                            }`}
+                          >
+                            {label}
+                          </Text>
+                          <View
+                            className={`mt-0.5 h-1 w-1 rounded-full ${
+                              isToday ? "bg-sky-400" : "bg-transparent"
+                            }`}
+                          />
+                        </View>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </GlassContainer>
+            </View>
           </Animated.View>
         ) : null}
 
@@ -376,84 +380,84 @@ export function CourseScheduleScreen({
             /* 左右滑动切换星期：横向拖动手势，纵向滑动交还列表 */
             <GestureDetector gesture={dayGesture}>
               <Animated.View style={[{ flex: 1 }, daySlideStyle]}>
-            <ScrollView
-              className="flex-1"
-              contentContainerStyle={{
-                paddingHorizontal: 16,
-                paddingBottom: 96,
-              }}
-              showsVerticalScrollIndicator={false}
-            >
-              {dayCourses.length === 0 ? (
-                <Animated.View entering={FadeInDown.springify()}>
-                  <GlassContainer
-                    radius={22}
-                    intensity={40}
-                    borderOpacity={0.2}
-                  >
-                    <View className="items-center px-6 py-8">
-                      <View className="h-12 w-12 items-center justify-center rounded-[18px] bg-white/15 dark:bg-white/[0.06]">
-                        <Ionicons
-                          name="cafe-outline"
-                          size={22}
-                          color="#64748B"
-                        />
-                      </View>
-                      <Text className="mt-2.5 text-[14px] font-bold text-slate-700 dark:text-slate-200">
-                        这一天没有课
-                      </Text>
-                      <Text className="mt-1 text-center text-[11.5px] text-slate-500 dark:text-slate-400">
-                        放松一下，或者用 AI 助手规划自习
-                      </Text>
-                      <Pressable
-                        onPress={() => openCreate()}
-                        className="mt-3 rounded-full bg-sky-400/85 px-5 py-2"
+                <ScrollView
+                  className="flex-1"
+                  contentContainerStyle={{
+                    paddingHorizontal: 16,
+                    paddingBottom: 96,
+                  }}
+                  showsVerticalScrollIndicator={false}
+                >
+                  {dayCourses.length === 0 ? (
+                    <Animated.View entering={FadeInDown.springify()}>
+                      <GlassContainer
+                        radius={22}
+                        intensity={40}
+                        borderOpacity={0.2}
                       >
-                        <Text className="text-[12px] font-semibold text-white">
-                          添加课程
-                        </Text>
-                      </Pressable>
-                    </View>
-                  </GlassContainer>
-                </Animated.View>
-              ) : (
-                <View className="gap-y-2">
-                  {dayCourses.map((course, i) => (
-                    <CourseCard
-                      key={course.id}
-                      course={course}
-                      periods={schedule.periods}
-                      index={i}
-                      conflict={conflicts.has(course.id)}
-                      // 仅当浏览的就是「本周 + 今天」时才按真实时钟判定进行中，
-                      // 避免翻看其他周/其他天时误标多门「进行中」
-                      active={
-                        activeWeek === dateInfo.weekIndex &&
-                        weekday === dateInfo.weekday &&
-                        isCourseActive(
-                          course,
-                          schedule.periods,
-                          dateInfo.weekIndex,
-                          dateInfo.weekday,
-                          now,
-                        )
-                      }
-                      onPress={(c) => openEdit(c)}
-                      onLongPress={(c) => openEdit(c)}
-                    />
-                  ))}
+                        <View className="items-center px-6 py-8">
+                          <View className="h-12 w-12 items-center justify-center rounded-[18px] bg-white/15 dark:bg-white/[0.06]">
+                            <Ionicons
+                              name="cafe-outline"
+                              size={22}
+                              color="#64748B"
+                            />
+                          </View>
+                          <Text className="mt-2.5 text-[14px] font-bold text-slate-700 dark:text-slate-200">
+                            这一天没有课
+                          </Text>
+                          <Text className="mt-1 text-center text-[11.5px] text-slate-500 dark:text-slate-400">
+                            放松一下，或者用 AI 助手规划自习
+                          </Text>
+                          <Pressable
+                            onPress={() => openCreate()}
+                            className="mt-3 rounded-full bg-sky-400/85 px-5 py-2"
+                          >
+                            <Text className="text-[12px] font-semibold text-white">
+                              添加课程
+                            </Text>
+                          </Pressable>
+                        </View>
+                      </GlassContainer>
+                    </Animated.View>
+                  ) : (
+                    <View className="gap-y-2">
+                      {dayCourses.map((course, i) => (
+                        <CourseCard
+                          key={course.id}
+                          course={course}
+                          periods={schedule.periods}
+                          index={i}
+                          conflict={conflicts.has(course.id)}
+                          // 仅当浏览的就是「本周 + 今天」时才按真实时钟判定进行中，
+                          // 避免翻看其他周/其他天时误标多门「进行中」
+                          active={
+                            activeWeek === dateInfo.weekIndex &&
+                            weekday === dateInfo.weekday &&
+                            isCourseActive(
+                              course,
+                              schedule.periods,
+                              dateInfo.weekIndex,
+                              dateInfo.weekday,
+                              now,
+                            )
+                          }
+                          onPress={(c) => openEdit(c)}
+                          onLongPress={(c) => openEdit(c)}
+                        />
+                      ))}
 
-                  {/* 空闲时段提示 */}
-                  <Animated.View
-                    entering={FadeInDown.delay(
-                      dayCourses.length * 70,
-                    ).springify()}
-                  >
-                    <EmptySlotCard label="今天没有其他安排了" />
-                  </Animated.View>
-                </View>
-              )}
-            </ScrollView>
+                      {/* 空闲时段提示 */}
+                      <Animated.View
+                        entering={FadeInDown.delay(
+                          dayCourses.length * 70,
+                        ).springify()}
+                      >
+                        <EmptySlotCard label="今天没有其他安排了" />
+                      </Animated.View>
+                    </View>
+                  )}
+                </ScrollView>
               </Animated.View>
             </GestureDetector>
           ) : (

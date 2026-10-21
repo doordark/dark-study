@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
+  Easing,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
@@ -23,7 +24,10 @@ const AXIS_W_BASE = 42;
 const PPM_BASE = 1.05;
 const MIN_ZOOM = 0.7;
 const MAX_ZOOM = 2.6;
-const SLIDE_SPRING = { damping: 18, stiffness: 160 };
+/** 手指松开后的归位弹簧：接近临界阻尼，只回位不来回晃 */
+const SLIDE_SPRING = { damping: 26, stiffness: 240, mass: 1 };
+/** 翻页动画：纯缓动进入，没有回弹，观感更自然 */
+const SLIDE_IN = { duration: 210, easing: Easing.out(Easing.cubic) };
 
 export interface WeekGridProps {
   courses: Course[];
@@ -79,7 +83,7 @@ export function WeekGrid({
     const dir = weekIndex > prevWeekRef.current ? 1 : -1;
     prevWeekRef.current = weekIndex;
     tx.value = dir * baseW;
-    tx.value = withSpring(0, SLIDE_SPRING);
+    tx.value = withTiming(0, SLIDE_IN);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weekIndex]);
 
@@ -147,7 +151,7 @@ export function WeekGrid({
             next >= 1 &&
             next <= weekCount;
           if (go) {
-            // 旧内容滑出后切换周数，effect 再把新内容滑入
+            // 旧内容滑出后切换周数，effect 再把新内容滑入（缓动，无回弹）
             tx.value = withTiming(-dir * baseW, { duration: 180 }, (fin) => {
               if (fin) runOnJS(onWeekChange)(next);
             });
@@ -295,6 +299,29 @@ export function WeekGrid({
                     22 * zoom,
                     yOf(endTime) - yOf(startTime) - 5 * zoom,
                   );
+
+                  /* ---- 内容分级排版：先保证课程名完整，再依次补教室、教师 ---- */
+                  const padY = 3 * zoom;
+                  const contentH = Math.max(0, height - padY * 2);
+                  const nameLineH = fs(10) * 1.34;
+                  const metaLineH = fs(8) * 1.36;
+                  const teacherLineH = fs(7.5) * 1.36;
+
+                  const hasTeacher = !!course.teacher;
+                  // 高度优先给课程名：教室 1 行起步，教师只在两节及以上的块里出现
+                  const showTeacher = hasTeacher && contentH >= 72 * zoom;
+                  const showRoom = !!course.classroom && contentH >= 38 * zoom;
+                  const roomLines = contentH >= 62 * zoom ? 2 : 1;
+
+                  // 课程名可用高度 = 总内容高 - 教室/教师预留
+                  const metaH =
+                    (showRoom ? roomLines * metaLineH + 2 * zoom : 0) +
+                    (showTeacher ? teacherLineH + 1 * zoom : 0);
+                  const nameLines = Math.max(
+                    1,
+                    Math.min(7, Math.floor((contentH - metaH) / nameLineH)),
+                  );
+
                   return (
                     <View
                       key={course.id}
@@ -302,24 +329,28 @@ export function WeekGrid({
                       style={{
                         position: "absolute",
                         top,
-                        left: axisW + (course.weekday - 1) * colW + 3 * zoom,
-                        width: colW - 6 * zoom,
+                        left: axisW + (course.weekday - 1) * colW + 2.5 * zoom,
+                        width: colW - 5 * zoom,
                         height,
                         borderRadius: 12 * Math.min(zoom, 1.5),
                         overflow: "hidden",
-                        backgroundColor: palette.solid + "33",
-                        borderLeftWidth: 3 * Math.min(zoom, 1.5),
+                        backgroundColor: palette.solid + "3D",
+                        borderLeftWidth: 2.5 * Math.min(zoom, 1.5),
                         borderLeftColor: palette.solid,
-                        paddingHorizontal: 5 * zoom,
-                        paddingVertical: 3 * zoom,
+                        paddingHorizontal: 4 * zoom,
+                        paddingVertical: padY,
                         // 冲突课程：琥珀色描边 + 警示角标
                         borderWidth: isConflict ? 1 : 0,
                         borderColor: "#F59E0B",
                       }}
                     >
                       <Text
-                        numberOfLines={height > 60 * zoom ? 4 : 2}
-                        style={{ fontSize: fs(10), fontWeight: "700" }}
+                        numberOfLines={nameLines}
+                        style={{
+                          fontSize: fs(10),
+                          fontWeight: "700",
+                          includeFontPadding: false,
+                        }}
                         className="text-slate-800 dark:text-slate-100"
                       >
                         {course.name}
@@ -334,15 +365,25 @@ export function WeekGrid({
                           }}
                           className="text-amber-500"
                         >
-                          ⚠ 时间冲突
+                          ⚠ 冲突
                         </Text>
-                      ) : height > 60 * zoom ? (
+                      ) : null}
+                      {showRoom ? (
                         <Text
-                          numberOfLines={1}
+                          numberOfLines={roomLines}
                           style={{ fontSize: fs(8), marginTop: 2 * zoom }}
-                          className="text-slate-500 dark:text-slate-400"
+                          className="text-slate-600 dark:text-slate-300"
                         >
                           {course.classroom}
+                        </Text>
+                      ) : null}
+                      {showTeacher ? (
+                        <Text
+                          numberOfLines={1}
+                          style={{ fontSize: fs(7.5), marginTop: 1 * zoom }}
+                          className="text-slate-500 dark:text-slate-400"
+                        >
+                          {course.teacher}
                         </Text>
                       ) : null}
                     </View>
