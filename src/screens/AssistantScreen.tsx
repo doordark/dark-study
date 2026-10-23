@@ -40,6 +40,7 @@ import {
   imageAspect,
   searchWeb,
 } from "@/services/whaleTools";
+import { speakWhale, stopWhaleVoice } from "@/services/whaleVoice";
 import { useSettings } from "@/store/useSettings";
 import { useWhalePet } from "@/store/useWhalePet";
 import { useActiveSchedule, useStore } from "@/store/useStore";
@@ -97,6 +98,8 @@ function pickStickerForReply(reply: string): WhaleStickerId | null {
 
 /** 作者 door 的召唤口令（可被识别为开启 / 收回人格） */
 const WHALE_KEY = "dark-study-whale-persona";
+/** 大肥鱼语音开关：默认开启，记住大爹上次的选择 */
+const VOICE_KEY = "dark-study-whale-voice";
 /** 除自定义口令外始终有效的通用召唤词 */
 const SUMMON_ALIASES = ["召唤大肥鱼", "大肥鱼出来", "肥鱼出来"];
 const DISMISS_ALIASES = ["大爹走了", "退下吧", "变回课表助手"];
@@ -139,6 +142,8 @@ export function AssistantScreen() {
   const [kbHeight, setKbHeight] = useState(0);
   const scrollRef = useRef<ScrollViewInstance>(null);
   const [whale, setWhale] = useState(false);
+  const [voiceOn, setVoiceOn] = useState(true);
+  const spokenId = useRef<string | null>(null);
   const [summonFx, setSummonFx] = useState(false);
   const [leaveFx, setLeaveFx] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
@@ -169,6 +174,32 @@ export function AssistantScreen() {
       alive = false;
     };
   }, []);
+
+  // 语音开关同样是本地记忆，默认开着
+  useEffect(() => {
+    let alive = true;
+    AsyncStorage.getItem(VOICE_KEY)
+      .then((raw) => {
+        if (alive && raw === "0") setVoiceOn(false);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  /** 大肥鱼开口：每条新的助手消息只读一次，静音或人格不在时默默跳过 */
+  useEffect(() => {
+    if (messages.length === 0) return;
+    const last = messages[messages.length - 1];
+    if (last.role !== "assistant" || last.id === spokenId.current) return;
+    spokenId.current = last.id;
+    if (!whale || !voiceOn) return;
+    speakWhale(last.content);
+  }, [messages, whale, voiceOn]);
+
+  // 离开页面时让她闭嘴
+  useEffect(() => () => stopWhaleVoice(), []);
 
   const localMsg = (content: string): ChatMessage => ({
     id: uid(),
@@ -273,6 +304,15 @@ export function AssistantScreen() {
     leaveWhale("呜……那我先变回正经的课表助手。大爹下次记得再叫我呀。");
   };
 
+  /** 聊天框最上方的声音按钮：静音 / 开启鱼语 */
+  const toggleVoice = () => {
+    const next = !voiceOn;
+    setVoiceOn(next);
+    AsyncStorage.setItem(VOICE_KEY, next ? "1" : "0").catch(() => {});
+    if (next) speakWhale("声音开好啦，大爹。");
+    else stopWhaleVoice();
+  };
+
   useEffect(() => {
     const showEvt =
       Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
@@ -293,6 +333,8 @@ export function AssistantScreen() {
   const send = async (text: string) => {
     const content = text.trim();
     if (!content || busy) return;
+    // 大爹开口时先让鱼闭嘴，免得两边同时说话
+    stopWhaleVoice();
 
     // 精确口令走本地快捷通道（零延迟、不消耗额度）；其余说法交给模型按语义判断
     if (isSummonCmd(content)) {
@@ -667,6 +709,35 @@ export function AssistantScreen() {
           {/* 消息区：鲸鱼模式下垫一层会漂的可爱贴图 */}
           <View className="flex-1">
             {whale ? <WhaleDeco /> : null}
+            {/* 声音开关：放在聊天框最上方，一眼能看到鱼语是开还是关 */}
+            {whale ? (
+              <View className="z-10 flex-row justify-end px-5 pb-1">
+                <Pressable
+                  onPress={toggleVoice}
+                  hitSlop={6}
+                  className={`flex-row items-center rounded-full border px-2.5 py-1 ${
+                    voiceOn
+                      ? "border-sky-400/40 bg-sky-400/20"
+                      : "border-slate-400/25 bg-white/30 dark:bg-white/[0.06]"
+                  }`}
+                >
+                  <Ionicons
+                    name={voiceOn ? "volume-high" : "volume-mute"}
+                    size={12}
+                    color={voiceOn ? "#0EA5E9" : "#94A3B8"}
+                  />
+                  <Text
+                    className={`ml-1 text-[10px] font-bold ${
+                      voiceOn
+                        ? "text-sky-600 dark:text-sky-300"
+                        : "text-slate-500 dark:text-slate-400"
+                    }`}
+                  >
+                    {voiceOn ? "鱼语开启" : "已静音"}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
             <ScrollView
               ref={scrollRef}
               className="flex-1 px-5"

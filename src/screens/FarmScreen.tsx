@@ -14,6 +14,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   View,
@@ -54,6 +55,8 @@ import {
   cropRects,
   type CropKind,
 } from "@/components/farm/sprites";
+import { BugGame } from "@/components/farm/BugGame";
+import { HouseInterior } from "@/components/farm/HouseInterior";
 import { chat } from "@/services/deepseek";
 import { useSettings } from "@/store/useSettings";
 
@@ -64,63 +67,112 @@ import { useSettings } from "@/store/useSettings";
 const VIEW_W = 200;
 const VIEW_H = 170;
 
-const PLOT_X = 66;
-const PLOT_Y = 108;
+/* 九块田地：坐标对齐背景里烘焙好的土壤格 */
+const PLOT_X = 64;
+const PLOT_Y = 105;
 const PLOT_W = 20;
-const PLOT_H = 14;
-const PLOT_GAP = 2;
+const PLOT_H = 13.5;
+const PLOT_GAP_X = 2;
+const PLOT_GAP_Y = 2;
 const PLOT_COUNT = 9;
 
-const PLAYER_START = { x: 48, y: 96 };
-const GU_AT = { x: 148, y: 100 };
-const DOOR_AT = { x: 18, y: 94 };
-const CHICKEN_AT = { x: 176, y: 114 };
-/** 三个儿子：池塘下方草地上一排，个头比大人小一点 */
-const XIAOBA_AT = { x: 10, y: 156 };
-const YUJIE_AT = { x: 28, y: 156 };
-const WEIGANG_AT = { x: 46, y: 156 };
-/** 跟儿子们聊天时玩家站的位置（草地，池子与田地之间） */
-const SONS_SPOT = { x: 62, y: 146 };
+const PLAYER_START = { x: 50, y: 101 };
+/** 顾：田地右侧的草坪 */
+const GU_AT = { x: 146, y: 104 };
+/** door：屋前小路左侧 */
+const DOOR_AT = { x: 26, y: 101 };
+/** 小鸡坤坤：鸡窝前 */
+const CHICKEN_AT = { x: 156, y: 146 };
+/** 三个儿子：池塘边与草地上散开站着 */
+const XIAOBA_AT = { x: 4, y: 112 };
+const YUJIE_AT = { x: 18, y: 148 };
+const WEIGANG_AT = { x: 44, y: 146 };
+/** 跟儿子们聊天时玩家站的位置（池塘与田地之间的草地） */
+const SONS_SPOT = { x: 31, y: 143 };
+
+/** 房子所占区域：轻点即进屋睡觉 */
+const HOUSE_RECT = { x: 3, y: 42, w: 78, h: 56 };
 
 const SAVE_KEY = "dark-study-farm";
 
 function plotPos(i: number) {
   return {
-    x: PLOT_X + (i % 3) * (PLOT_W + PLOT_GAP),
-    y: PLOT_Y + Math.floor(i / 3) * (PLOT_H + PLOT_GAP),
+    x: PLOT_X + (i % 3) * (PLOT_W + PLOT_GAP_X),
+    y: PLOT_Y + Math.floor(i / 3) * (PLOT_H + PLOT_GAP_Y),
   };
 }
 
-const CROP_META: Record<CropKind, { price: number; sell: number }> = {
-  radish: { price: 20, sell: 55 },
-  berry: { price: 45, sell: 120 },
-  star: { price: 90, sell: 260 },
+const MINUTE = 60_000;
+const DAY = 24 * MINUTE * 60;
+
+/** 作物：种子价 / 售价 / 从种下到成熟所需的真实时间 */
+const CROP_META: Record<
+  CropKind,
+  { price: number; sell: number; growMs: number }
+> = {
+  radish: { price: 20, sell: 55, growMs: 3 * MINUTE },
+  berry: { price: 45, sell: 120, growMs: 7 * MINUTE },
+  star: { price: 90, sell: 260, growMs: 14 * MINUTE },
 };
+
+/** 浇一次水保持湿润的时长：湿润期按真实时间 1:1 生长，干土只有 35% 速度 */
+const WET_MS = 30 * MINUTE;
+const DRY_RATE = 0.35;
+/** 长到第一阶段的进度比例 */
+const STAGE1_AT = 0.45;
+/** 早上几点醒来 */
+const WAKE_HOUR = 7;
 
 interface PlotState {
   crop: CropKind | null;
-  stage: number;
-  watered: boolean;
+  /** 上次结算时累计的生长毫秒 */
+  growMs: number;
+  /** 上次结算的时间戳（虚拟时间） */
+  lastSync: number;
+  /** 湿润截止时间（虚拟时间） */
+  wetUntil: number;
 }
 
 interface SaveData {
-  day: number;
+  v: 2;
+  /** 第 1 天 0 点对应的虚拟时间戳 */
+  epoch: number;
+  /** 睡觉 / 小游戏攒下的时间偏移 */
+  timeShift: number;
   coins: number;
   seeds: Record<CropKind, number>;
   plots: PlotState[];
   harvested: number;
-  /** 场景是白天还是黑夜 */
-  night: boolean;
 }
 
-const emptyPlot = (): PlotState => ({ crop: null, stage: 0, watered: false });
+/** 兼容老存档的宽结构 */
+interface RawSave {
+  v?: number;
+  epoch?: number;
+  timeShift?: number;
+  coins?: number;
+  seeds?: Record<string, number>;
+  plots?: (Partial<PlotState> & {
+    crop?: string | null;
+    stage?: number;
+    watered?: boolean;
+  })[];
+  harvested?: number;
+  day?: number;
+}
 
-/** 四季名（场景固定为手绘像素背景，季节只影响文案与刷新节奏） */
+const emptyPlot = (at: number): PlotState => ({
+  crop: null,
+  growMs: 0,
+  lastSync: at,
+  wetUntil: 0,
+});
+
+/** 四季名（季节随天数轮换，只影响文案） */
 const SEASONS = ["春", "夏", "秋", "冬"];
 
-/** 白天/黑夜两张背景贴图上下边缘的精确色值，用于把场景外的空隙填成同一片天色 */
+/** 白天/黑夜两张背景贴图上下边缘的精确色值，用来把场景外的天空填成同一片天色 */
 const SKY_FILL = { day: "#6CBAF0", night: "#080C1E" };
-const GROUND_FILL = { day: "#7EC850", night: "#2E4A28" };
 
 /** 夜空延展区里的固定星光（只在黑夜显示） */
 const SKY_STARS = [
@@ -143,6 +195,62 @@ const PIXEL_FONT = Platform.select({
   android: "monospace",
   default: "monospace",
 });
+
+/* -------------------------------------------------------------------------- */
+/*  真实时间与作物生长                                                         */
+/* -------------------------------------------------------------------------- */
+
+function pad2(n: number) {
+  return n < 10 ? `0${n}` : `${n}`;
+}
+
+function clockLabel(ts: number) {
+  const d = new Date(ts);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+/** 19:00 到次日 6:00 算夜晚，场景跟着真实时间自动换 */
+function isNightAt(ts: number) {
+  const h = new Date(ts).getHours();
+  return h >= 19 || h < 6;
+}
+
+function midnightOf(ts: number) {
+  const d = new Date(ts);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+/** 累计生长：湿润期按 1:1 计，干土按 35% 慢慢长 */
+function plotGrowth(p: PlotState, now: number) {
+  if (!p.crop) return 0;
+  if (now <= p.lastSync) return p.growMs;
+  const wetEnd = Math.max(p.lastSync, p.wetUntil);
+  const wet = Math.max(0, Math.min(now, wetEnd) - p.lastSync);
+  const dry = Math.max(0, now - wetEnd);
+  return p.growMs + wet + dry * DRY_RATE;
+}
+
+function plotStage(p: PlotState, now: number) {
+  if (!p.crop) return 0;
+  const ratio = plotGrowth(p, now) / CROP_META[p.crop].growMs;
+  return ratio >= 1 ? 2 : ratio >= STAGE1_AT ? 1 : 0;
+}
+
+function isWet(p: PlotState, now: number) {
+  return p.crop !== null && now < p.wetUntil;
+}
+
+/** 剩余时间：不足一分钟按秒说，超过就按分钟 */
+function restLabel(ms: number) {
+  if (ms <= 0) return "马上就好";
+  if (ms < MINUTE) return `${Math.max(1, Math.ceil(ms / 1000))} 秒`;
+  const m = Math.ceil(ms / MINUTE);
+  if (m < 60) return `${m} 分钟`;
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  return r ? `${h} 小时 ${r} 分钟` : `${h} 小时`;
+}
 
 /* -------------------------------------------------------------------------- */
 /*  离线台词（没有配置 AI Key / 请求失败时兜底，仍然好玩）                       */
@@ -499,6 +607,77 @@ function Mote({
   );
 }
 
+/** 天空里慢慢飘过的云（只有白天出现） */
+function Cloud({
+  left,
+  top,
+  size,
+  delay,
+}: {
+  left: number;
+  top: number;
+  size: number;
+  delay: number;
+}) {
+  const v = useSharedValue(0);
+
+  useEffect(() => {
+    v.value = withDelay(
+      delay,
+      withRepeat(
+        withTiming(1, { duration: 34_000, easing: Easing.linear }),
+        -1,
+        false,
+      ),
+    );
+  }, [v, delay]);
+
+  const style = useAnimatedStyle(() => ({
+    transform: [{ translateX: (v.value - 0.5) * size * 1.2 }],
+  }));
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        {
+          position: "absolute",
+          left,
+          top,
+          width: size,
+          height: size * 0.24,
+          borderRadius: size,
+          backgroundColor: "rgba(255,255,255,0.9)",
+        },
+        style,
+      ]}
+    >
+      <View
+        style={{
+          position: "absolute",
+          left: size * 0.16,
+          top: -size * 0.11,
+          width: size * 0.42,
+          height: size * 0.24,
+          borderRadius: size,
+          backgroundColor: "rgba(255,255,255,0.9)",
+        }}
+      />
+      <View
+        style={{
+          position: "absolute",
+          left: size * 0.52,
+          top: -size * 0.07,
+          width: size * 0.3,
+          height: size * 0.2,
+          borderRadius: size,
+          backgroundColor: "rgba(255,255,255,0.9)",
+        }}
+      />
+    </Animated.View>
+  );
+}
+
 /** NPC 头顶的小铭牌，提示这里可以对话 */
 function NameTag({
   label,
@@ -516,7 +695,7 @@ function NameTag({
       pointerEvents="none"
       style={{
         position: "absolute",
-        top: -17 * scale,
+        top: -19,
         left: 8 * scale - 17,
         width: 34,
         height: 14,
@@ -568,7 +747,11 @@ export function FarmScreen() {
   const chatMaxH = Math.max(150, Math.min(258, Math.round(height * 0.32)));
 
   const [loaded, setLoaded] = useState(false);
-  const [day, setDay] = useState(1);
+  const [now, setNow] = useState(() => Date.now());
+  /** 睡觉、小游戏攒出来的时间偏移：虚拟时间 = 真实时间 + 偏移 */
+  const [timeShift, setTimeShift] = useState(0);
+  /** 第 1 天 0 点对应的虚拟时间戳 */
+  const [epoch, setEpoch] = useState(() => midnightOf(Date.now()));
   const [coins, setCoins] = useState(120);
   const [seeds, setSeeds] = useState<Record<CropKind, number>>({
     radish: 3,
@@ -576,11 +759,15 @@ export function FarmScreen() {
     star: 0,
   });
   const [plots, setPlots] = useState<PlotState[]>(() =>
-    Array.from({ length: PLOT_COUNT }, emptyPlot),
+    Array.from({ length: PLOT_COUNT }, () => emptyPlot(Date.now())),
   );
   const [harvested, setHarvested] = useState(0);
   const [selected, setSelected] = useState<CropKind>("radish");
-  const [night, setNight] = useState(false);
+
+  const [houseOpen, setHouseOpen] = useState(false);
+  const [gameOpen, setGameOpen] = useState(false);
+  const [gameToken, setGameToken] = useState(0);
+  const houseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -601,9 +788,35 @@ export function FarmScreen() {
   const [kbH, setKbH] = useState(0);
   const chatRef = useRef<ScrollViewInstance>(null);
 
+  /* ---------------- 时间 / 昼夜 / 季节：全部由真实时间推导 ---------------- */
+  const vNow = now + timeShift;
+  const night = isNightAt(vNow);
+  const day = Math.max(1, Math.floor((vNow - epoch) / DAY) + 1);
   const season = Math.floor((day - 1) / 7) % 4;
   const seasonName = SEASONS[season];
-  const growing = plots.filter((p) => p.crop && p.stage < 2).length;
+
+  /** 每块地的累计生长量（每次渲染按当前虚拟时间实时结算，不落库） */
+  const grown = plots.map((p) => plotGrowth(p, vNow));
+  const growing = plots.filter(
+    (p, i) => p.crop && grown[i] < CROP_META[p.crop].growMs,
+  ).length;
+
+  // 每秒走一次表：作物进度、天色、时钟都靠它刷新
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // 昼夜切换用一层透明渐变，不要硬切
+  const nightV = useSharedValue(night ? 1 : 0);
+  useEffect(() => {
+    nightV.value = withTiming(night ? 1 : 0, { duration: 700 });
+  }, [night, nightV]);
+  const dayLayerStyle = useAnimatedStyle(() => ({
+    opacity: 1 - nightV.value,
+  }));
+  const nightLayerStyle = useAnimatedStyle(() => ({ opacity: nightV.value }));
+
 
   /* ---------------- 玩家位置：UI 线程上平滑走动 ---------------- */
   const px = useSharedValue(PLAYER_START.x);
@@ -641,6 +854,7 @@ export function FarmScreen() {
   useEffect(
     () => () => {
       if (toastTimer.current) clearTimeout(toastTimer.current);
+      if (houseTimer.current) clearTimeout(houseTimer.current);
     },
     [],
   );
@@ -667,13 +881,29 @@ export function FarmScreen() {
     AsyncStorage.getItem(SAVE_KEY)
       .then((raw) => {
         if (!alive || !raw) return;
-        const data = JSON.parse(raw) as Partial<SaveData>;
-        if (typeof data.day === "number") setDay(Math.max(1, data.day));
+        let data: RawSave;
+        try {
+          data = JSON.parse(raw) as RawSave;
+        } catch {
+          return;
+        }
+        const realNow = Date.now();
+        const shift = typeof data.timeShift === "number" ? data.timeShift : 0;
+
+        if (data.v === 2 && typeof data.epoch === "number") {
+          setEpoch(data.epoch);
+          setTimeShift(shift);
+        } else {
+          // 老存档只有天数：把第 1 天的 0 点倒推出来，作物进度按旧阶段换算
+          const oldDay = Math.max(1, Number(data.day) || 1);
+          setEpoch(midnightOf(realNow) - (oldDay - 1) * DAY);
+          setTimeShift(0);
+        }
+
         if (typeof data.coins === "number") setCoins(Math.max(0, data.coins));
         if (typeof data.harvested === "number") {
           setHarvested(Math.max(0, data.harvested));
         }
-        if (typeof data.night === "boolean") setNight(data.night);
         if (data.seeds) {
           setSeeds({
             radish: Math.max(0, Number(data.seeds.radish) || 0),
@@ -682,17 +912,38 @@ export function FarmScreen() {
           });
         }
         if (Array.isArray(data.plots) && data.plots.length === PLOT_COUNT) {
+          const vNowNow = realNow + shift;
           setPlots(
-            data.plots.map((p) => ({
-              crop:
+            data.plots.map((p) => {
+              const kind =
                 p?.crop === "radish" ||
                 p?.crop === "berry" ||
                 p?.crop === "star"
                   ? p.crop
-                  : null,
-              stage: Math.min(2, Math.max(0, Number(p?.stage) || 0)),
-              watered: Boolean(p?.watered),
-            })),
+                  : null;
+              if (!kind) return emptyPlot(vNowNow);
+              const need = CROP_META[kind].growMs;
+              // 新结构：直接恢复生长累计
+              if (
+                typeof p.growMs === "number" &&
+                typeof p.lastSync === "number"
+              ) {
+                return {
+                  crop: kind,
+                  growMs: Math.min(need, Math.max(0, p.growMs)),
+                  lastSync: Math.max(0, p.lastSync),
+                  wetUntil: typeof p.wetUntil === "number" ? p.wetUntil : 0,
+                };
+              }
+              // 旧结构：按 stage / watered 折算
+              const stage = Math.min(2, Math.max(0, Number(p.stage) || 0));
+              return {
+                crop: kind,
+                growMs: stage >= 2 ? need : stage === 1 ? need * STAGE1_AT : 0,
+                lastSync: vNowNow,
+                wetUntil: p.watered ? vNowNow + WET_MS / 2 : 0,
+              };
+            }),
           );
         }
       })
@@ -707,17 +958,24 @@ export function FarmScreen() {
 
   useEffect(() => {
     if (!loaded) return;
-    AsyncStorage.setItem(
-      SAVE_KEY,
-      JSON.stringify({ day, coins, seeds, plots, harvested, night }),
-    ).catch(() => {});
-  }, [loaded, day, coins, seeds, plots, harvested, night]);
+    const payload: SaveData = {
+      v: 2,
+      epoch,
+      timeShift,
+      coins,
+      seeds,
+      plots,
+      harvested,
+    };
+    AsyncStorage.setItem(SAVE_KEY, JSON.stringify(payload)).catch(() => {});
+  }, [loaded, epoch, timeShift, coins, seeds, plots, harvested]);
 
   /* ---------------- 操作 ---------------- */
   const actOnPlot = (index: number) => {
+    const t = now + timeShift;
     const plot = plots[index];
     const pos = plotPos(index);
-    moveTo(pos.x + 3, pos.y + PLOT_H - 16);
+    moveTo(pos.x + 4, pos.y + PLOT_H - 14);
 
     if (!plot.crop) {
       if (seeds[selected] <= 0) {
@@ -728,45 +986,85 @@ export function FarmScreen() {
       setSeeds((s) => ({ ...s, [kind]: s[kind] - 1 }));
       setPlots((ps) =>
         ps.map((p, i) =>
-          i === index ? { crop: kind, stage: 0, watered: false } : p,
+          i === index
+            ? { crop: kind, growMs: 0, lastSync: t, wetUntil: 0 }
+            : p,
         ),
       );
-      showToast(`种下了${CROP_ART[kind].label}，记得浇水`);
+      showToast(`种下了${CROP_ART[kind].label}，浇点水会长得更快`);
       return;
     }
 
-    if (plot.stage >= 2) {
-      const kind = plot.crop;
+    const kind = plot.crop;
+    const need = CROP_META[kind].growMs;
+    const g = plotGrowth(plot, t);
+
+    if (g >= need) {
       const gain = CROP_META[kind].sell;
       setCoins((c) => c + gain);
       setHarvested((h) => h + 1);
-      setPlots((ps) => ps.map((p, i) => (i === index ? emptyPlot() : p)));
+      setPlots((ps) => ps.map((p, i) => (i === index ? emptyPlot(t) : p)));
       showToast(`收获${CROP_ART[kind].label} +${gain}`);
       return;
     }
 
-    if (plot.watered) {
-      showToast("今天已经浇过水了");
+    if (t < plot.wetUntil) {
+      const pct = Math.min(99, Math.floor((g / need) * 100));
+      showToast(
+        `${CROP_ART[kind].label} · 成长 ${pct}% · 还需 ${restLabel(need - g)}`,
+      );
       return;
     }
 
     setPlots((ps) =>
-      ps.map((p, i) => (i === index ? { ...p, watered: true } : p)),
+      ps.map((p, i) =>
+        i === index
+          ? { ...p, growMs: g, lastSync: t, wetUntil: t + WET_MS }
+          : p,
+      ),
     );
-    showToast("浇水了，睡一觉就会长高");
+    showToast("浇水了，接下来半小时长得很快");
   };
 
-  const sleep = () => {
-    setDay((d) => d + 1);
-    setPlots((ps) =>
-      ps.map((p) => ({
-        ...p,
-        stage: p.crop && p.watered && p.stage < 2 ? p.stage + 1 : p.stage,
-        watered: false,
-      })),
-    );
-    showToast("晚安。夜色轻轻盖住了整片农场。");
+  /** 点击房子：先走到门口，再进屋 */
+  const enterHouse = () => {
+    moveTo(46, 100);
+    if (houseTimer.current) clearTimeout(houseTimer.current);
+    houseTimer.current = setTimeout(() => setHouseOpen(true), 380);
   };
+
+  /** 睡到第二天早上 7 点：虚拟时间一起往前跳，作物跟着长 */
+  const doSleep = () => {
+    const t = now + timeShift;
+    const d = new Date(t);
+    const target = new Date(t);
+    if (d.getHours() >= WAKE_HOUR) target.setDate(target.getDate() + 1);
+    target.setHours(WAKE_HOUR, 0, 0, 0);
+    const jump = Math.max(MINUTE, target.getTime() - t);
+    const next = t + jump;
+    setTimeShift((s) => s + jump);
+    setHouseOpen(false);
+    const nextDay = Math.max(1, Math.floor((next - epoch) / DAY) + 1);
+    showToast(`第 ${nextDay} 天 · 早上 7:00，作物悄悄长高了`);
+  };
+
+  /** 抓虫小游戏结算：游戏时长也算进农场时间，作物自然长得更快 */
+  const finishBugGame = (score: number, jumpMs: number) => {
+    setTimeShift((s) => s + jumpMs);
+    if (score > 0) setCoins((c) => c + Math.floor(score / 2));
+    const mins = Math.max(1, Math.round(jumpMs / MINUTE));
+    showToast(
+      `抓了 ${score} 只虫，农场时间前进了 ${mins} 分钟${
+        score > 0 ? `，金币 +${Math.floor(score / 2)}` : ""
+      }`,
+    );
+  };
+
+  const openBugGame = () => {
+    setGameToken((t) => t + 1);
+    setGameOpen(true);
+  };
+
 
   const buy = (kind: CropKind) => {
     const price = CROP_META[kind].price;
@@ -931,38 +1229,13 @@ export function FarmScreen() {
               marginTop: 2,
             }}
           >
-            {`door & 顾的小农场 · 第 ${day} 天 · ${seasonName}天`}
+            {`第 ${day} 天 · ${seasonName} · ${clockLabel(vNow)} ${
+              night ? "夜晚" : "白天"
+            }`}
           </Text>
         </View>
 
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <Pressable
-            onPress={() => {
-              setNight((v) => !v);
-            }}
-            hitSlop={6}
-            style={{
-              width: 34,
-              height: 34,
-              borderRadius: 17,
-              alignItems: "center",
-              justifyContent: "center",
-              backgroundColor: night
-                ? "rgba(129,140,248,0.16)"
-                : "rgba(245,196,102,0.16)",
-              borderWidth: 1,
-              borderColor: night
-                ? "rgba(129,140,248,0.34)"
-                : "rgba(245,196,102,0.34)",
-            }}
-          >
-            <Ionicons
-              name={night ? "moon" : "sunny"}
-              size={16}
-              color={night ? "#A5B4FC" : "#F5C466"}
-            />
-          </Pressable>
-
           <View
             style={{
               flexDirection: "row",
@@ -1001,54 +1274,135 @@ export function FarmScreen() {
 
       {/* ---------- 场景 ---------- */}
       <View style={{ flex: 1 }}>
-        {/* 天空延展：与贴图顶部同色，夜里再点几颗星，让整屏都是同一片天 */}
+        {/* 天空延展：与贴图顶端同色，白天飘云，夜里点星 */}
         <View
           style={{
             flex: 1,
             backgroundColor: night ? SKY_FILL.night : SKY_FILL.day,
+            overflow: "hidden",
           }}
         >
-          {night
-            ? SKY_STARS.map((s) => (
-                <View
-                  key={s.id}
-                  style={{
-                    position: "absolute",
-                    left: s.left,
-                    top: s.top,
-                    width: s.size,
-                    height: s.size,
-                    borderRadius: s.size,
-                    backgroundColor: "#FFFFFF",
-                    opacity: s.o,
-                  }}
-                />
-              ))
-            : null}
+          {/* 天上的太阳 / 月亮，让延展出来的天空不至于太空 */}
+          {night ? (
+            <>
+              <View
+                style={{
+                  position: "absolute",
+                  right: width * 0.12 - 12,
+                  top: 12,
+                  width: 78,
+                  height: 78,
+                  borderRadius: 39,
+                  backgroundColor: "rgba(246,238,220,0.1)",
+                }}
+              />
+              <View
+                style={{
+                  position: "absolute",
+                  right: width * 0.12,
+                  top: 24,
+                  width: 54,
+                  height: 54,
+                  borderRadius: 27,
+                  backgroundColor: "#F6EEDC",
+                }}
+              />
+              <View
+                style={{
+                  position: "absolute",
+                  right: width * 0.12 + 10,
+                  top: 18,
+                  width: 54,
+                  height: 54,
+                  borderRadius: 27,
+                  backgroundColor: SKY_FILL.night,
+                }}
+              />
+            </>
+          ) : (
+            <>
+              <View
+                style={{
+                  position: "absolute",
+                  right: width * 0.1 - 16,
+                  top: 4,
+                  width: 94,
+                  height: 94,
+                  borderRadius: 47,
+                  backgroundColor: "rgba(255,240,180,0.16)",
+                }}
+              />
+              <View
+                style={{
+                  position: "absolute",
+                  right: width * 0.1,
+                  top: 20,
+                  width: 62,
+                  height: 62,
+                  borderRadius: 31,
+                  backgroundColor: "rgba(255,240,180,0.92)",
+                }}
+              />
+            </>
+          )}
+          {night ? (
+            SKY_STARS.map((s) => (
+              <View
+                key={s.id}
+                style={{
+                  position: "absolute",
+                  left: s.left,
+                  top: s.top,
+                  width: s.size,
+                  height: s.size,
+                  borderRadius: s.size,
+                  backgroundColor: "#FFFFFF",
+                  opacity: s.o,
+                }}
+              />
+            ))
+          ) : (
+            <>
+              <Cloud left={width * 0.04} top={30} size={112} delay={0} />
+              <Cloud left={width * 0.42} top={82} size={84} delay={5200} />
+              <Cloud left={width * 0.58} top={22} size={134} delay={9800} />
+            </>
+          )}
         </View>
 
+        {/* 场景贴底：多出来的高度留给天空，农场紧贴操作区 */}
         <View style={{ width, height: sceneH, overflow: "hidden" }}>
-          <Image
-            source={
-              night
-                ? require("../../assets/images/farm-night.png")
-                : require("../../assets/images/farm-day.png")
-            }
-            style={{ width, height: sceneH }}
-            resizeMode="stretch"
-          />
+          <Animated.View style={[StyleSheet.absoluteFill, dayLayerStyle]}>
+            <Image
+              source={require("../../assets/images/farm-day.png")}
+              style={{ width, height: sceneH }}
+              resizeMode="stretch"
+            />
+          </Animated.View>
+          <Animated.View style={[StyleSheet.absoluteFill, nightLayerStyle]}>
+            <Image
+              source={require("../../assets/images/farm-night.png")}
+              style={{ width, height: sceneH }}
+              resizeMode="stretch"
+            />
+          </Animated.View>
           <Svg
             width={width}
             height={sceneH}
             viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
             style={{ position: "absolute", left: 0, top: 0 }}
           >
-            {/* 田地：土壤已烘焙进背景，这里只画作物与浇水状态 */}
+            {/* 田地：土壤已烘焙进背景，这里画作物、成长进度与浇水状态 */}
             {plots.map((p, i) => {
               const pos = plotPos(i);
+              const stage = plotStage(p, vNow);
+              const wet = isWet(p, vNow);
+              const ratio = p.crop
+                ? Math.min(1, grown[i] / CROP_META[p.crop].growMs)
+                : 0;
               return (
                 <G key={i}>
-                  {p.watered ? (
+                  {wet ? (
                     <Rect
                       x={pos.x}
                       y={pos.y}
@@ -1059,9 +1413,38 @@ export function FarmScreen() {
                     />
                   ) : null}
                   {p.crop
-                    ? cropRects(p.crop, p.stage, pos.x + 5, pos.y + 4)
+                    ? cropRects(p.crop, stage, pos.x + 5, pos.y + 4)
                     : null}
-                  {p.stage >= 2 ? (
+                  {p.crop && stage < 2 ? (
+                    <>
+                      <Rect
+                        x={pos.x}
+                        y={pos.y - 2.4}
+                        width={PLOT_W}
+                        height="1"
+                        fill="#0E1A12"
+                        opacity="0.42"
+                      />
+                      <Rect
+                        x={pos.x}
+                        y={pos.y - 2.4}
+                        width={Math.max(0.6, PLOT_W * ratio)}
+                        height="1"
+                        fill={wet ? "#7ED957" : "#D7C58A"}
+                      />
+                    </>
+                  ) : null}
+                  {wet ? (
+                    <Rect
+                      x={pos.x + PLOT_W - 3.2}
+                      y={pos.y + 0.8}
+                      width="1.6"
+                      height="2.6"
+                      fill="#5EC8F2"
+                      opacity="0.9"
+                    />
+                  ) : null}
+                  {stage >= 2 ? (
                     <>
                       <Rect
                         x={pos.x + 15}
@@ -1113,6 +1496,21 @@ export function FarmScreen() {
             }}
           />
 
+          {/* 房子：轻点进屋，屋里点床睡觉 */}
+          <Pressable
+            onPress={enterHouse}
+            accessibilityRole="button"
+            accessibilityLabel="进屋"
+            style={{
+              position: "absolute",
+              left: HOUSE_RECT.x * scale,
+              top: HOUSE_RECT.y * scale,
+              width: HOUSE_RECT.w * scale,
+              height: HOUSE_RECT.h * scale,
+              zIndex: 3,
+            }}
+          />
+
           {/* 田地点击 */}
           {plots.map((_, i) => {
             const pos = plotPos(i);
@@ -1121,6 +1519,8 @@ export function FarmScreen() {
                 key={i}
                 onPress={() => actOnPlot(i)}
                 hitSlop={4}
+                accessibilityRole="button"
+                accessibilityLabel={`第 ${i + 1} 块田地`}
                 style={{
                   position: "absolute",
                   left: pos.x * scale,
@@ -1286,22 +1686,14 @@ export function FarmScreen() {
             </Animated.View>
           ) : null}
         </View>
-
-        {/* 草地延展：与贴图底部同色，填满场景到操作区之间的空隙 */}
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: night ? GROUND_FILL.night : GROUND_FILL.day,
-          }}
-        />
       </View>
 
       {/* ---------- 底部操作区 ---------- */}
       <View
         style={{
           paddingHorizontal: 12,
-          paddingBottom: insets.bottom + 10,
-          gap: 8,
+          paddingBottom: insets.bottom + 8,
+          gap: 7,
         }}
       >
         <Text
@@ -1311,7 +1703,7 @@ export function FarmScreen() {
             textAlign: "center",
           }}
         >
-          轻点土地：种下 / 浇水 / 收获　·　轻点小人：聊聊天
+          轻点土地耕作　·　轻点房子进屋睡觉　·　轻点小人聊天
         </Text>
 
         <View style={{ flexDirection: "row", gap: 8 }}>
@@ -1326,7 +1718,7 @@ export function FarmScreen() {
                   flexDirection: "row",
                   alignItems: "center",
                   justifyContent: "center",
-                  paddingVertical: 8,
+                  paddingVertical: 6,
                   borderRadius: 14,
                   borderWidth: 1,
                   borderColor: on
@@ -1337,14 +1729,14 @@ export function FarmScreen() {
                     : "rgba(246,238,220,0.04)",
                 }}
               >
-                <View style={{ width: 20, height: 20 }}>
+                <View style={{ width: 18, height: 18 }}>
                   <PixelSprite
                     rows={CROP_STAGE_ROWS[2]}
                     palette={CROP_ART[kind].palette}
-                    pixel={2}
+                    pixel={1.8}
                   />
                 </View>
-                <View style={{ marginLeft: 6 }}>
+                <View style={{ marginLeft: 5 }}>
                   <Text
                     style={{
                       color: on ? "#F5C466" : "#E6DCC7",
@@ -1371,38 +1763,13 @@ export function FarmScreen() {
 
         <View style={{ flexDirection: "row", gap: 8 }}>
           <Pressable
-            onPress={sleep}
-            style={{
-              flex: 1,
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "center",
-              paddingVertical: 11,
-              borderRadius: 16,
-              backgroundColor: "#8FD14F",
-            }}
-          >
-            <Ionicons name="moon" size={14} color="#152A12" />
-            <Text
-              style={{
-                marginLeft: 6,
-                color: "#152A12",
-                fontSize: 12.5,
-                fontWeight: "800",
-              }}
-            >
-              睡一觉
-            </Text>
-          </Pressable>
-
-          <Pressable
             onPress={() => setShopOpen(true)}
             style={{
               flex: 1,
               flexDirection: "row",
               alignItems: "center",
               justifyContent: "center",
-              paddingVertical: 11,
+              paddingVertical: 10,
               borderRadius: 16,
               borderWidth: 1,
               borderColor: "rgba(245,196,102,0.32)",
@@ -1419,6 +1786,31 @@ export function FarmScreen() {
               }}
             >
               小铺
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={openBugGame}
+            style={{
+              flex: 1.3,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              paddingVertical: 10,
+              borderRadius: 16,
+              backgroundColor: "#8FD14F",
+            }}
+          >
+            <Ionicons name="bug" size={14} color="#152A12" />
+            <Text
+              style={{
+                marginLeft: 6,
+                color: "#152A12",
+                fontSize: 12.5,
+                fontWeight: "800",
+              }}
+            >
+              抓虫小游戏
             </Text>
           </Pressable>
         </View>
@@ -1885,6 +2277,24 @@ export function FarmScreen() {
           </Animated.View>
         </View>
       </Modal>
+
+      {/* ---------- 小屋：进屋点床睡觉 ---------- */}
+      <HouseInterior
+        visible={houseOpen}
+        night={night}
+        day={day}
+        clock={clockLabel(vNow)}
+        onClose={() => setHouseOpen(false)}
+        onSleep={doSleep}
+      />
+
+      {/* ---------- 抓虫小游戏 ---------- */}
+      <BugGame
+        key={gameToken}
+        visible={gameOpen}
+        onClose={() => setGameOpen(false)}
+        onFinish={finishBugGame}
+      />
 
       <Animated.View
         pointerEvents="none"

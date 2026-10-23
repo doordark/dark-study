@@ -24,6 +24,10 @@ import type {
   SemesterKind,
 } from "@/types";
 import { normalizeGradeInput, normalizeSemester } from "@/utils/grades";
+import {
+  recognizeGradesOffline,
+  recognizeScheduleOffline,
+} from "@/services/offlineImport";
 
 const COLOR_VALUES: CourseColor[] = [
   "sky",
@@ -581,6 +585,148 @@ export async function quickEdit(
   apiKey: string,
 ) {
   return askAssistant([{ role: "user", content: prompt }], ctx, apiKey);
+}
+
+/* -------------------------------------------------------------------------- */
+/*  批量识别（相册多选）                                                        */
+/* -------------------------------------------------------------------------- */
+
+export interface BatchImage {
+  imageBase64: string;
+  mimeType: string;
+  uri: string;
+}
+
+interface BatchOptions {
+  /** 联网且有 Key 时走云端视觉模型，否则走设备端离线识别 */
+  useAI: boolean;
+  /** 开始处理第 current 张（从 1 开始），total 为总张数 */
+  onProgress?: (current: number, total: number) => void;
+}
+
+/** 多张课表合并：同一门课（名称 + 星期 + 节次 + 教室相同）自动合并周次，避免重复 */
+function mergeDuplicateCourses(courses: Course[]): Course[] {
+  const merged = new Map<string, Course>();
+  for (const course of courses) {
+    const key = [
+      course.name,
+      course.weekday,
+      course.startPeriod,
+      course.endPeriod,
+      course.classroom,
+    ].join("|");
+    const prev = merged.get(key);
+    if (!prev) {
+      merged.set(key, { ...course, weeks: [...course.weeks] });
+      continue;
+    }
+    // 重复课程：周次取并集，其余字段只在缺失时补齐
+    prev.weeks = [...new Set([...prev.weeks, ...course.weeks])].sort(
+      (a, b) => a - b,
+    );
+    if (!prev.teacher && course.teacher) prev.teacher = course.teacher;
+    if (prev.credits == null && course.credits != null) {
+      prev.credits = course.credits;
+    }
+  }
+  return [...merged.values()];
+}
+
+/** 多张成绩单合并：按学期 + 课程 + 分数去重 */
+function dedupeGrades(grades: GradeDraft[]): GradeDraft[] {
+  const seen = new Set<string>();
+  return grades.filter((g) => {
+    const key = [g.semester, g.name, g.credit, g.score, g.gpa].join("|");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** 批量识别课表：逐张识别后合并课程，个别图片失败不影响整体 */
+export async function recognizeSchedulesBatch(
+  images: BatchImage[],
+  apiKey: string,
+  ctx: ScheduleImportContext,
+  opts: BatchOptions,
+): Promise<{ schedule: Schedule; skipped: number }> {
+  const list: Schedule[] = [];
+  let skipped = 0;
+  let firstError: unknown = null;
+
+  for (let i = 0; i < images.length; i++) {
+    const img = images[i];
+    opts.onProgress?.(i + 1, images.length);
+    try {
+      list.push(
+        opts.useAI
+          ? await recognizeScheduleFromImage(
+              img.imageBase64,
+              apiKey,
+              img.mimeType,
+              ctx,
+            )
+          : await recognizeScheduleOffline(img.uri),
+      );
+    } catch (e) {
+      skipped += 1;
+      if (!firstError) firstError = e;
+    }
+  }
+
+  if (!list.length) {
+    throw firstError instanceof Error
+      ? firstError
+      : new Error("未识别到有效课程，请更换图片后重试");
+  }
+
+  return {
+    schedule: {
+      ...list[0],
+      courses: mergeDuplicateCourses(list.flatMap((s) => s.courses)),
+    },
+    skipped,
+  };
+}
+
+/** 批量识别成绩单：单张云端失败时只回退这一张的离线识别，不影响整批 */
+export async function recognizeGradesBatch(
+  images: BatchImage[],
+  apiKey: string,
+  semester: SemesterKind,
+  opts: BatchOptions,
+): Promise<{ grades: GradeDraft[]; skipped: number }> {
+  const all: GradeDraft[] = [];
+  let skipped = 0;
+  let firstError: unknown = null;
+
+  for (let i = 0; i < images.length; i++) {
+    const img = images[i];
+    opts.onProgress?.(i + 1, images.length);
+    try {
+      if (opts.useAI) {
+        try {
+          all.push(...(await recognizeGrades(img, apiKey, semester)));
+        } catch (aiError) {
+          if (!firstError) firstError = aiError;
+          all.push(...(await recognizeGradesOffline(img.uri, semester)));
+        }
+      } else {
+        all.push(...(await recognizeGradesOffline(img.uri, semester)));
+      }
+    } catch (e) {
+      skipped += 1;
+      if (!firstError) firstError = e;
+    }
+  }
+
+  const grades = dedupeGrades(all);
+  if (!grades.length) {
+    throw firstError instanceof Error
+      ? firstError
+      : new Error("未识别到有效成绩，请更换图片后重试");
+  }
+  return { grades, skipped };
 }
 
 /* -------------------------------------------------------------------------- */

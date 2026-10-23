@@ -515,3 +515,23 @@ export function propRects(
 ): React.ReactElement[] {
   return pixelRects(PROP_ART[kind].rows, PROP_ART[kind].palette, x, y, kind);
 }
+
+/* -------------------------------------------------------------------------- */
+/*  小虫：抓虫小游戏里的目标                                                   */
+/* -------------------------------------------------------------------------- */
+
+export const BUG_PALETTE: Record<string, string> = {
+  "0": "#1F2937",
+  "1": "#4B5563",
+  "2": "#EF4444",
+};
+
+export const BUG_ROWS = [
+  "..0..0..",
+  ".010010.",
+  "01111110",
+  "01212110",
+  "01111110",
+  ".011110.",
+  "..0..0..",
+];

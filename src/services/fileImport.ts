@@ -16,20 +16,10 @@ export interface PickedDocument {
   uri: string;
 }
 
-/** 打开相册并返回 base64 图片 */
-export async function pickImageFromLibrary(): Promise<PickedImage | null> {
-  const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (!perm.granted) return null;
-
-  const result = await ImagePicker.launchImageLibraryAsync({
-    mediaTypes: ["images"],
-    quality: 0.85,
-    base64: true,
-    allowsEditing: false,
-  });
-  if (result.canceled || !result.assets?.length) return null;
-
-  const asset = result.assets[0];
+/** 把相册资源统一转成 base64 图片 */
+async function toPickedImage(
+  asset: ImagePicker.ImagePickerAsset,
+): Promise<PickedImage> {
   if (!asset.base64) {
     // 兜底：从 uri 读字节
     const bytes = new Uint8Array(await new File(asset.uri).arrayBuffer());
@@ -44,6 +34,40 @@ export async function pickImageFromLibrary(): Promise<PickedImage | null> {
     mimeType: asset.mimeType ?? "image/jpeg",
     uri: asset.uri,
   };
+}
+
+/** 打开相册并返回 base64 图片 */
+export async function pickImageFromLibrary(): Promise<PickedImage | null> {
+  const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (!perm.granted) return null;
+
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ["images"],
+    quality: 0.85,
+    base64: true,
+    allowsEditing: false,
+  });
+  if (result.canceled || !result.assets?.length) return null;
+  return toPickedImage(result.assets[0]);
+}
+
+/** 相册多选：一次最多 9 张，用于批量识别课表 / 成绩单 */
+export async function pickImagesFromLibrary(
+  limit = 9,
+): Promise<PickedImage[]> {
+  const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (!perm.granted) return [];
+
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ["images"],
+    quality: 0.85,
+    base64: true,
+    allowsMultipleSelection: true,
+    selectionLimit: limit,
+    orderedSelection: true,
+  });
+  if (result.canceled || !result.assets?.length) return [];
+  return Promise.all(result.assets.map(toPickedImage));
 }
 
 /** 选择背景图：开启系统裁剪/缩放编辑器，支持捏合缩放调整取景 */

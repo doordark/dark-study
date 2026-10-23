@@ -13,15 +13,12 @@ import {
   GradeYearEditor,
 } from "@/components/GradeEditorPanel";
 import {
+  pickImagesFromLibrary,
   pickImageFromCamera,
-  pickImageFromLibrary,
   pickTextDocument,
 } from "@/services/fileImport";
-import { recognizeGrades } from "@/services/ai";
-import {
-  recognizeGradesFromTextOffline,
-  recognizeGradesOffline,
-} from "@/services/offlineImport";
+import { recognizeGrades, recognizeGradesBatch } from "@/services/ai";
+import { recognizeGradesFromTextOffline } from "@/services/offlineImport";
 import { useImportTask } from "@/store/useImportTask";
 import { useSettings } from "@/store/useSettings";
 import { useStore } from "@/store/useStore";
@@ -43,9 +40,9 @@ import {
 } from "@/utils/grades";
 
 type From = "image" | "camera" | "text";
-type Source =
-  | { imageBase64: string; mimeType: string; uri: string }
-  | { text: string };
+type ImageSource = { imageBase64: string; mimeType: string; uri: string };
+/** 相册可多选：images 至少一张；表格文件仍是单份 */
+type Source = { images: ImageSource[] } | { text: string };
 
 /** "all" = 该范围下的汇总页，SemesterKind = 单个学期 */
 type SemTab = "all" | SemesterKind;
@@ -238,13 +235,29 @@ export function GradesScreen() {
       if (from === "text") {
         const doc = await pickTextDocument();
         source = doc ? { text: doc.text } : null;
+      } else if (from === "image") {
+        const imgs = await pickImagesFromLibrary();
+        source = imgs.length
+          ? {
+              images: imgs.map((i) => ({
+                imageBase64: i.base64,
+                mimeType: i.mimeType,
+                uri: i.uri,
+              })),
+            }
+          : null;
       } else {
-        const img =
-          from === "image"
-            ? await pickImageFromLibrary()
-            : await pickImageFromCamera();
+        const img = await pickImageFromCamera();
         source = img
-          ? { imageBase64: img.base64, mimeType: img.mimeType, uri: img.uri }
+          ? {
+              images: [
+                {
+                  imageBase64: img.base64,
+                  mimeType: img.mimeType,
+                  uri: img.uri,
+                },
+              ],
+            }
           : null;
       }
     } catch (e) {
@@ -260,52 +273,73 @@ export function GradesScreen() {
     setActiveGradeYear(targetYearId);
     if (semScope !== "all") setActiveGradeSemester(semScope);
 
-    task.open("grades", from === "text" ? "文档" : "照片");
+    const count = "images" in source ? source.images.length : 0;
+    task.open(
+      "grades",
+      from === "text" ? "文档" : count > 1 ? `${count} 张照片` : "照片",
+    );
     try {
       const online = await isOnline();
       const useAI = online && !!apiKey;
-      const src = source;
-      const runOffline = async (): Promise<GradeDraft[]> => {
-        task.setPhase(
-          "text" in src
-            ? "离线模式：正在解析成绩表格…"
-            : "离线模式：正在识别成绩单文字…",
-          45,
-        );
-        return "text" in src
-          ? recognizeGradesFromTextOffline(src.text, defaultSemester)
-          : await recognizeGradesOffline(src.uri, defaultSemester);
-      };
-
       let recognized: GradeDraft[];
-      if (useAI) {
-        try {
-          task.setPhase("AI 正在识别课程成绩…", 38);
-          recognized = await recognizeGrades(
-            "text" in src ? { text: src.text } : src,
-            apiKey,
+      let skipped = 0;
+
+      if ("text" in source) {
+        const runOfflineText = (): GradeDraft[] => {
+          task.setPhase("离线模式：正在解析成绩表格…", 45);
+          return recognizeGradesFromTextOffline(
+            source.text,
             defaultSemester,
           );
-        } catch (aiError) {
-          // 云端超时/失败时自动降级到本地，避免一直转圈
-          task.setPhase("AI 识别未完成，正在切换本地离线识别…", 58);
+        };
+        if (useAI) {
           try {
-            recognized = await runOffline();
-          } catch {
-            throw aiError;
+            task.setPhase("AI 正在识别课程成绩…", 38);
+            recognized = await recognizeGrades(
+              { text: source.text },
+              apiKey,
+              defaultSemester,
+            );
+          } catch (aiError) {
+            // 云端超时/失败时自动降级到本地，避免一直转圈
+            task.setPhase("AI 识别未完成，正在切换本地离线识别…", 58);
+            try {
+              recognized = runOfflineText();
+            } catch {
+              throw aiError;
+            }
           }
+        } else {
+          recognized = runOfflineText();
         }
       } else {
-        recognized = await runOffline();
+        const result = await recognizeGradesBatch(
+          source.images,
+          apiKey,
+          defaultSemester,
+          {
+            useAI,
+            onProgress: (cur, total) =>
+              task.setPhase(
+                useAI
+                  ? `AI 正在识别第 ${cur}/${total} 张成绩单…`
+                  : `离线模式：正在识别第 ${cur}/${total} 张…`,
+                Math.round(18 + ((cur - 1) / total) * 62),
+              ),
+          },
+        );
+        recognized = result.grades;
+        skipped = result.skipped;
       }
 
       if (!recognized.length) {
         task.fail("未识别到有效成绩，请更换图片或补充表格后重试");
         return;
       }
+      const skipNote = skipped ? `（已跳过 ${skipped} 张无法识别的图片）` : "";
       task.complete(
         { type: "grades", grades: recognized, yearId: targetYearId },
-        `${useAI ? "识别完成" : "离线识别完成"}：共 ${recognized.length} 条成绩，将导入到「${targetYearName}」，请确认`,
+        `${useAI ? "识别完成" : "离线识别完成"}：共 ${recognized.length} 条成绩${skipNote}，将导入到「${targetYearName}」，请确认`,
       );
     } catch (e) {
       task.fail(e instanceof Error ? e.message : "识别失败，请重试");
@@ -855,8 +889,8 @@ export function GradesScreen() {
                   </Pressable>
                 </View>
                 <Text className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-                  归入 {targetYearName} · 拍照、相册或表格文件。联网且有 API Key
-                  时走 AI，否则自动本地离线识别
+                  归入 {targetYearName} · 拍照、相册（可多选 9
+                  张）或表格文件。联网且有 API Key 时走 AI，否则自动本地离线识别
                 </Text>
 
                 <View className="mt-4 flex-row gap-x-2.5">
