@@ -528,6 +528,11 @@ export function GradesScreen() {
                     有 {stats.missing} 门缺少有效绩点，未计入统计
                   </Text>
                 ) : null}
+                {stats.missingCredit > 0 ? (
+                  <Text className="mt-1 text-[10px] text-amber-500 dark:text-amber-300">
+                    有 {stats.missingCredit} 门缺学分，暂未计入加权绩点，点开课程可补填
+                  </Text>
+                ) : null}
 
                 {/* 计算规则切换 */}
                 <View className="mt-3.5 flex-row items-center">
@@ -606,7 +611,10 @@ export function GradesScreen() {
                         {row.label}
                       </Text>
                       <Text className="mr-3 text-[10.5px] text-slate-400 dark:text-slate-500">
-                        {row.stats.count} 门 · {row.stats.credits} 学分
+                        {row.stats.count} 门 ·{" "}
+                        {row.stats.credits > 0
+                          ? `${row.stats.credits} 学分`
+                          : "学分待补"}
                       </Text>
                       <Text className="w-10 text-right text-[13px] font-bold text-sky-500 dark:text-sky-300">
                         {formatGpa(row.stats.value)}
@@ -709,7 +717,7 @@ export function GradesScreen() {
                           : true;
                       const meta = [
                         typeName(g.type),
-                        `${g.credit} 学分`,
+                        g.credit != null ? `${g.credit} 学分` : "学分待补",
                         SCORE_TYPE_HINT[g.scoreType],
                         !currentYear
                           ? `${yearName(g.yearId)} · ${semesterLabel(g.semester)}`

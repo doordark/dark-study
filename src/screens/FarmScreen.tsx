@@ -8,12 +8,16 @@ import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Keyboard,
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   Text,
+  TextInput,
   View,
   useWindowDimensions,
+  type ScrollViewInstance,
 } from "react-native";
 import Animated, {
   Easing,
@@ -22,6 +26,7 @@ import Animated, {
   FadeOut,
   useAnimatedStyle,
   useSharedValue,
+  withDelay,
   withRepeat,
   withTiming,
 } from "react-native-reanimated";
@@ -47,6 +52,7 @@ import {
   HERO_ROWS,
   PixelSprite,
   cropRects,
+  propRects,
   type CropKind,
 } from "@/components/farm/sprites";
 import { chat } from "@/services/deepseek";
@@ -205,26 +211,44 @@ function fallbackLine(
 }
 
 /* -------------------------------------------------------------------------- */
-/*  打字机                                                                     */
+/*  对话                                                                       */
 /* -------------------------------------------------------------------------- */
 
-function useTypedText(text: string, speed = 34) {
-  const [shown, setShown] = useState({ text, n: 0 });
-  const n = shown.text === text ? shown.n : 0;
+type Speaker = "door" | "gu";
 
-  useEffect(() => {
-    if (!text) return;
-    let i = 0;
-    const id = setInterval(() => {
-      i += 1;
-      setShown({ text, n: i });
-      if (i >= text.length) clearInterval(id);
-    }, speed);
-    return () => clearInterval(id);
-  }, [speed, text]);
-
-  return text.slice(0, n);
+interface FarmChatMsg {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
 }
+
+/** 角色人设：door 是作者，顾是他的女友，两个人都住在农场里 */
+const TALK_PERSONA: Record<Speaker, string> = {
+  door: "door，课程表应用 dark-study 的作者，白天写前端，晚上改 bug。性格温和、嘴硬心软、会自嘲，聊到女友顾的时候会明显变软。说话像熟人聊天，偶尔带一点程序员梗，但不炫技。",
+  gu: "顾，door 的女友，农场常驻。性格温柔、俏皮、细腻，喜欢观察生活和小动物，会吐槽 door 的黑眼圈，也会认真鼓励人。说话轻快，偶尔撒娇，但不过分。",
+};
+
+const TALK_TOPICS: Record<Speaker, string[]> = {
+  door: ["这农场怎么藏得这么深？", "你平时怎么写代码？", "说说顾吧"],
+  gu: ["door 最近在忙什么？", "今天适合种点什么？", "夸夸我"],
+};
+
+function farmSystemPrompt(
+  who: Speaker,
+  ctx: {
+    day: number;
+    season: string;
+    coins: number;
+    growing: number;
+    harvested: number;
+  },
+) {
+  return `你在像素农场「doordoor农场」里扮演 ${TALK_PERSONA[who]}
+当前农场状态：第 ${ctx.day} 天（${ctx.season}天），金币 ${ctx.coins}，${ctx.growing} 株作物还没成熟，累计收获 ${ctx.harvested} 次。
+规则：用中文口语聊天；每次回复 1-3 句、不超过 80 个字；不要用引号包住整段话，不要写括号动作或旁白，不要提及 AI、模型或提示词；可以自然聊农场、课表、写代码和日常；遇到不适合回答的话题就轻轻岔开。`;
+}
+
+const chatId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
 /* -------------------------------------------------------------------------- */
 /*  会轻轻呼吸的像素小人                                                       */
@@ -278,17 +302,146 @@ function IdleSprite({
 }
 
 /* -------------------------------------------------------------------------- */
+/*  空气里飘的光点                                                             */
+/* -------------------------------------------------------------------------- */
+
+const MOTES = (() => {
+  let seed = 23;
+  const rnd = () => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed / 2147483648;
+  };
+  return Array.from({ length: 7 }, (_, i) => ({
+    id: i,
+    x: 8 + rnd() * 184,
+    y: 92 + rnd() * 68,
+    dur: 2800 + rnd() * 2400,
+    delay: rnd() * 2000,
+    size: rnd() > 0.6 ? 2 : 1,
+  }));
+})();
+
+function Mote({
+  x,
+  y,
+  dur,
+  delay,
+  size,
+  scale,
+}: {
+  x: number;
+  y: number;
+  dur: number;
+  delay: number;
+  size: number;
+  scale: number;
+}) {
+  const v = useSharedValue(0);
+
+  useEffect(() => {
+    v.value = withDelay(
+      delay,
+      withRepeat(
+        withTiming(1, { duration: dur, easing: Easing.inOut(Easing.sin) }),
+        -1,
+        true,
+      ),
+    );
+  }, [v, dur, delay]);
+
+  const style = useAnimatedStyle(() => ({
+    opacity: 0.16 + v.value * 0.38,
+    transform: [
+      { translateY: -v.value * 5 * scale },
+      { translateX: v.value * 2 * scale },
+    ],
+  }));
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        {
+          position: "absolute",
+          left: x * scale,
+          top: y * scale,
+          width: size * scale,
+          height: size * scale,
+          backgroundColor: "#FFF6C9",
+        },
+        style,
+      ]}
+    />
+  );
+}
+
+/** NPC 头顶的小铭牌，提示这里可以对话 */
+function NameTag({
+  label,
+  accent,
+  scale,
+  hit,
+}: {
+  label: string;
+  accent: string;
+  scale: number;
+  hit: boolean;
+}) {
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        position: "absolute",
+        top: -17 * scale,
+        left: 6 * scale - 17,
+        width: 34,
+        height: 14,
+        borderRadius: 7,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "rgba(14,26,18,0.78)",
+        borderWidth: 1,
+        borderColor: "rgba(246,238,220,0.18)",
+      }}
+    >
+      <View
+        style={{
+          width: 3,
+          height: 3,
+          borderRadius: 2,
+          marginRight: 3,
+          backgroundColor: hit ? accent : "#8FA08F",
+        }}
+      />
+      <Text
+        style={{
+          color: hit ? "#F6EEDC" : "rgba(246,238,220,0.7)",
+          fontSize: 8.5,
+          fontWeight: "700",
+          fontFamily: PIXEL_FONT,
+        }}
+      >
+        {label}
+      </Text>
+    </View>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
 /*  农场主界面                                                                 */
 /* -------------------------------------------------------------------------- */
 
 export function FarmScreen() {
   const router = useRouter();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const apiKey = useSettings((s) => s.apiKey);
 
   const scale = width / VIEW_W;
   const sceneH = VIEW_H * scale;
+  /** 聊天消息区高度：小屏 + 键盘弹起时不把面板顶出屏幕 */
+  const chatMaxH = Math.max(150, Math.min(258, Math.round(height * 0.32)));
 
   const [loaded, setLoaded] = useState(false);
   const [day, setDay] = useState(1);
@@ -308,16 +461,20 @@ export function FarmScreen() {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [shopOpen, setShopOpen] = useState(false);
-  const [speaker, setSpeaker] = useState<"door" | "gu" | null>(null);
-  const [line, setLine] = useState("");
-  const [aiBusy, setAiBusy] = useState(false);
-  const [aiOffline, setAiOffline] = useState(false);
+  const [speaker, setSpeaker] = useState<Speaker | null>(null);
+  const [threads, setThreads] = useState<Record<Speaker, FarmChatMsg[]>>({
+    door: [],
+    gu: [],
+  });
+  const [draft, setDraft] = useState("");
+  const [chatBusy, setChatBusy] = useState(false);
+  const [chatOffline, setChatOffline] = useState(false);
+  const [kbH, setKbH] = useState(0);
+  const chatRef = useRef<ScrollViewInstance>(null);
 
   const season = Math.floor((day - 1) / 7) % 4;
   const theme = THEMES[season];
   const growing = plots.filter((p) => p.crop && p.stage < 2).length;
-
-  const typed = useTypedText(line);
 
   /* ---------------- 玩家位置：UI 线程上平滑走动 ---------------- */
   const px = useSharedValue(PLAYER_START.x);
@@ -358,6 +515,22 @@ export function FarmScreen() {
     },
     [],
   );
+
+  /** 键盘高度：避免聊天输入条被键盘顶住或遮住 */
+  useEffect(() => {
+    const showEvt =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const s = Keyboard.addListener(showEvt, (e) =>
+      setKbH(e.endCoordinates.height),
+    );
+    const h = Keyboard.addListener(hideEvt, () => setKbH(0));
+    return () => {
+      s.remove();
+      h.remove();
+    };
+  }, []);
 
   /* ---------------- 存档读取 / 写入 ---------------- */
   useEffect(() => {
@@ -476,50 +649,92 @@ export function FarmScreen() {
     showToast(`买到了${CROP_ART[kind].label}种子`);
   };
 
-  const askLine = async (who: "door" | "gu") => {
-    setAiBusy(true);
+  const openTalk = (who: Speaker) => {
+    const at = who === "gu" ? GU_AT : DOOR_AT;
+    moveTo(at.x + (who === "gu" ? -16 : 16), at.y + 4);
+    setSpeaker(who);
+    setDraft("");
+    setChatOffline(!apiKey);
+    // 第一次搭话先给一句本地招呼，不让人干等
+    setThreads((prev) =>
+      prev[who].length
+        ? prev
+        : {
+            ...prev,
+            [who]: [
+              {
+                id: chatId(),
+                role: "assistant",
+                text: fallbackLine(who, { day, coins, growing, harvested }),
+              },
+            ],
+          },
+    );
+  };
+
+  const sendChat = async (raw: string) => {
+    const text = raw.trim();
+    const who = speaker;
+    if (!text || !who || chatBusy) return;
+
+    const mine: FarmChatMsg = { id: chatId(), role: "user", text };
+    const history = [...threads[who], mine];
+    setThreads((prev) => ({ ...prev, [who]: [...prev[who], mine] }));
+    setDraft("");
+    setChatBusy(true);
+
     try {
       if (!apiKey) throw new Error("no-key");
-      const persona =
-        who === "gu"
-          ? "顾（应用作者 door 的女友，温柔、俏皮、会关心人）"
-          : "door（课程表应用 dark-study 的作者，爱写代码也爱贫嘴）";
-      const text = await chat(
+      const reply = await chat(
         [
           {
             role: "system",
-            content: `你是隐藏在像素农场里的角色。角色设定：${persona}。只输出一句中文台词，不超过 36 个字；不要引号、不要动作描写、不要换行。可以自然地提到农场当前状态。`,
+            content: farmSystemPrompt(who, {
+              day,
+              season: theme.name,
+              coins,
+              growing,
+              harvested,
+            }),
           },
-          {
-            role: "user",
-            content: `现在是第 ${day} 天（${theme.name}天），金币 ${coins}，地里还有 ${growing} 株作物没成熟，累计收获 ${harvested} 次。请说一句话。`,
-          },
+          ...history.slice(-8).map((m) => ({
+            role: m.role,
+            content: m.text,
+          })),
         ],
         apiKey,
-        { temperature: 1, timeoutMs: 15000 },
+        { temperature: 0.9, timeoutMs: 20_000 },
       );
-      const clean = text
+      const clean = reply
         .trim()
         .replace(/^["“]/, "")
         .replace(/["”]$/, "")
         .replace(/\s+/g, " ");
       if (!clean) throw new Error("empty");
-      setLine(clean.slice(0, 60));
+      setChatOffline(false);
+      setThreads((prev) => ({
+        ...prev,
+        [who]: [
+          ...prev[who],
+          { id: chatId(), role: "assistant", text: clean.slice(0, 140) },
+        ],
+      }));
     } catch {
-      setAiOffline(true);
-      setLine(fallbackLine(who, { day, coins, growing, harvested }));
+      setChatOffline(true);
+      setThreads((prev) => ({
+        ...prev,
+        [who]: [
+          ...prev[who],
+          {
+            id: chatId(),
+            role: "assistant",
+            text: fallbackLine(who, { day, coins, growing, harvested }),
+          },
+        ],
+      }));
     } finally {
-      setAiBusy(false);
+      setChatBusy(false);
     }
-  };
-
-  const openTalk = (who: "door" | "gu") => {
-    const at = who === "gu" ? GU_AT : DOOR_AT;
-    moveTo(at.x + (who === "gu" ? -16 : 16), at.y + 4);
-    setSpeaker(who);
-    setAiOffline(false);
-    setLine("");
-    void askLine(who);
   };
 
   const speakerName = speaker === "gu" ? "顾" : "door";
@@ -559,11 +774,11 @@ export function FarmScreen() {
               color: "#F6EEDC",
               fontSize: 16,
               fontWeight: "800",
-              letterSpacing: 2,
+              letterSpacing: 1.5,
               fontFamily: PIXEL_FONT,
             }}
           >
-            星露坡
+            doordoor<Text style={{ color: "#8FD14F" }}>农场</Text>
           </Text>
           <Text
             style={{
@@ -572,7 +787,7 @@ export function FarmScreen() {
               marginTop: 2,
             }}
           >
-            {`第 ${day} 天 · ${theme.name}天 · 已收获 ${harvested} 次`}
+            {`door & 顾的小农场 · 第 ${day} 天 · ${theme.name}天`}
           </Text>
         </View>
 
@@ -773,6 +988,13 @@ export function FarmScreen() {
               <Rect key={x} x={x} y="96" width="2" height="12" fill="#A98552" />
             ))}
 
+            {/* 场景装饰：Kenney「Tiny Farm」素材（CC0） */}
+            {propRects("pine", 118, 58)}
+            {propRects("sunflower", 164, 112)}
+            {propRects("chicken", 180, 120)}
+            {propRects("cabbage", 140, 144)}
+            {propRects("crate", 180, 144)}
+
             {/* 田地 */}
             <Rect
               x={PLOT_X - 2}
@@ -839,6 +1061,19 @@ export function FarmScreen() {
             })}
           </Svg>
 
+          {/* 空气里缓慢浮动的光点 */}
+          {MOTES.map((m) => (
+            <Mote
+              key={m.id}
+              x={m.x}
+              y={m.y}
+              dur={m.dur}
+              delay={m.delay}
+              size={m.size}
+              scale={scale}
+            />
+          ))}
+
           {/* 点击地面走动 */}
           <Pressable
             style={{
@@ -882,6 +1117,12 @@ export function FarmScreen() {
               zIndex: 5,
             }}
           >
+            <NameTag
+              label="顾"
+              accent="#F9A8D4"
+              scale={scale}
+              hit={threads.gu.length > 0}
+            />
             <IdleSprite
               rows={GU_ROWS}
               palette={GU_PALETTE}
@@ -899,6 +1140,12 @@ export function FarmScreen() {
               zIndex: 5,
             }}
           >
+            <NameTag
+              label="door"
+              accent="#38BDF8"
+              scale={scale}
+              hit={threads.door.length > 0}
+            />
             <IdleSprite
               rows={DOOR_ROWS}
               palette={DOOR_PALETTE}
@@ -983,7 +1230,7 @@ export function FarmScreen() {
             textAlign: "center",
           }}
         >
-          轻点土地：种下 / 浇水 / 收获　·　轻点人物：聊聊天
+          轻点土地：种下 / 浇水 / 收获　·　轻点 door 或顾：聊聊天
         </Text>
 
         <View style={{ flexDirection: "row", gap: 8 }}>
@@ -1167,16 +1414,27 @@ export function FarmScreen() {
                   marginBottom: 8,
                 }}
               >
-                <Text
-                  style={{
-                    color: "#F6EEDC",
-                    fontSize: 15,
-                    fontWeight: "800",
-                    letterSpacing: 1,
-                  }}
-                >
-                  种子小铺
-                </Text>
+                <View>
+                  <Text
+                    style={{
+                      color: "#F6EEDC",
+                      fontSize: 15,
+                      fontWeight: "800",
+                      letterSpacing: 1,
+                    }}
+                  >
+                    doordoor 小铺
+                  </Text>
+                  <Text
+                    style={{
+                      color: "rgba(246,238,220,0.42)",
+                      fontSize: 10,
+                      marginTop: 2,
+                    }}
+                  >
+                    顾说种子随便挑，收成归你
+                  </Text>
+                </View>
                 <Pressable onPress={() => setShopOpen(false)}>
                   <Ionicons name="close" size={18} color="#8FA08F" />
                 </Pressable>
@@ -1257,9 +1515,12 @@ export function FarmScreen() {
         visible={speaker !== null}
         transparent
         animationType="fade"
-        onRequestClose={() => setSpeaker(null)}
+        onRequestClose={() => {
+          setSpeaker(null);
+          Keyboard.dismiss();
+        }}
       >
-        <View style={{ flex: 1, justifyContent: "flex-end" }}>
+        <View style={{ flex: 1, justifyContent: "flex-end", paddingBottom: kbH }}>
           <Pressable
             style={{
               position: "absolute",
@@ -1267,49 +1528,87 @@ export function FarmScreen() {
               right: 0,
               top: 0,
               bottom: 0,
-              backgroundColor: "rgba(0,0,0,0.4)",
+              backgroundColor: "rgba(0,0,0,0.45)",
             }}
-            onPress={() => setSpeaker(null)}
+            onPress={() => {
+              setSpeaker(null);
+              Keyboard.dismiss();
+            }}
           />
           <Animated.View entering={FadeInDown.springify()}>
             <View
               style={{
-                margin: 12,
-                borderRadius: 24,
-                padding: 16,
+                margin: 10,
+                borderRadius: 22,
                 backgroundColor: "#16261A",
                 borderWidth: 1,
                 borderColor: "rgba(246,238,220,0.12)",
+                overflow: "hidden",
               }}
             >
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  paddingHorizontal: 14,
+                  paddingTop: 12,
+                  paddingBottom: 10,
+                  borderBottomWidth: 1,
+                  borderBottomColor: "rgba(246,238,220,0.08)",
+                }}
+              >
                 <View
                   style={{
-                    width: 54,
-                    height: 56,
+                    width: 42,
+                    height: 54,
                     alignItems: "center",
                     justifyContent: "center",
-                    borderRadius: 14,
+                    borderRadius: 12,
                     backgroundColor: "rgba(246,238,220,0.06)",
                   }}
                 >
                   <PixelSprite
                     rows={speaker === "gu" ? GU_ROWS : DOOR_ROWS}
                     palette={speaker === "gu" ? GU_PALETTE : DOOR_PALETTE}
-                    pixel={3}
+                    pixel={2.6}
                   />
                 </View>
                 <View style={{ marginLeft: 10, flex: 1 }}>
-                  <Text
-                    style={{
-                      color: "#F6EEDC",
-                      fontSize: 14,
-                      fontWeight: "800",
-                      letterSpacing: 1,
-                    }}
-                  >
-                    {speakerName}
-                  </Text>
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    <Text
+                      style={{
+                        color: "#F6EEDC",
+                        fontSize: 14,
+                        fontWeight: "800",
+                        letterSpacing: 1,
+                      }}
+                    >
+                      {speakerName}
+                    </Text>
+                    <View
+                      style={{
+                        marginLeft: 7,
+                        paddingHorizontal: 6,
+                        paddingVertical: 1.5,
+                        borderRadius: 99,
+                        backgroundColor: chatOffline
+                          ? "rgba(246,238,220,0.08)"
+                          : "rgba(143,209,79,0.16)",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: chatOffline
+                            ? "rgba(246,238,220,0.42)"
+                            : "#8FD14F",
+                          fontSize: 8.5,
+                          fontWeight: "700",
+                        }}
+                      >
+                        {chatOffline ? "本地台词" : "在线"}
+                      </Text>
+                    </View>
+                  </View>
                   <Text
                     style={{
                       color: "rgba(246,238,220,0.45)",
@@ -1319,92 +1618,219 @@ export function FarmScreen() {
                   >
                     {speaker === "gu"
                       ? "door 的女友 · 农场常驻"
-                      : "dark-study 的作者 · 偶尔出现"}
+                      : "dark-study 作者 · 农场主"}
                   </Text>
                 </View>
-                <Pressable onPress={() => setSpeaker(null)}>
-                  <Ionicons name="close" size={18} color="#8FA08F" />
+                <Pressable
+                  onPress={() => {
+                    setSpeaker(null);
+                    Keyboard.dismiss();
+                  }}
+                  hitSlop={8}
+                  style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: 14,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: "rgba(246,238,220,0.06)",
+                  }}
+                >
+                  <Ionicons name="close" size={16} color="#8FA08F" />
                 </Pressable>
               </View>
 
-              <View
-                style={{
-                  marginTop: 12,
-                  minHeight: 46,
-                  borderRadius: 16,
-                  paddingHorizontal: 12,
-                  paddingVertical: 10,
-                  backgroundColor: "rgba(246,238,220,0.05)",
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{
+                  gap: 7,
+                  paddingHorizontal: 14,
+                  paddingVertical: 9,
                 }}
               >
-                <Text style={{ color: "#EDE4CE", fontSize: 13 }}>
-                  {aiBusy ? "……" : typed}
-                  {!aiBusy && typed.length < line.length ? (
-                    <Text style={{ color: "#8FD14F" }}>▍</Text>
-                  ) : null}
-                </Text>
-              </View>
+                {TALK_TOPICS[speaker ?? "gu"].map((topic) => (
+                  <Pressable
+                    key={topic}
+                    disabled={chatBusy}
+                    onPress={() => {
+                      void sendChat(topic);
+                    }}
+                    style={{
+                      paddingHorizontal: 11,
+                      paddingVertical: 6,
+                      borderRadius: 99,
+                      borderWidth: 1,
+                      borderColor: "rgba(246,238,220,0.14)",
+                      backgroundColor: "rgba(246,238,220,0.04)",
+                      opacity: chatBusy ? 0.45 : 1,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: "rgba(246,238,220,0.7)",
+                        fontSize: 10.5,
+                      }}
+                    >
+                      {topic}
+                    </Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
 
-              {aiOffline ? (
+              <ScrollView
+                ref={chatRef}
+                style={{ maxHeight: chatMaxH }}
+                contentContainerStyle={{
+                  paddingHorizontal: 14,
+                  paddingBottom: 10,
+                  gap: 8,
+                }}
+                keyboardShouldPersistTaps="handled"
+                onContentSizeChange={() =>
+                  chatRef.current?.scrollToEnd({ animated: true })
+                }
+              >
+                {threads[speaker ?? "gu"].map((m) => (
+                  <View
+                    key={m.id}
+                    style={{
+                      alignItems:
+                        m.role === "user" ? "flex-end" : "flex-start",
+                    }}
+                  >
+                    <View
+                      style={{
+                        maxWidth: "84%",
+                        borderRadius: 15,
+                        borderTopLeftRadius: m.role === "user" ? 15 : 5,
+                        borderTopRightRadius: m.role === "user" ? 5 : 15,
+                        paddingHorizontal: 11,
+                        paddingVertical: 8,
+                        borderWidth: m.role === "user" ? 0 : 1,
+                        borderColor: "rgba(246,238,220,0.1)",
+                        backgroundColor:
+                          m.role === "user"
+                            ? "#8FD14F"
+                            : "rgba(246,238,220,0.07)",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: m.role === "user" ? "#152A12" : "#EDE4CE",
+                          fontSize: 13,
+                        }}
+                      >
+                        {m.text}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
+
+                {chatBusy ? (
+                  <View style={{ alignItems: "flex-start" }}>
+                    <View
+                      style={{
+                        borderRadius: 15,
+                        borderTopLeftRadius: 5,
+                        paddingHorizontal: 11,
+                        paddingVertical: 8,
+                        borderWidth: 1,
+                        borderColor: "rgba(246,238,220,0.1)",
+                        backgroundColor: "rgba(246,238,220,0.05)",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: "rgba(246,238,220,0.5)",
+                          fontSize: 12,
+                        }}
+                      >
+                        正在想…
+                      </Text>
+                    </View>
+                  </View>
+                ) : null}
+              </ScrollView>
+
+              {chatOffline ? (
                 <Text
                   style={{
-                    marginTop: 6,
-                    color: "rgba(246,238,220,0.35)",
+                    paddingHorizontal: 14,
+                    paddingBottom: 2,
+                    color: "rgba(246,238,220,0.32)",
                     fontSize: 9.5,
                   }}
                 >
-                  AI 睡着了，这是掏心窝子的话
+                  {apiKey
+                    ? "刚刚没连上，先用本地台词陪你"
+                    : "在设置里填好 Key，就能真正聊起来了"}
                 </Text>
               ) : null}
 
-              <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
-                <Pressable
-                  onPress={() => {
-                    setAiOffline(false);
-                    setLine("");
-                    void askLine(speaker ?? "gu");
-                  }}
-                  disabled={aiBusy}
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 8,
+                  paddingHorizontal: 12,
+                  paddingTop: 8,
+                  paddingBottom: 12,
+                  borderTopWidth: 1,
+                  borderTopColor: "rgba(246,238,220,0.08)",
+                  backgroundColor: "#122019",
+                }}
+              >
+                <TextInput
+                  value={draft}
+                  onChangeText={setDraft}
+                  placeholder={`和${speakerName}说点什么…`}
+                  placeholderTextColor="rgba(246,238,220,0.28)"
                   style={{
                     flex: 1,
-                    alignItems: "center",
-                    paddingVertical: 10,
+                    height: 42,
                     borderRadius: 14,
-                    backgroundColor: aiBusy
-                      ? "rgba(143,209,79,0.35)"
-                      : "#8FD14F",
-                  }}
-                >
-                  <Text
-                    style={{
-                      color: "#152A12",
-                      fontSize: 12,
-                      fontWeight: "800",
-                    }}
-                  >
-                    {aiBusy ? "想一想…" : "再说一句"}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => setSpeaker(null)}
-                  style={{
-                    flex: 0.8,
-                    alignItems: "center",
-                    paddingVertical: 10,
-                    borderRadius: 14,
+                    paddingHorizontal: 12,
+                    color: "#F6EEDC",
+                    fontSize: 13,
+                    backgroundColor: "rgba(246,238,220,0.06)",
                     borderWidth: 1,
-                    borderColor: "rgba(246,238,220,0.16)",
+                    borderColor: "rgba(246,238,220,0.12)",
+                  }}
+                  maxLength={200}
+                  returnKeyType="send"
+                  editable={!chatBusy}
+                  onSubmitEditing={() => {
+                    void sendChat(draft);
+                  }}
+                />
+                <Pressable
+                  onPress={() => {
+                    void sendChat(draft);
+                  }}
+                  disabled={!draft.trim() || chatBusy}
+                  style={{
+                    width: 42,
+                    height: 42,
+                    borderRadius: 14,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor:
+                      !draft.trim() || chatBusy
+                        ? "rgba(143,209,79,0.22)"
+                        : "#8FD14F",
                   }}
                 >
-                  <Text
-                    style={{
-                      color: "#E6DCC7",
-                      fontSize: 12,
-                      fontWeight: "700",
-                    }}
-                  >
-                    回头见
-                  </Text>
+                  <Ionicons
+                    name="arrow-up"
+                    size={18}
+                    color={
+                      !draft.trim() || chatBusy
+                        ? "rgba(21,42,18,0.45)"
+                        : "#152A12"
+                    }
+                  />
                 </Pressable>
               </View>
             </View>

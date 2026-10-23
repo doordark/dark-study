@@ -719,7 +719,8 @@ function parseLooseGradeRow(
     );
   }
   if (!name || name.length < 2) return null;
-  if (!credit || (!score && gpa == null)) return null;
+  // 学分允许缺失（如只有课程名 + 分数的成绩查询截图），先入库再由用户补填
+  if (!score && gpa == null) return null;
 
   return normalizeGradeInput({
     name,
@@ -848,7 +849,7 @@ function parseGradeTable(
     const score = parseScoreCell(cellText("score"));
     const gpa = parseGpaValue(cellText("gpa"));
 
-    if (name && name.length >= 2 && credit && (score || gpa != null)) {
+    if (name && name.length >= 2 && (score || gpa != null)) {
       const draft = normalizeGradeInput({
         name,
         credit,
@@ -932,7 +933,7 @@ export function recognizeGradesFromTextOffline(
       const credit = parseCreditValue(pick("credit"));
       const score = parseScoreCell(pick("score"));
       const gpa = parseGpaValue(pick("gpa"));
-      if (name && name.length >= 2 && credit && (score || gpa != null)) {
+      if (name && name.length >= 2 && (score || gpa != null)) {
         const draft = normalizeGradeInput({
           name,
           credit,

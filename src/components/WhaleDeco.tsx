@@ -9,9 +9,9 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 
-/** 贴图来源：OpenMoji（CC BY-SA 4.0） */
-const WHALE = require("../../assets/stickers/whale.png");
-const WHALE2 = require("../../assets/stickers/whale2.png");
+/** 角色立绘来自作者三视图；星光/泡泡等贴图来自 OpenMoji（CC BY-SA 4.0） */
+const CHIBI_HAPPY = require("../../assets/character/chibi-happy.png");
+const CHIBI_SLEEP = require("../../assets/character/chibi-sleep.png");
 const BUBBLE = require("../../assets/stickers/bubble.png");
 const HEART = require("../../assets/stickers/heart.png");
 const RICE = require("../../assets/stickers/rice.png");
@@ -36,11 +36,11 @@ interface DecoItem {
 const ITEMS: DecoItem[] = [
   {
     key: "whale",
-    src: WHALE,
-    size: 46,
-    left: "3%",
+    src: CHIBI_HAPPY,
+    size: 44,
+    left: "4%",
     top: "7%",
-    opacity: 0.45,
+    opacity: 0.5,
     drift: 8,
     duration: 4200,
     delay: 0,
@@ -91,11 +91,11 @@ const ITEMS: DecoItem[] = [
   },
   {
     key: "whale2",
-    src: WHALE2,
-    size: 26,
+    src: CHIBI_SLEEP,
+    size: 38,
     left: "6%",
     bottom: "9%",
-    opacity: 0.3,
+    opacity: 0.42,
     drift: 6,
     duration: 5000,
     delay: 200,

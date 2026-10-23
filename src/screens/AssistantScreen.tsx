@@ -21,6 +21,7 @@ import { Backdrop } from "@/components/Backdrop";
 import { ChatImage } from "@/components/ChatImage";
 import { ChatInputBar } from "@/components/ChatInputBar";
 import { GlassContainer } from "@/components/GlassContainer";
+import { SuggestionButton } from "@/components/SuggestionButton";
 import { WhaleAvatar } from "@/components/WhaleAvatar";
 import { WhaleDeco } from "@/components/WhaleDeco";
 import { WhaleSummonFX } from "@/components/WhaleSummonFX";
@@ -63,6 +64,7 @@ const WHALE_SUGGESTIONS = [
   "让背景变成薄荷绿",
   "帮我搜一下最近有什么 AI 新闻",
   "画一张你在吃白饭的样子",
+  "行了你先退下吧，我要好好学习了",
 ];
 
 /** 作者 door 的召唤口令（可被识别为开启 / 收回人格） */
@@ -112,6 +114,7 @@ export function AssistantScreen() {
   const [summonFx, setSummonFx] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
 
+  // 本地精确口令只作为「零延迟快捷通道」：其余任何说法都交给模型按语义识别
   const isSummonCmd = (text: string) => {
     const cmd = normalizeCmd(text);
     return cmd === normalizeCmd(whalePhrase) || SUMMON_ALIASES.includes(cmd);
@@ -143,25 +146,38 @@ export function AssistantScreen() {
     setMessages((prev) => [...prev, localMsg(content)]);
   };
 
+  const rememberWhale = (on: boolean) =>
+    AsyncStorage.setItem(WHALE_KEY, on ? "1" : "0").catch(() => {});
+
+  /** 进入鲸鱼人格；message 为空时由模型返回的回复充当登场白 */
+  const enterWhale = (message?: string) => {
+    setWhale(true);
+    setSummonFx(true);
+    Keyboard.dismiss();
+    rememberWhale(true);
+    if (message) pushLocal(message);
+  };
+
+  /** 收回人格；message 为空时由模型返回的回复充当告别白 */
+  const leaveWhale = (message?: string) => {
+    setWhale(false);
+    rememberWhale(false);
+    if (message) pushLocal(message);
+  };
+
   const summonWhale = () => {
     if (whale) {
       pushLocal("人家一直都在呀，大爹 (￣▽￣) 说吧，今天想让鱼做什么？");
       return;
     }
-    setWhale(true);
-    setSummonFx(true);
-    Keyboard.dismiss();
-    AsyncStorage.setItem(WHALE_KEY, "1").catch(() => {});
-    pushLocal(
+    enterWhale(
       "（一团蓝色的影子从屏幕边游出来，尾巴轻轻拍了下你的手）\n大爹！你终于想起我啦 (๑•̀ㅂ•́)و✧ 课表我都有好好看着……大概。要不要让我算运势、夸夸你，或者报个白饭菜单？",
     );
   };
 
   const dismissWhale = () => {
     if (!whale) return;
-    setWhale(false);
-    AsyncStorage.setItem(WHALE_KEY, "0").catch(() => {});
-    pushLocal("呜……那我先变回正经的课表助手。大爹下次记得再叫我呀。");
+    leaveWhale("呜……那我先变回正经的课表助手。大爹下次记得再叫我呀。");
   };
 
   useEffect(() => {
@@ -185,7 +201,7 @@ export function AssistantScreen() {
     const content = text.trim();
     if (!content || busy) return;
 
-    // 隐藏口令：不发给模型，直接切换人格
+    // 精确口令走本地快捷通道（零延迟、不消耗额度）；其余说法交给模型按语义判断
     if (isSummonCmd(content)) {
       setInput("");
       summonWhale();
@@ -200,7 +216,7 @@ export function AssistantScreen() {
     if (!apiKey) {
       setNotice({
         type: "error",
-        text: "请先在「设置」中填写 DeepSeek API Key",
+        text: "你不喂我API Key我咋工作（凶巴巴）",
       });
       return;
     }
@@ -233,7 +249,11 @@ export function AssistantScreen() {
       );
 
       const scheduleActions = result.actions.filter(isScheduleAction);
-      const whaleActions = whale ? result.actions.filter(isWhaleAction) : [];
+      // 收回人格的那一句不执行任何大爹专属操作
+      const whaleActions =
+        whale && result.intent !== "dismiss"
+          ? result.actions.filter(isWhaleAction)
+          : [];
 
       const botMsg: ChatMessage = {
         id: uid(),
@@ -243,6 +263,13 @@ export function AssistantScreen() {
         timestamp: nowTs(),
       };
       setMessages((prev) => [...prev, botMsg]);
+
+      // 大肥鱼召唤 / 退出由模型按语义识别，模型回复本身就是登场白或告别白
+      if (result.intent === "summon" && !whale) {
+        enterWhale();
+      } else if (result.intent === "dismiss" && whale) {
+        leaveWhale();
+      }
 
       // 大爹权限自动执行：改口令 / 改背景 / 生图 / 联网
       if (whaleActions.length) {
@@ -476,7 +503,7 @@ export function AssistantScreen() {
                   </View>
                   <Text className="text-[11px] text-slate-500 dark:text-slate-400">
                     {whale
-                      ? `门大爹的专属小鲸鱼 · 口令「${whalePhrase}」`
+                      ? `大爹的专属小鲸鱼 · 口令「${whalePhrase}」或随口喊一声`
                       : "用自然语言帮你修改和优化课表"}
                   </Text>
                 </View>
@@ -503,199 +530,196 @@ export function AssistantScreen() {
                 scrollRef.current?.scrollToEnd({ animated: true })
               }
             >
-            {messages.length === 0 ? (
-              <Animated.View entering={FadeInDown.springify()}>
-                <GlassContainer radius={24} intensity={38} borderOpacity={0.2}>
-                  <View className="items-center px-5 py-8">
-                    <View className="h-14 w-14 items-center justify-center rounded-[20px] bg-sky-400/25">
-                      {whale ? (
-                        <WhaleAvatar size={46} />
-                      ) : (
-                        <Ionicons
-                          name="chatbubble-ellipses"
-                          size={24}
-                          color="#38BDF8"
-                        />
-                      )}
-                    </View>
-                    <Text className="mt-3 text-[15px] font-bold text-slate-700 dark:text-slate-200">
-                      {whale ? "大肥鱼上线啦" : "试试对我说"}
-                    </Text>
-                    {whale ? (
-                      <Text className="mt-1 text-center text-[10.5px] text-slate-500 dark:text-slate-400">
-                        大爹，今天想让我做点什么？改课表也行，摸鱼也行。
+              {messages.length === 0 ? (
+                <Animated.View entering={FadeInDown.springify()}>
+                  <GlassContainer
+                    radius={24}
+                    intensity={38}
+                    borderOpacity={0.2}
+                  >
+                    <View className="items-center px-5 py-8">
+                      <View className="h-14 w-14 items-center justify-center rounded-[20px] bg-sky-400/25">
+                        {whale ? (
+                          <WhaleAvatar size={46} />
+                        ) : (
+                          <Ionicons
+                            name="chatbubble-ellipses"
+                            size={24}
+                            color="#38BDF8"
+                          />
+                        )}
+                      </View>
+                      <Text className="mt-3 text-[15px] font-bold text-slate-700 dark:text-slate-200">
+                        {whale ? "大肥鱼上线啦" : "试试对我说"}
                       </Text>
-                    ) : null}
-                    <View className="mt-3 w-full gap-y-2">
-                      {(whale ? WHALE_SUGGESTIONS : SUGGESTIONS).map((s) => (
-                        <Pressable
-                          key={s}
-                          onPress={() => send(s)}
-                          className={`rounded-2xl border px-3.5 py-2.5 ${
-                            whale
-                              ? "border-sky-300/35 bg-sky-400/10 dark:border-sky-300/20 dark:bg-sky-400/10"
-                              : "border-white/20 bg-white/20 dark:border-white/10 dark:bg-white/[0.05]"
+                      {whale ? (
+                        <Text className="mt-1 text-center text-[10.5px] text-slate-500 dark:text-slate-400">
+                          大爹，今天想让我做点什么？改课表也行，摸鱼也行。
+                        </Text>
+                      ) : null}
+                      <View className="mt-3 w-full gap-y-2">
+                        {(whale ? WHALE_SUGGESTIONS : SUGGESTIONS).map((s) => (
+                          <SuggestionButton
+                            key={s}
+                            label={s}
+                            onPress={() => send(s)}
+                            cute={whale}
+                          />
+                        ))}
+                      </View>
+                    </View>
+                  </GlassContainer>
+                </Animated.View>
+              ) : (
+                <View className="gap-y-3 pt-2">
+                  {messages.map((m) => {
+                    const isUser = m.role === "user";
+                    return (
+                      <Animated.View
+                        key={m.id}
+                        entering={FadeInDown.springify()}
+                        className={`flex-row ${isUser ? "justify-end" : "justify-start"}`}
+                      >
+                        {!isUser && whale ? (
+                          <View className="mr-1.5 self-end">
+                            <WhaleAvatar size={22} />
+                          </View>
+                        ) : null}
+                        <View
+                          className={`max-w-[82%] rounded-[20px] px-3.5 py-2.5 ${
+                            isUser
+                              ? "rounded-br-md bg-sky-500/85"
+                              : whale
+                                ? "rounded-bl-md border border-sky-300/40 bg-sky-400/15 dark:border-sky-300/20 dark:bg-sky-400/10"
+                                : "rounded-bl-md border border-white/20 bg-white/35 dark:border-white/10 dark:bg-white/[0.08]"
                           }`}
                         >
                           <Text
-                            className={`text-[11.5px] ${
-                              whale
-                                ? "text-sky-700 dark:text-sky-200"
-                                : "text-slate-600 dark:text-slate-300"
+                            className={`text-[12.5px] leading-5 ${
+                              isUser
+                                ? "text-white"
+                                : whale
+                                  ? "text-sky-900 dark:text-sky-100"
+                                  : "text-slate-700 dark:text-slate-200"
                             }`}
                           >
-                            {s}
+                            {m.content}
                           </Text>
-                        </Pressable>
-                      ))}
-                    </View>
-                  </View>
-                </GlassContainer>
-              </Animated.View>
-            ) : (
-              <View className="gap-y-3 pt-2">
-                {messages.map((m) => {
-                  const isUser = m.role === "user";
-                  return (
-                    <Animated.View
-                      key={m.id}
-                      entering={FadeInDown.springify()}
-                      className={`flex-row ${isUser ? "justify-end" : "justify-start"}`}
-                    >
-                      {!isUser && whale ? (
-                        <View className="mr-1.5 self-end">
-                          <WhaleAvatar size={22} />
+
+                          {m.imageUri ? (
+                            <Pressable
+                              onPress={() => setPreview(m.imageUri!)}
+                              className="mt-2"
+                            >
+                              <ChatImage
+                                uri={m.imageUri}
+                                aspectRatio={m.imageAspect ?? 1}
+                              />
+                            </Pressable>
+                          ) : null}
+
+                          {m.sources?.length ? (
+                            <View className="mt-2">
+                              <Text className="text-[9px] font-semibold tracking-wide text-sky-600/80 dark:text-sky-300/80">
+                                资料来源
+                              </Text>
+                              {m.sources.map((s) => (
+                                <Pressable
+                                  key={s.url}
+                                  onPress={() =>
+                                    Linking.openURL(s.url).catch(() => {})
+                                  }
+                                >
+                                  <Text
+                                    numberOfLines={1}
+                                    className="mt-0.5 text-[9.5px] text-slate-500 underline dark:text-slate-400"
+                                  >
+                                    {s.title}
+                                  </Text>
+                                </Pressable>
+                              ))}
+                            </View>
+                          ) : null}
+
+                          {m.actions?.length ? (
+                            <Pressable
+                              onPress={() => applyActions(m.actions!)}
+                              className="mt-2.5 flex-row items-center self-start rounded-full bg-emerald-400/85 px-3.5 py-1.5"
+                            >
+                              <Ionicons
+                                name="checkmark-circle"
+                                size={13}
+                                color="#fff"
+                              />
+                              <Text className="ml-1 text-[11px] font-bold text-white">
+                                {m.actions.length > 1
+                                  ? `一键应用 ${m.actions.length} 项操作`
+                                  : m.actions[0].type === "add"
+                                    ? "应用：添加这门课"
+                                    : m.actions[0].type === "remove"
+                                      ? "应用：删除这门课"
+                                      : m.actions[0].type === "update"
+                                        ? "应用：更新这门课"
+                                        : m.actions[0].type ===
+                                            "create_schedule"
+                                          ? "应用：新建课表"
+                                          : "应用：合并课表"}
+                              </Text>
+                            </Pressable>
+                          ) : null}
                         </View>
-                      ) : null}
+                      </Animated.View>
+                    );
+                  })}
+
+                  {busy ? (
+                    <Animated.View
+                      entering={FadeInDown.springify()}
+                      className="flex-row"
+                    >
                       <View
-                        className={`max-w-[82%] rounded-[20px] px-3.5 py-2.5 ${
-                          isUser
-                            ? "rounded-br-md bg-sky-500/85"
-                            : whale
-                              ? "rounded-bl-md border border-sky-300/40 bg-sky-400/15 dark:border-sky-300/20 dark:bg-sky-400/10"
-                              : "rounded-bl-md border border-white/20 bg-white/35 dark:border-white/10 dark:bg-white/[0.08]"
+                        className={`flex-row items-center rounded-[20px] rounded-bl-md border px-4 py-3 ${
+                          whale
+                            ? "border-sky-300/40 bg-sky-400/15 dark:border-sky-300/20 dark:bg-sky-400/10"
+                            : "border-white/20 bg-white/35 dark:border-white/10 dark:bg-white/[0.08]"
                         }`}
                       >
-                        <Text
-                          className={`text-[12.5px] leading-5 ${
-                            isUser
-                              ? "text-white"
-                              : whale
-                                ? "text-sky-900 dark:text-sky-100"
-                                : "text-slate-700 dark:text-slate-200"
-                          }`}
-                        >
-                          {m.content}
-                        </Text>
-
-                        {m.imageUri ? (
-                          <Pressable
-                            onPress={() => setPreview(m.imageUri!)}
-                            className="mt-2"
-                          >
-                            <ChatImage
-                              uri={m.imageUri}
-                              aspectRatio={m.imageAspect ?? 1}
-                            />
-                          </Pressable>
-                        ) : null}
-
-                        {m.sources?.length ? (
-                          <View className="mt-2">
-                            <Text className="text-[9px] font-semibold tracking-wide text-sky-600/80 dark:text-sky-300/80">
-                              资料来源
-                            </Text>
-                            {m.sources.map((s) => (
-                              <Pressable
-                                key={s.url}
-                                onPress={() => Linking.openURL(s.url).catch(() => {})}
-                              >
-                                <Text
-                                  numberOfLines={1}
-                                  className="mt-0.5 text-[9.5px] text-slate-500 underline dark:text-slate-400"
-                                >
-                                  {s.title}
-                                </Text>
-                              </Pressable>
-                            ))}
-                          </View>
-                        ) : null}
-
-                        {m.actions?.length ? (
-                          <Pressable
-                            onPress={() => applyActions(m.actions!)}
-                            className="mt-2.5 flex-row items-center self-start rounded-full bg-emerald-400/85 px-3.5 py-1.5"
-                          >
-                            <Ionicons
-                              name="checkmark-circle"
-                              size={13}
-                              color="#fff"
-                            />
-                            <Text className="ml-1 text-[11px] font-bold text-white">
-                              {m.actions.length > 1
-                                ? `一键应用 ${m.actions.length} 项操作`
-                                : m.actions[0].type === "add"
-                                  ? "应用：添加这门课"
-                                  : m.actions[0].type === "remove"
-                                    ? "应用：删除这门课"
-                                    : m.actions[0].type === "update"
-                                      ? "应用：更新这门课"
-                                      : m.actions[0].type === "create_schedule"
-                                        ? "应用：新建课表"
-                                        : "应用：合并课表"}
-                            </Text>
-                          </Pressable>
+                        <ActivityIndicator size="small" color="#38BDF8" />
+                        {whale ? (
+                          <Text className="ml-2 text-[11px] text-sky-700 dark:text-sky-200">
+                            大肥鱼正在嚼白饭…
+                          </Text>
                         ) : null}
                       </View>
                     </Animated.View>
-                  );
-                })}
+                  ) : null}
+                </View>
+              )}
 
-                {busy ? (
-                  <Animated.View
-                    entering={FadeInDown.springify()}
-                    className="flex-row"
-                  >
-                    <View
-                      className={`flex-row items-center rounded-[20px] rounded-bl-md border px-4 py-3 ${
-                        whale
-                          ? "border-sky-300/40 bg-sky-400/15 dark:border-sky-300/20 dark:bg-sky-400/10"
-                          : "border-white/20 bg-white/35 dark:border-white/10 dark:bg-white/[0.08]"
-                      }`}
-                    >
-                      <ActivityIndicator size="small" color="#38BDF8" />
-                      {whale ? (
-                        <Text className="ml-2 text-[11px] text-sky-700 dark:text-sky-200">
-                          大肥鱼正在嚼白饭…
-                        </Text>
-                      ) : null}
-                    </View>
-                  </Animated.View>
-                ) : null}
-              </View>
-            )}
-
-            {notice ? (
-              <Animated.View entering={FadeInDown.springify()} className="mt-3">
-                <View
-                  className={`rounded-2xl border px-3.5 py-2.5 ${
-                    notice.type === "error"
-                      ? "border-rose-300/40 bg-rose-400/15 dark:border-rose-400/30 dark:bg-rose-500/15"
-                      : "border-emerald-300/40 bg-emerald-400/15 dark:border-emerald-400/30 dark:bg-emerald-500/15"
-                  }`}
+              {notice ? (
+                <Animated.View
+                  entering={FadeInDown.springify()}
+                  className="mt-3"
                 >
-                  <Text
-                    className={`text-[11px] leading-4 ${
+                  <View
+                    className={`rounded-2xl border px-3.5 py-2.5 ${
                       notice.type === "error"
-                        ? "text-rose-700 dark:text-rose-200"
-                        : "text-emerald-700 dark:text-emerald-200"
+                        ? "border-rose-300/40 bg-rose-400/15 dark:border-rose-400/30 dark:bg-rose-500/15"
+                        : "border-emerald-300/40 bg-emerald-400/15 dark:border-emerald-400/30 dark:bg-emerald-500/15"
                     }`}
                   >
-                    {notice.text}
-                  </Text>
-                </View>
-              </Animated.View>
-            ) : null}
+                    <Text
+                      className={`text-[11px] leading-4 ${
+                        notice.type === "error"
+                          ? "text-rose-700 dark:text-rose-200"
+                          : "text-emerald-700 dark:text-emerald-200"
+                      }`}
+                    >
+                      {notice.text}
+                    </Text>
+                  </View>
+                </Animated.View>
+              ) : null}
             </ScrollView>
           </View>
 
@@ -708,16 +732,14 @@ export function AssistantScreen() {
                 contentContainerStyle={{ paddingHorizontal: 20, gap: 6 }}
               >
                 {WHALE_SUGGESTIONS.map((s) => (
-                  <Pressable
+                  <SuggestionButton
                     key={s}
-                    onPress={() => send(s)}
+                    label={s}
+                    variant="pill"
+                    cute
                     disabled={busy}
-                    className="rounded-full border border-sky-300/35 bg-sky-400/10 px-3 py-1.5 dark:border-sky-300/20 dark:bg-sky-400/10"
-                  >
-                    <Text className="text-[10.5px] font-medium text-sky-700 dark:text-sky-200">
-                      {s}
-                    </Text>
-                  </Pressable>
+                    onPress={() => send(s)}
+                  />
                 ))}
               </ScrollView>
             </View>
@@ -737,9 +759,7 @@ export function AssistantScreen() {
       </Backdrop>
 
       {/* 召唤动效：闪亮登场 + 施法变身 */}
-      {summonFx ? (
-        <WhaleSummonFX onDone={() => setSummonFx(false)} />
-      ) : null}
+      {summonFx ? <WhaleSummonFX onDone={() => setSummonFx(false)} /> : null}
 
       {/* 生成图全屏预览 */}
       <Modal
@@ -760,9 +780,7 @@ export function AssistantScreen() {
               resizeMode="contain"
             />
           ) : null}
-          <Text className="mt-4 text-[11px] text-white/60">
-            轻点任意处关闭
-          </Text>
+          <Text className="mt-4 text-[11px] text-white/60">轻点任意处关闭</Text>
         </Pressable>
       </Modal>
     </View>

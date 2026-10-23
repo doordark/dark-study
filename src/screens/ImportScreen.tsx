@@ -241,7 +241,7 @@ export function ImportScreen() {
       }
 
       if (!grades.length) {
-        task.fail("未识别到有效成绩，请更换图片或补充表格后重试");
+        task.fail("未识别到有效成绩，请更换图片或补充表格后重试喔");
         return;
       }
       task.complete(

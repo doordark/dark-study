@@ -124,7 +124,9 @@ export function GradeEditorPanel({
   const scrollRef = useRef<ScrollViewInstance>(null);
 
   const [name, setName] = useState(grade?.name ?? "");
-  const [credit, setCredit] = useState(grade ? String(grade.credit) : "");
+  const [credit, setCredit] = useState(
+    grade?.credit != null ? String(grade.credit) : "",
+  );
   const [scoreType, setScoreType] = useState<GradeScoreType>(
     grade?.scoreType ?? "numeric",
   );
@@ -189,10 +191,16 @@ export function GradeEditorPanel({
       Alert.alert("请填写课程名称");
       return;
     }
-    const creditNum = Number(credit);
-    if (!Number.isFinite(creditNum) || creditNum <= 0) {
-      Alert.alert("请填写有效的学分", "学分需要是大于 0 的数字");
-      return;
+    // 学分允许留空：识别不到学分时先存 null，用户之后可随时补填
+    const creditText = credit.trim();
+    let creditNum: number | null = null;
+    if (creditText) {
+      const parsed = Number(creditText);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        Alert.alert("学分格式不正确", "学分需要是大于 0 的数字，或留空");
+        return;
+      }
+      creditNum = parsed;
     }
 
     const trimmedScore = score.trim();
@@ -275,9 +283,9 @@ export function GradeEditorPanel({
 
                   <Field label="课程名称" value={name} placeholder="如 高等数学" onChange={setName} />
                   <Field
-                    label="学分"
+                    label="学分（可留空）"
                     value={credit}
-                    placeholder="如 3"
+                    placeholder="如 3，识别不到可稍后补填"
                     onChange={setCredit}
                     keyboardType="numeric"
                   />

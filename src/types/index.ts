@@ -68,8 +68,8 @@ export interface GradeYear {
 export interface GradeRecord {
   id: string;
   name: string;
-  /** 学分 */
-  credit: number;
+  /** 学分；成绩单没有学分列时为 null，由用户后续补填 */
+  credit: number | null;
   /** 分数类型 */
   scoreType: GradeScoreType;
   /** 原始分数，按上传内容原样展示，如 "87" / "A" / "优秀" */

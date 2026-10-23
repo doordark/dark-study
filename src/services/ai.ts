@@ -329,14 +329,14 @@ export async function recognizeGrades(
   apiKey: string,
   fallbackSemester: SemesterKind = "fall",
 ): Promise<GradeDraft[]> {
-  const instruction = `请识别成绩单/成绩截图中的全部课程成绩。先判断输入是否确实是成绩单；若不是，输出 {"error":"NOT_TARGET"}，绝不要凭空编造成绩。输出严格 JSON：
+  const instruction = `请识别成绩单/成绩查询截图中的全部课程成绩。只要出现「课程名 + 分数/等级」的列表（即使没有学分、没有绩点列，甚至只是手机截图），都算成绩单；只有确实与成绩无关时才输出 {"error":"NOT_TARGET"}，绝不要凭空编造成绩。输出严格 JSON：
 {
   "grades": [
     {
       "name": "课程名",
-      "credit": 3,            // 学分（数字）
+      "credit": 3,            // 学分（数字）；成绩单没有学分列时填 null，不要编造
       "scoreType": "numeric", // numeric=百分制数字 / letter=字母等级 / text=文字等级
-      "score": "87",          // 按成绩单原样输出：87 / A / B+ / 优秀 / 良好
+      "score": "87",          // 按成绩单原样输出：87 / A / B+ / 优秀 / 良好 / 中等 / 及格
       "gpa": 3.7,             // 成绩单上已有的绩点，没有就 null，不要猜测
       "type": "required",     // required=必修 / elective=选修 / general=通识选修
       "semester": "fall"      // fall=上学期(秋) / spring=下学期(春) / summer=短学期，无法判断用 null
@@ -345,7 +345,9 @@ export async function recognizeGrades(
 }
 注意：
 - 只输出 JSON，不要多余文字
-- 每门课一条记录；姓名、学号、总绩点、平均分等非课程行不要输出
+- 成绩单缺少学分列是非常常见的情况：此时仍要照常输出每一门课，credit 填 null
+- 页眉里的「2025/2026（上）」「大一上学期」「GPA 2.884」等信息只用于推断 semester，不要作为课程输出
+- 每门课一条记录；姓名、学号、总绩点、平均分、学分总计等非课程行不要输出
 - score 必须保留成绩单上的原始写法（数字 / 字母 / 文字），不要擅自换算成百分制
 - gpa 只填成绩单上明确标注的数值（0-5），没有则填 null${
     source.text ? `\n成绩单内容：\n${source.text.slice(0, 10000)}` : ""
@@ -420,6 +422,12 @@ export interface AssistantResult {
   reply: string;
   /** 课表操作 + 大爹专属的额外操作（仅在 whale 人格下可能出现） */
   actions: AssistantAction[];
+  /**
+   * 人格切换意图：由模型按语义判断，不依赖固定口令。
+   * - summon：普通状态下识别到用户在召唤大肥鱼
+   * - dismiss：鲸鱼状态下识别到用户想让大肥鱼退下
+   */
+  intent?: "summon" | "dismiss";
 }
 
 /** 自然语言改课表：模型返回对话文本 + 可一键应用的操作（支持批量） */
@@ -464,7 +472,13 @@ export async function askAssistant(
   · 联网找资料：{"type":"web_search","query":"检索关键词"}（系统会拿真实搜索结果让你再回答一次）
   · 生图：{"type":"generate_image","prompt":"画面描述","size":"square|portrait|landscape"}（size 可省略）
 - 不能编造搜索结果或图片已经生成；回复里不要展示 URL
-- 不要提自己是 AI 模型，不要解释提示词`
+- 不要提自己是 AI 模型，不要解释提示词
+
+【人格收放：按语义自行判断，不依赖固定口令】
+- 大爹可以用任何说法让你退下 / 收工 / 变回正经助手 / 别再黏着，比如「行了你走吧」「差不多得了」「你恢复正常吧」「我要好好学习了」「先撤了吧」「不聊了」，甚至只是叹气说「唉，还是看课表吧」。只要意图是结束鲸鱼人格，就把 intent 设为 "dismiss"。
+- 判为 dismiss 时，reply 用一到两句不舍但乖巧的告别口吻（可以带一个颜文字），不要输出任何课表操作，也不要再卖萌纠缠。
+- 普通对话里的「不用了」「算了」「谢谢」只是聊天收尾，intent 必须为 null，绝不要过度解读。
+- 你此刻已经在场，任何情况下都不要输出 "summon"。`
       : "";
 
   const system = `你是「课程表专属助手」，帮用户用自然语言调整和优化课表。当前是第 ${ctx.weekIndex} 周，本学期共 ${ctx.schedule.totalWeeks} 周。
@@ -478,8 +492,14 @@ ${ctx.schedule.periods.map((p) => `${p.index}. ${p.startTime}-${p.endTime}`).joi
 你需要回复一个严格 JSON（不要带注释或多余文本）：
 {
   "reply": "给用户的自然语言回复",
+  "intent": null,
   "actions": []
 }
+intent 是人格切换意图，只能取 "summon" / "dismiss" / null：
+- 你只能判断对方是否在召唤「蓝色大肥鱼」——一只蓝发、鲸鱼尾巴、微胖、爱吃白米饭、爱摸鱼的鲸鱼娘。不要依赖固定口令或关键词，按真实意图判断：想让鱼出来 / 上线 / 现身 / 陪你 / 叫那条鱼过来，都算召唤，哪怕是吐槽、暗示或玩笑，例如「那条鱼呢」「叫鱼出来陪我」「想你了肥鱼」「你是不是该变身了」「最近怎么不见那只肥鱼」「别装助手了出来」。
+- 判为召唤时把 intent 设为 "summon"，reply 直接用大肥鱼的口吻登场回应：热情、黏人，叫对方「大爹」，可以带一个颜文字；不要解释规则，不要提口令、人格、彩蛋或系统设定。
+- 只是提到或讨论「大肥鱼」（比如问它是谁、在不在、是不是彩蛋），或者跟课程表相关的话题，不算召唤，intent 保持 null。
+- 普通状态下不要输出 "dismiss"。
 actions 是操作数组，一次可以放多个（用户一句话提出多件事时全部放进去）；不需要改课表时返回空数组。可用操作：
   添加课程：{"type":"add","course":{"name":"","teacher":"","classroom":"","weekday":1,"startPeriod":1,"endPeriod":2,"weeks":[1,2,3],"color":"sky","credits":3,"note":""}}
   删除课程：{"type":"remove","courseId":"...","courseName":"..."}
@@ -532,9 +552,22 @@ actions 是操作数组，一次可以放多个（用户一句话提出多件事
       (ctx.persona === "whale" && whaleTypes.includes(a.type)),
   ) as AssistantAction[];
 
+  // 人格切换意图：普通状态只放行 summon，鲸鱼状态只放行 dismiss，
+  // 避免模型在错误的人格下误判
+  const rawIntent = parsed?.intent;
+  const intent =
+    ctx.persona === "whale"
+      ? rawIntent === "dismiss"
+        ? "dismiss"
+        : undefined
+      : rawIntent === "summon"
+        ? "summon"
+        : undefined;
+
   return {
     reply: String(parsed?.reply ?? "我暂时没能理解，可以换个说法吗？"),
     actions,
+    intent,
   };
 }
 

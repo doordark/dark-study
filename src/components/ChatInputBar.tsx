@@ -42,8 +42,24 @@ export function ChatInputBar({
     <View
       style={{
         paddingHorizontal: 16,
-        paddingTop: 10,
+        paddingTop: 12,
         paddingBottom: padBottom,
+        // 独立底栏：整块实心底板把输入区从背景上「切」出来，不再和背景图粘连
+        borderTopWidth: 1,
+        borderTopColor: cute
+          ? isDark
+            ? "rgba(56,189,248,0.18)"
+            : "rgba(125,211,252,0.45)"
+          : isDark
+            ? "rgba(255,255,255,0.08)"
+            : "rgba(148,163,184,0.18)",
+        backgroundColor: cute
+          ? isDark
+            ? "#081420"
+            : "#EAF6FF"
+          : isDark
+            ? "#0A101C"
+            : "#F7F9FC",
       }}
     >
       <View

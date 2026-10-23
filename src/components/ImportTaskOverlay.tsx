@@ -443,7 +443,7 @@ function TaskDialog() {
                         {g.name}
                       </Text>
                       <Text className="w-12 text-right text-[10.5px] text-slate-500 dark:text-slate-400">
-                        {g.credit}
+                        {g.credit != null ? g.credit : "待补"}
                       </Text>
                       <Text className="w-12 text-right text-[10.5px] text-slate-500 dark:text-slate-400">
                         {g.score || "--"}

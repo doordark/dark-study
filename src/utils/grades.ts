@@ -128,6 +128,8 @@ export interface GradeStats {
   total: number;
   /** 缺少绩点、无法计入的课程数 */
   missing: number;
+  /** 缺少学分、暂未计入加权计算的课程数 */
+  missingCredit: number;
 }
 
 /** 学分加权平均绩点：Σ(绩点 × 学分) / Σ学分 */
@@ -139,6 +141,7 @@ export function calcGradeStats(
   let credits = 0;
   let count = 0;
   let missing = 0;
+  let missingCredit = 0;
 
   for (const grade of grades) {
     if (!isGradeIncluded(rule, grade)) continue;
@@ -147,7 +150,10 @@ export function calcGradeStats(
       continue;
     }
     const credit = Number(grade.credit);
-    if (!Number.isFinite(credit) || credit <= 0) continue;
+    if (grade.credit == null || !Number.isFinite(credit) || credit <= 0) {
+      missingCredit += 1;
+      continue;
+    }
     weighted += grade.gpa * credit;
     credits += credit;
     count += 1;
@@ -159,6 +165,7 @@ export function calcGradeStats(
     count,
     total: grades.length,
     missing,
+    missingCredit,
   };
 }
 
@@ -176,8 +183,15 @@ export function normalizeGradeInput(input: {
   const name = String(input.name ?? "").trim();
   if (!name) return null;
 
-  const credit = Number(input.credit);
-  if (!Number.isFinite(credit) || credit <= 0) return null;
+  // 学分允许暂缺（很多成绩单只有课程名 + 成绩），留空待用户补填
+  const creditNum = Number(input.credit);
+  const credit =
+    input.credit != null &&
+    String(input.credit).trim() !== "" &&
+    Number.isFinite(creditNum) &&
+    creditNum > 0
+      ? creditNum
+      : null;
 
   const rawScore = input.score != null ? String(input.score).trim() : "";
   const legacyGrade =

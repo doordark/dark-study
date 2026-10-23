@@ -3,7 +3,7 @@ import { extractJson } from "@/utils/base64";
 /**
  * DeepSeek 接入层。
  *
- * - 文本任务：`deepseek-chat`
+ * - 文本任务：`deepseek-flash`（DeepSeek-V4.1-Flash）
  * - 图片识别（课表截图 / 作息表 / 成绩单）：`deepseek-flash`（多模态视觉模型）
  *
  * 安全提示：API Key 由用户在「设置」中填写并仅保存在本地设备，
@@ -12,7 +12,7 @@ import { extractJson } from "@/utils/base64";
 const BASE_URL = "https://api.deepseek.com/v1";
 
 export const VISION_MODEL = "deepseek-flash";
-export const TEXT_MODEL = "deepseek-chat";
+export const TEXT_MODEL = "deepseek-flash";
 
 export interface ChatContent {
   role: "system" | "user" | "assistant";
@@ -51,6 +51,8 @@ export async function chat(
         model: opts.model ?? TEXT_MODEL,
         messages,
         temperature: opts.temperature ?? 0.4,
+        // V4.1-Flash 默认开启思考模式；日常对话/结构化解析关掉更快，也能让 temperature 生效
+        thinking: { type: "disabled" },
         ...(opts.jsonMode ? { response_format: { type: "json_object" } } : {}),
       }),
       signal: controller.signal,

@@ -674,10 +674,7 @@ export function CourseScheduleScreen({
       {nightOpen ? (
         <NightSky
           onClose={() => setNightOpen(false)}
-          onEnterFarm={() => {
-            setNightOpen(false);
-            onFarm?.();
-          }}
+          onEnterFarm={() => onFarm?.()}
           courseNames={schedule.courses.map((c) => c.name)}
         />
       ) : null}

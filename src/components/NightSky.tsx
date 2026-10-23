@@ -591,10 +591,12 @@ function Owl({
   left,
   top,
   onTap,
+  hint,
 }: {
   left: number;
   top: number;
   onTap: () => void;
+  hint?: string;
 }) {
   const pop = useSharedValue(0);
   const hop = useSharedValue(0);
@@ -620,6 +622,33 @@ function Owl({
     <Animated.View
       style={[{ position: "absolute", left, top, zIndex: 6 }, popStyle]}
     >
+      {hint ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            bottom: 66,
+            right: -4,
+            width: 152,
+            borderRadius: 14,
+            borderWidth: 1,
+            borderColor: "rgba(125,211,252,0.22)",
+            backgroundColor: "rgba(8,18,36,0.92)",
+            paddingHorizontal: 11,
+            paddingVertical: 8,
+          }}
+        >
+          <Text
+            style={{
+              color: "rgba(186,230,253,0.95)",
+              fontSize: 10.5,
+              lineHeight: 16,
+            }}
+          >
+            {hint}
+          </Text>
+        </View>
+      ) : null}
       <Pressable onPress={press} hitSlop={16}>
         <OwlBody />
       </Pressable>
@@ -670,10 +699,23 @@ export function NightSky({
   const insets = useSafeAreaInsets();
 
   const [visits, setVisits] = useState(1);
-  const [lit, setLit] = useState(0);
+  // 逐颗记录，点哪颗收哪颗；不能用数量推导顺序，否则会收错星
+  const [picked, setPicked] = useState<boolean[]>(() =>
+    Array<boolean>(TOTAL_STARS).fill(false),
+  );
+  const lit = picked.filter(Boolean).length;
   const [closing, setClosing] = useState(false);
   const [seenFarm, setSeenFarm] = useState(false);
+  const [owlHint, setOwlHint] = useState("");
   const owlTaps = useRef(0);
+  const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (hintTimer.current) clearTimeout(hintTimer.current);
+    },
+    [],
+  );
 
   const fade = useSharedValue(0);
   const done = lit >= TOTAL_STARS;
@@ -739,13 +781,13 @@ export function NightSky({
   const enterFarm = useCallback(() => {
     if (closing) return;
     setClosing(true);
+    // 先推农场（自带淡入），夜空在下面同时溶解，形成一次交叉过渡而不是黑屏两段
+    if (onEnterFarm) onEnterFarm();
     fade.value = withTiming(
       0,
-      { duration: 420, easing: Easing.in(Easing.cubic) },
+      { duration: 520, easing: Easing.inOut(Easing.cubic) },
       (finished) => {
-        if (!finished) return;
-        runOnJS(onClose)();
-        if (onEnterFarm) runOnJS(onEnterFarm)();
+        if (finished) runOnJS(onClose)();
       },
     );
   }, [closing, fade, onClose, onEnterFarm]);
@@ -855,21 +897,55 @@ export function NightSky({
           s={s.s}
           w={w}
           h={h}
-          collected={i < lit}
-          onCollect={() => setLit((n) => Math.min(TOTAL_STARS, n + 1))}
+          collected={picked[i]}
+          onCollect={() =>
+            setPicked((prev) =>
+              prev[i] ? prev : prev.map((v, idx) => (idx === i ? true : v)),
+            )
+          }
         />
       ))}
 
       {done ? <Burst cx={moonCx} cy={moonCy} /> : null}
       {showOwl ? (
-        <Owl
-          left={Math.max(12, w - moonRight - moonSize - 8)}
-          top={moonTop + moonSize - 14}
-          onTap={() => {
-            owlTaps.current += 1;
-            if (owlTaps.current >= 3) enterFarm();
-          }}
-        />
+        <>
+          {/* 猫头鹰身下的一圈暖光，提示它是可以互动的 */}
+          <View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              left: Math.max(12, w - moonRight - moonSize - 8) - 10,
+              top: moonTop + moonSize - 24,
+              width: 64,
+              height: 64,
+              borderRadius: 32,
+              backgroundColor: "rgba(252,211,77,0.08)",
+              borderWidth: 1,
+              borderColor: "rgba(252,211,77,0.16)",
+              zIndex: 5,
+            }}
+          />
+          <Owl
+            left={Math.max(12, w - moonRight - moonSize - 8)}
+            top={moonTop + moonSize - 14}
+            hint={owlHint || undefined}
+            onTap={() => {
+              const n = owlTaps.current + 1;
+              owlTaps.current = n;
+              if (n >= 3) {
+                enterFarm();
+                return;
+              }
+              setOwlHint(
+                n === 1
+                  ? "（它眨了眨眼，好像还想听你再叫一声）"
+                  : "（它朝小径的方向跳了一下，再叫一声试试）",
+              );
+              if (hintTimer.current) clearTimeout(hintTimer.current);
+              hintTimer.current = setTimeout(() => setOwlHint(""), 2400);
+            }}
+          />
+        </>
       ) : null}
 
       {/* 底部信息面板 */}
@@ -962,8 +1038,12 @@ export function NightSky({
           >
             <Text style={{ color: "rgba(148,163,184,0.9)", fontSize: 11 }}>
               {done
-                ? "夜空亮度 100%"
-                : `拾起散落的星 · ${lit} / ${TOTAL_STARS}`}
+                ? showOwl
+                  ? "夜空已亮 · 远处有个小家伙在看你"
+                  : `拾起散落的星 · ${lit} / ${TOTAL_STARS}`
+                : lit === 0
+                  ? "轻点散落的星光，把它们收进口袋"
+                  : `拾起散落的星 · ${lit} / ${TOTAL_STARS}`}
             </Text>
             <Pressable
               onPress={close}

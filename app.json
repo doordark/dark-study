@@ -2,19 +2,19 @@
   "expo": {
     "name": "dark-study",
     "slug": "dark-study",
-    "version": "1.5.0",
+    "version": "1.5.3",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "dark-study",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/images/icon.png"
     },
     "android": {
       "package": "com.darkstudy.app",
-      "versionCode": 5,
+      "versionCode": 8,
       "permissions": ["REQUEST_INSTALL_PACKAGES"],
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#08060D",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
