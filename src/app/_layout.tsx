@@ -4,6 +4,7 @@ import { useColorScheme } from "nativewind";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { ImportTaskOverlay } from "@/components/ImportTaskOverlay";
+import { WhalePet } from "@/components/WhalePet";
 import "@/global.css";
 
 export default function RootLayout() {
@@ -32,6 +33,8 @@ export default function RootLayout() {
         </Stack>
         {/* 全局导入任务悬浮层：分析进度弹窗 / 可拖动进度球，退出导入页后任务继续 */}
         <ImportTaskOverlay />
+        {/* 大肥鱼桌宠：从对话里叫出来后常驻在所有页面之上 */}
+        <WhalePet />
         <StatusBar style={isDark ? "light" : "dark"} />
       </ThemeProvider>
     </GestureHandlerRootView>

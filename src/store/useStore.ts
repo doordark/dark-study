@@ -197,6 +197,8 @@ interface AppState {
   addCourse: (course: Omit<Course, "id">) => string;
   updateCourse: (id: string, patch: Partial<Course>) => void;
   removeCourse: (id: string) => void;
+  /** 只删除当前这一条上课记录（同一门课的其他时段保留） */
+  removeCourseOnce: (id: string) => void;
   setPeriods: (periods: Schedule["periods"]) => void;
 
   /* ---------------- 成绩与绩点 ---------------- */
@@ -405,6 +407,14 @@ export const useStore = create<AppState>()(
               courses: cur.courses.filter((c) => !sameIdentity(c, target)),
             };
           }),
+        ),
+
+      removeCourseOnce: (id) =>
+        set((s) =>
+          mapActive(s, (cur) => ({
+            ...cur,
+            courses: cur.courses.filter((c) => c.id !== id),
+          })),
         ),
 
       setPeriods: (periods) =>

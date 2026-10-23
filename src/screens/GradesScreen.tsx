@@ -97,6 +97,10 @@ export function GradesScreen() {
   const [yearVisible, setYearVisible] = useState(false);
   const [editingYear, setEditingYear] = useState<GradeYear | undefined>();
   const [importSheet, setImportSheet] = useState(false);
+  /** 勾选编辑模式：默认不显示勾选框，进入后才显示 */
+  const [selectMode, setSelectMode] = useState(false);
+  /** 长按进入勾选模式后，松手不再触发普通点击 */
+  const longPressed = React.useRef(false);
 
   const activeRule =
     gradeRules.find((r) => r.id === activeGradeRuleId) ?? gradeRules[0];
@@ -137,11 +141,13 @@ export function GradesScreen() {
   const switchYear = (id: string) => {
     setYearScope(id);
     setSemTab("all");
+    setSelectMode(false);
     if (id !== "all") setActiveGradeYear(id);
   };
 
   const switchSem = (next: SemTab) => {
     setSemTab(next);
+    setSelectMode(false);
     if (next !== "all") setActiveGradeSemester(next);
   };
 
@@ -605,8 +611,9 @@ export function GradesScreen() {
             </GlassContainer>
           </Animated.View>
 
-          {/* 总览：全部学年 -> 各学年；指定学年 -> 各学期 */}
-          <Animated.View entering={FadeInDown.delay(120).springify()} className="mt-3">
+          {/* 总览：仅学年总成绩 / 全部学年时显示；具体学期下不占版面 */}
+          {semScope === "all" ? (
+            <Animated.View entering={FadeInDown.delay(120).springify()} className="mt-3">
             <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
               <View className="px-4 py-3.5">
                 <Text className="mb-1 text-[12px] font-semibold text-slate-700 dark:text-slate-200">
@@ -640,7 +647,8 @@ export function GradesScreen() {
                 )}
               </View>
             </GlassContainer>
-          </Animated.View>
+            </Animated.View>
+          ) : null}
 
           {/* 成绩列表 */}
           <Animated.View entering={FadeInDown.delay(190).springify()} className="mt-3">
@@ -650,10 +658,35 @@ export function GradesScreen() {
                   <Text className="text-[14px] font-bold text-slate-800 dark:text-white">
                     {scopeLabel}
                   </Text>
-                  <Text className="text-[10.5px] text-slate-400 dark:text-slate-500">
-                    {scopedGrades.length} 门
-                  </Text>
+                  <View className="flex-row items-center">
+                    <Text className="mr-2 text-[10.5px] text-slate-400 dark:text-slate-500">
+                      {scopedGrades.length} 门
+                    </Text>
+                    <Pressable
+                      onPress={() => setSelectMode((v) => !v)}
+                      className={`rounded-full px-2.5 py-1 ${
+                        selectMode
+                          ? "bg-sky-400/80"
+                          : "bg-white/25 dark:bg-white/[0.07]"
+                      }`}
+                    >
+                      <Text
+                        className={`text-[10px] font-semibold ${
+                          selectMode
+                            ? "text-white"
+                            : "text-sky-500 dark:text-sky-300"
+                        }`}
+                      >
+                        {selectMode ? "完成" : "勾选"}
+                      </Text>
+                    </Pressable>
+                  </View>
                 </View>
+                {selectMode ? (
+                  <Text className="mt-1.5 text-[9.5px] text-slate-400 dark:text-slate-500">
+                    点击课程可勾选 / 取消计入「{ruleName}」
+                  </Text>
+                ) : null}
 
                 {scopedGrades.length === 0 ? (
                   <View className="items-center py-8">
@@ -688,43 +721,59 @@ export function GradesScreen() {
                           key={g.id}
                           className="flex-row items-center border-t border-white/20 py-3 dark:border-white/[0.06]"
                         >
-                          <Pressable
-                            onPress={() => toggleCourse(g)}
-                            hitSlop={8}
-                            className={`mr-2.5 ${excludedByType ? "opacity-35" : ""}`}
-                          >
-                            <Ionicons
-                              name={included ? "checkbox" : "square-outline"}
-                              size={18}
-                              color={included ? "#38BDF8" : "#94A3B8"}
-                            />
-                          </Pressable>
-                          <Pressable
-                            onPress={() => openEdit(g)}
-                            className="flex-1"
-                          >
-                            <Text
-                              numberOfLines={1}
-                              className={`text-[13px] font-semibold ${
-                                included
-                                  ? "text-slate-800 dark:text-white"
-                                  : "text-slate-400 dark:text-slate-500"
-                              }`}
+                          {selectMode ? (
+                            <Pressable
+                              onPress={() => toggleCourse(g)}
+                              hitSlop={8}
+                              className={`mr-2.5 ${excludedByType ? "opacity-35" : ""}`}
                             >
-                              {g.name}
-                            </Text>
-                            <Text className="mt-0.5 text-[10.5px] text-slate-400 dark:text-slate-500">
-                              {meta}
-                            </Text>
+                              <Ionicons
+                                name={included ? "checkbox" : "square-outline"}
+                                size={18}
+                                color={included ? "#38BDF8" : "#94A3B8"}
+                              />
+                            </Pressable>
+                          ) : null}
+                          <Pressable
+                            onPressIn={() => {
+                              longPressed.current = false;
+                            }}
+                            onPress={() => {
+                              if (longPressed.current) return;
+                              if (selectMode) toggleCourse(g);
+                              else openEdit(g);
+                            }}
+                            onLongPress={() => {
+                              longPressed.current = true;
+                              setSelectMode(true);
+                            }}
+                            delayLongPress={320}
+                            className="flex-1 flex-row items-center"
+                          >
+                            <View className="flex-1">
+                              <Text
+                                numberOfLines={1}
+                                className={`text-[13px] font-semibold ${
+                                  included
+                                    ? "text-slate-800 dark:text-white"
+                                    : "text-slate-400 dark:text-slate-500"
+                                }`}
+                              >
+                                {g.name}
+                              </Text>
+                              <Text className="mt-0.5 text-[10.5px] text-slate-400 dark:text-slate-500">
+                                {meta}
+                              </Text>
+                            </View>
+                            <View className="ml-2 items-end">
+                              <Text className="text-[16px] font-bold text-slate-700 dark:text-slate-200">
+                                {g.score || "--"}
+                              </Text>
+                              <Text className="text-[10px] font-semibold text-sky-500 dark:text-sky-300">
+                                {formatCourseGpa(g.gpa)} 绩点
+                              </Text>
+                            </View>
                           </Pressable>
-                          <View className="ml-2 items-end">
-                            <Text className="text-[16px] font-bold text-slate-700 dark:text-slate-200">
-                              {g.score || "--"}
-                            </Text>
-                            <Text className="text-[10px] font-semibold text-sky-500 dark:text-sky-300">
-                              {formatCourseGpa(g.gpa)} 绩点
-                            </Text>
-                          </View>
                         </View>
                       );
                     })}

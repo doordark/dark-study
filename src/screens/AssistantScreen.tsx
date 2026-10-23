@@ -24,8 +24,14 @@ import { GlassContainer } from "@/components/GlassContainer";
 import { SuggestionButton } from "@/components/SuggestionButton";
 import { WhaleAvatar } from "@/components/WhaleAvatar";
 import { WhaleDeco } from "@/components/WhaleDeco";
-import { WhaleSummonFX } from "@/components/WhaleSummonFX";
+import { WhaleLeaveFX, WhaleSummonFX } from "@/components/WhaleSummonFX";
 import { BACKGROUND_PRESETS, resolveTint } from "@/constants/backgrounds";
+import {
+  WHALE_STICKERS,
+  matchSticker,
+  randomSticker,
+} from "@/constants/whaleStickers";
+import type { WhaleStickerId } from "@/constants/whaleStickers";
 import { askAssistant } from "@/services/ai";
 import type { AssistantResult } from "@/services/ai";
 import {
@@ -35,6 +41,7 @@ import {
   searchWeb,
 } from "@/services/whaleTools";
 import { useSettings } from "@/store/useSettings";
+import { useWhalePet } from "@/store/useWhalePet";
 import { useActiveSchedule, useStore } from "@/store/useStore";
 import type {
   AssistantAction,
@@ -56,6 +63,7 @@ const SUGGESTIONS = [
 
 /** 大爹专属：大肥鱼的额外玩法，普通课表助手没有这些入口 */
 const WHALE_SUGGESTIONS = [
+  "出来陪我",
   "帮我看看今日运势",
   "夸夸我",
   "今天吃什么",
@@ -66,6 +74,26 @@ const WHALE_SUGGESTIONS = [
   "画一张你在吃白饭的样子",
   "行了你先退下吧，我要好好学习了",
 ];
+
+/** 想让她到屏幕边上陪着（桌宠）的说法；精确口令走本地，语义判断交给模型 */
+const PET_WORDS = /桌宠|出来陪我|出来陪|陪我玩|出来玩|跳出来|爬出来/;
+
+/** 连点头像时的递进反应，最后一次会把她叫成桌宠 */
+const AVATAR_TAPS = [
+  "别戳啦，会戳出水的…",
+  "呜，我可是会记仇的（假装）",
+  "再戳？再戳我就从屏幕里爬出来找你",
+  "……好啦，其实我也想一直陪着你",
+  "那我出来啦，大爹别把我收回去呀",
+];
+
+/** 按回复情绪挑表情包：优先匹配情绪，否则小概率随机来一张 */
+function pickStickerForReply(reply: string): WhaleStickerId | null {
+  const mood = matchSticker(reply);
+  if (mood && Math.random() < 0.7) return mood;
+  if (Math.random() < 0.3) return randomSticker();
+  return null;
+}
 
 /** 作者 door 的召唤口令（可被识别为开启 / 收回人格） */
 const WHALE_KEY = "dark-study-whale-persona";
@@ -112,7 +140,14 @@ export function AssistantScreen() {
   const scrollRef = useRef<ScrollViewInstance>(null);
   const [whale, setWhale] = useState(false);
   const [summonFx, setSummonFx] = useState(false);
+  const [leaveFx, setLeaveFx] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
+  /** 点头像时的反应气泡 */
+  const [reaction, setReaction] = useState<string | null>(null);
+  const taps = useRef({ count: 0, at: 0 });
+  const reactionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stickerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showPet = useWhalePet((s) => s.show);
 
   // 本地精确口令只作为「零延迟快捷通道」：其余任何说法都交给模型按语义识别
   const isSummonCmd = (text: string) => {
@@ -146,6 +181,55 @@ export function AssistantScreen() {
     setMessages((prev) => [...prev, localMsg(content)]);
   };
 
+  /** 追加一条只显示表情包的消息 */
+  const pushSticker = (id: WhaleStickerId) => {
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: uid(),
+        role: "assistant",
+        content: "",
+        sticker: id,
+        timestamp: nowTs(),
+      },
+    ]);
+  };
+
+  /** 头像旁边冒一句短反应 */
+  const flashReaction = (text: string) => {
+    if (reactionTimer.current) clearTimeout(reactionTimer.current);
+    setReaction(text);
+    reactionTimer.current = setTimeout(() => setReaction(null), 2800);
+  };
+
+  /**
+   * 连点头像：前两下不打扰你，第三下开始有反应，
+   * 一直点到第五句时她会从屏幕边爬出来当桌宠。
+   */
+  const onAvatarTap = () => {
+    const now = Date.now();
+    if (now - taps.current.at > 2400) taps.current.count = 0;
+    taps.current.count += 1;
+    taps.current.at = now;
+    const n = taps.current.count;
+    if (n < 3) return;
+    const idx = Math.min(n - 3, AVATAR_TAPS.length - 1);
+    flashReaction(AVATAR_TAPS[idx]);
+    if (idx === AVATAR_TAPS.length - 1) {
+      taps.current.count = 0;
+      showPet();
+      pushSticker("excited");
+    }
+  };
+
+  useEffect(
+    () => () => {
+      if (reactionTimer.current) clearTimeout(reactionTimer.current);
+      if (stickerTimer.current) clearTimeout(stickerTimer.current);
+    },
+    [],
+  );
+
   const rememberWhale = (on: boolean) =>
     AsyncStorage.setItem(WHALE_KEY, on ? "1" : "0").catch(() => {});
 
@@ -158,11 +242,20 @@ export function AssistantScreen() {
     if (message) pushLocal(message);
   };
 
-  /** 收回人格；message 为空时由模型返回的回复充当告别白 */
+  /** 收回人格：先播退场动效，动画结束后再切回普通助手界面 */
   const leaveWhale = (message?: string) => {
-    setWhale(false);
+    if (leaveFx) return;
     rememberWhale(false);
     if (message) pushLocal(message);
+    setLeaveFx(true);
+  };
+
+  /** 退场动效结束：真正收回鲸鱼人格，顺手清掉头像旁的互动气泡与连点计数 */
+  const finishLeaveWhale = () => {
+    setLeaveFx(false);
+    setWhale(false);
+    setReaction(null);
+    taps.current.count = 0;
   };
 
   const summonWhale = () => {
@@ -210,6 +303,17 @@ export function AssistantScreen() {
     if (isDismissCmd(content)) {
       setInput("");
       dismissWhale();
+      return;
+    }
+
+    // 想让她到屏幕边上陪着：本地直接叫出来，不用等模型
+    if (whale && PET_WORDS.test(content)) {
+      setInput("");
+      showPet();
+      pushLocal(
+        "（尾巴一摆，从屏幕边探出头来）来啦来啦，我就挂在这儿陪你。拖我到哪儿都行，长按可以让我回去。",
+      );
+      pushSticker("happy");
       return;
     }
 
@@ -263,6 +367,15 @@ export function AssistantScreen() {
         timestamp: nowTs(),
       };
       setMessages((prev) => [...prev, botMsg]);
+
+      // 说完话偶尔顺手补一张表情包：优先按回复情绪挑，其次随机
+      if (whale && result.intent !== "dismiss") {
+        const pick = pickStickerForReply(result.reply);
+        if (pick) {
+          if (stickerTimer.current) clearTimeout(stickerTimer.current);
+          stickerTimer.current = setTimeout(() => pushSticker(pick), 420);
+        }
+      }
 
       // 大肥鱼召唤 / 退出由模型按语义识别，模型回复本身就是登场白或告别白
       if (result.intent === "summon" && !whale) {
@@ -354,6 +467,15 @@ export function AssistantScreen() {
             ),
           ]);
         }
+      } else if (action.type === "summon_pet") {
+        showPet();
+        setMessages((prev) => [
+          ...prev,
+          localMsg(
+            "（从屏幕边上探出半个身子）我出来啦，就挂在旁边陪你，拖我、戳我都行，长按我就回去。",
+          ),
+        ]);
+        pushSticker("excited");
       }
     }
     requestAnimationFrame(() =>
@@ -501,18 +623,42 @@ export function AssistantScreen() {
                       </View>
                     ) : null}
                   </View>
-                  <Text className="text-[11px] text-slate-500 dark:text-slate-400">
-                    {whale
-                      ? `大爹的专属小鲸鱼 · 口令「${whalePhrase}」或随口喊一声`
-                      : "用自然语言帮你修改和优化课表"}
-                  </Text>
                 </View>
-                <View className="h-10 w-10 items-center justify-center rounded-[16px] bg-sky-400/25">
-                  {whale ? (
-                    <WhaleAvatar size={34} />
-                  ) : (
-                    <Ionicons name="sparkles" size={18} color="#38BDF8" />
-                  )}
+                <View style={{ position: "relative", zIndex: 20 }}>
+                  {reaction ? (
+                    <Animated.View
+                      entering={FadeInDown.springify()}
+                      pointerEvents="none"
+                      style={{
+                        position: "absolute",
+                        right: 0,
+                        top: 58,
+                        width: 190,
+                        zIndex: 20,
+                        borderRadius: 14,
+                        paddingHorizontal: 10,
+                        paddingVertical: 8,
+                        backgroundColor: "rgba(12,22,40,0.9)",
+                        borderWidth: 1,
+                        borderColor: "rgba(125,211,252,0.32)",
+                      }}
+                    >
+                      <Text style={{ color: "#E6F4FF", fontSize: 11 }}>
+                        {reaction}
+                      </Text>
+                    </Animated.View>
+                  ) : null}
+                  <Pressable
+                    onPress={whale ? onAvatarTap : undefined}
+                    hitSlop={8}
+                    className="h-[52px] w-[52px] items-center justify-center overflow-hidden rounded-[18px] bg-sky-400/25"
+                  >
+                    {whale ? (
+                      <WhaleAvatar size={46} />
+                    ) : (
+                      <Ionicons name="sparkles" size={18} color="#38BDF8" />
+                    )}
+                  </Pressable>
                 </View>
               </View>
             </Animated.View>
@@ -538,9 +684,9 @@ export function AssistantScreen() {
                     borderOpacity={0.2}
                   >
                     <View className="items-center px-5 py-8">
-                      <View className="h-14 w-14 items-center justify-center rounded-[20px] bg-sky-400/25">
+                      <View className="h-[68px] w-[68px] items-center justify-center overflow-hidden rounded-[22px] bg-sky-400/25">
                         {whale ? (
-                          <WhaleAvatar size={46} />
+                          <WhaleAvatar size={62} />
                         ) : (
                           <Ionicons
                             name="chatbubble-ellipses"
@@ -574,6 +720,27 @@ export function AssistantScreen() {
                 <View className="gap-y-3 pt-2">
                   {messages.map((m) => {
                     const isUser = m.role === "user";
+                    // 表情包消息：只有图，没有气泡
+                    if (m.sticker) {
+                      return (
+                        <Animated.View
+                          key={m.id}
+                          entering={FadeInDown.springify()}
+                          className="flex-row justify-start"
+                        >
+                          {whale ? (
+                            <View className="mr-2 self-end">
+                              <WhaleAvatar size={32} />
+                            </View>
+                          ) : null}
+                          <Image
+                            source={WHALE_STICKERS[m.sticker as WhaleStickerId]}
+                            resizeMode="contain"
+                            style={{ width: 126, height: 126 }}
+                          />
+                        </Animated.View>
+                      );
+                    }
                     return (
                       <Animated.View
                         key={m.id}
@@ -581,8 +748,8 @@ export function AssistantScreen() {
                         className={`flex-row ${isUser ? "justify-end" : "justify-start"}`}
                       >
                         {!isUser && whale ? (
-                          <View className="mr-1.5 self-end">
-                            <WhaleAvatar size={22} />
+                          <View className="mr-2 self-end">
+                            <WhaleAvatar size={32} />
                           </View>
                         ) : null}
                         <View
@@ -759,6 +926,9 @@ export function AssistantScreen() {
 
       {/* 召唤动效：闪亮登场 + 施法变身 */}
       {summonFx ? <WhaleSummonFX onDone={() => setSummonFx(false)} /> : null}
+
+      {/* 退场动效：摆尾钻回水里，结束后收回鲸鱼人格 */}
+      {leaveFx ? <WhaleLeaveFX onDone={finishLeaveWhale} /> : null}
 
       {/* 生成图全屏预览 */}
       <Modal

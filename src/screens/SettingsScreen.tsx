@@ -442,9 +442,6 @@ export function SettingsScreen() {
             <Text className="text-[24px] font-extrabold text-slate-800 dark:text-white">
               设置
             </Text>
-            <Text className="mt-1 text-[12px] text-slate-500 dark:text-slate-400">
-              外观、学期时间、课表管理与 AI 接入
-            </Text>
           </Animated.View>
 
           {/* 外观 */}

@@ -15,8 +15,8 @@ export interface ChatInputBarProps {
 }
 
 /**
- * 极简聊天输入框：没有底板、描边、投影，只有输入框本体和发送按钮，
- * 直接浮在页面背景上方。
+ * 聊天输入胶囊：半透明表面 + 1px 发丝边，输入框与发送键都收在胶囊内，
+ * 直接浮在页面背景上方，不再额外套底板。
  */
 export function ChatInputBar({
   value,
@@ -36,55 +36,75 @@ export function ChatInputBar({
   return (
     <View
       style={{
-        paddingHorizontal: 20,
-        paddingTop: 10,
+        paddingHorizontal: 16,
+        paddingTop: 8,
         paddingBottom: padBottom,
-        flexDirection: "row",
-        alignItems: "center",
       }}
     >
-      <TextInput
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor={
-          isDark ? "rgba(148,163,184,0.6)" : "rgba(100,116,139,0.55)"
-        }
-        onSubmitEditing={onSend}
-        returnKeyType="send"
-        editable={!busy}
+      <View
         style={{
-          flex: 1,
-          paddingVertical: 8,
-          paddingRight: 10,
-          fontSize: 13.5,
-          color: isDark ? "#E2E8F0" : "#1E293B",
-        }}
-      />
-
-      <Pressable
-        onPress={onSend}
-        disabled={!canSend}
-        hitSlop={8}
-        style={{
-          width: 32,
-          height: 32,
-          borderRadius: 16,
+          flexDirection: "row",
           alignItems: "center",
-          justifyContent: "center",
-          backgroundColor: canSend ? "#38BDF8" : "transparent",
+          minHeight: 46,
+          paddingLeft: 16,
+          paddingRight: 5,
+          borderRadius: 999,
+          backgroundColor: isDark
+            ? "rgba(15,23,42,0.58)"
+            : "rgba(255,255,255,0.78)",
+          borderWidth: 1,
+          borderColor: isDark
+            ? "rgba(255,255,255,0.12)"
+            : "rgba(148,163,184,0.28)",
         }}
       >
-        {busy ? (
-          <ActivityIndicator size="small" color="#94A3B8" />
-        ) : (
-          <Ionicons
-            name="arrow-up"
-            size={18}
-            color={canSend ? "#FFFFFF" : isDark ? "#475569" : "#94A3B8"}
-          />
-        )}
-      </Pressable>
+        <TextInput
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor={
+            isDark ? "rgba(148,163,184,0.6)" : "rgba(100,116,139,0.55)"
+          }
+          onSubmitEditing={onSend}
+          returnKeyType="send"
+          editable={!busy}
+          style={{
+            flex: 1,
+            paddingVertical: 9,
+            paddingRight: 8,
+            fontSize: 13.5,
+            color: isDark ? "#E2E8F0" : "#1E293B",
+          }}
+        />
+
+        <Pressable
+          onPress={onSend}
+          disabled={!canSend}
+          hitSlop={8}
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 18,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: canSend
+              ? "#38BDF8"
+              : isDark
+                ? "rgba(255,255,255,0.07)"
+                : "rgba(148,163,184,0.18)",
+          }}
+        >
+          {busy ? (
+            <ActivityIndicator size="small" color="#94A3B8" />
+          ) : (
+            <Ionicons
+              name="arrow-up"
+              size={18}
+              color={canSend ? "#FFFFFF" : isDark ? "#64748B" : "#94A3B8"}
+            />
+          )}
+        </Pressable>
+      </View>
     </View>
   );
 }

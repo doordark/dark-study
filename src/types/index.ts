@@ -122,7 +122,19 @@ export type WhaleAction =
       type: "generate_image";
       prompt: string;
       size?: "square" | "portrait" | "landscape";
-    };
+    }
+  /** 把大肥鱼叫出来当桌宠，挂在屏幕边上陪着 */
+  | { type: "summon_pet" };
+
+/** 桌宠能做的动作（由对话驱动，全部在客户端本地播放） */
+export type PetActionKind =
+  | "dance"
+  | "spin"
+  | "eat"
+  | "study"
+  | "sleep"
+  | "jump"
+  | "wave";
 
 /** 助手消息 */
 export interface ChatMessage {
@@ -137,6 +149,8 @@ export interface ChatMessage {
   imageAspect?: number;
   /** 联网检索引用 */
   sources?: ChatSource[];
+  /** 大肥鱼发的表情包 id（内容为空，仅展示图片） */
+  sticker?: string;
   timestamp: number;
 }
 

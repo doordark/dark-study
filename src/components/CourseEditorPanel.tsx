@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useEffect, useRef, useState } from "react";
 import {
+  Alert,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
@@ -32,9 +33,12 @@ export interface CourseEditorPanelProps {
   totalWeeks?: number;
   /** 传入则为编辑，undefined 为新建 */
   course?: Course;
+  /** 同一门课（名称 + 教师 + 教室一致）的上课记录条数 */
+  occurrenceCount?: number;
   onClose: () => void;
   onSave: (course: Omit<Course, "id"> & { id?: string }) => void;
-  onDelete?: (id: string) => void;
+  /** once = 只删当前这一条上课记录；all = 删除整门课 */
+  onDelete?: (id: string, scope: "once" | "all") => void;
 }
 
 const emptyDraft = (totalWeeks: number): Omit<Course, "id"> => ({
@@ -88,6 +92,7 @@ export function CourseEditorPanel({
   periods,
   totalWeeks = 18,
   course,
+  occurrenceCount = 1,
   onClose,
   onSave,
   onDelete,
@@ -388,8 +393,34 @@ export function CourseEditorPanel({
                   {course && onDelete ? (
                     <Pressable
                       onPress={() => {
-                        onDelete(course.id);
-                        onClose();
+                        // 同一门课可能有多个上课时段，让用户选择删除范围
+                        if (occurrenceCount <= 1) {
+                          onDelete(course.id, "all");
+                          onClose();
+                          return;
+                        }
+                        Alert.alert(
+                          "删除课程",
+                          `「${course.name}」共有 ${occurrenceCount} 条上课记录，要删除哪些？`,
+                          [
+                            { text: "取消", style: "cancel" },
+                            {
+                              text: "只删这一次",
+                              onPress: () => {
+                                onDelete(course.id, "once");
+                                onClose();
+                              },
+                            },
+                            {
+                              text: "删除整门课",
+                              style: "destructive",
+                              onPress: () => {
+                                onDelete(course.id, "all");
+                                onClose();
+                              },
+                            },
+                          ],
+                        );
                       }}
                       className="mb-2 items-center rounded-2xl border border-rose-400/40 bg-rose-400/15 py-3"
                     >

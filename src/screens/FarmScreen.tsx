@@ -45,6 +45,12 @@ import {
   HERO_ROWS,
   PixelSprite,
   PROP_ART,
+  WEIGANG_PALETTE,
+  WEIGANG_ROWS,
+  XIAOBA_PALETTE,
+  XIAOBA_ROWS,
+  YUJIE_PALETTE,
+  YUJIE_ROWS,
   cropRects,
   type CropKind,
 } from "@/components/farm/sprites";
@@ -69,6 +75,12 @@ const PLAYER_START = { x: 48, y: 96 };
 const GU_AT = { x: 148, y: 100 };
 const DOOR_AT = { x: 18, y: 94 };
 const CHICKEN_AT = { x: 176, y: 114 };
+/** 三个儿子：池塘下方草地上一排，个头比大人小一点 */
+const XIAOBA_AT = { x: 10, y: 156 };
+const YUJIE_AT = { x: 28, y: 156 };
+const WEIGANG_AT = { x: 46, y: 156 };
+/** 跟儿子们聊天时玩家站的位置（草地，池子与田地之间） */
+const SONS_SPOT = { x: 62, y: 146 };
 
 const SAVE_KEY = "dark-study-farm";
 
@@ -177,15 +189,66 @@ function fallbackLine(
     `金币 ${ctx.coins} 也用不完我的一粒米，咕咕。`,
     "累了就坐在田边吧，我陪你，反正我也没别的事，咕。",
   ];
-  const bank = who === "gu" ? gu : who === "door" ? door : chicken;
-  return bank[Math.floor(Math.random() * bank.length)];
+  const xiaoba = [
+    "地我替你看过了，苗都还站着，放心吧。",
+    `第 ${ctx.day} 天，弟弟们又吵架了，我来田边躲一会儿。`,
+    ctx.growing > 0
+      ? `还有 ${ctx.growing} 株在长，水我浇过一遍了，你歇着。`
+      : "地空着也好看，风一吹全是草的味道。",
+    `金币 ${ctx.coins}，别乱花，弟弟们还等着买种子。`,
+    ctx.harvested > 0
+      ? `收了 ${ctx.harvested} 次啦，你比我会照顾东西。`
+      : "第一颗种子最难，种下去就赢了一半。",
+    "我是小八，家里老大，习惯了先看别人。",
+    "我爸写这个农场的时候，说是给自己留个能喘气的地方。",
+  ];
+  const yujie = [
+    "今天有没有熟的？我饿了，真的很饿。",
+    `金币 ${ctx.coins}！够买三根烤肠了吧？`,
+    ctx.growing > 0
+      ? `那 ${ctx.growing} 株还没好，我盯它们好久了，一点动静都没有。`
+      : "地里空空的，我哥说种子不能偷吃，我觉得可以商量。",
+    `第 ${ctx.day} 天，我哥又在装大人了。`,
+    "我叫玉洁，名字好听吧，我妈取的。",
+    "唯纲说他会魔法，我觉得他只会摔跤。",
+    ctx.harvested > 0
+      ? `收了 ${ctx.harvested} 次，每次我都先尝过。`
+      : "下次多种点蓝莓吧，那个甜。",
+  ];
+  const weigang = [
+    "别碰帽子，这是法师的帽子。",
+    "我哥说没有魔法，那是他没看见。",
+    `第 ${ctx.day} 天，我算过了，今天适合浇水。`,
+    ctx.growing > 0
+      ? `那 ${ctx.growing} 株苗我用魔法催过了，别急。`
+      : "空地正好，我可以在这儿画个法阵。",
+    "等我学会火球术，就帮家里烧水。",
+    `金币 ${ctx.coins}，法师也是要吃饭的。`,
+    "你想学魔法吗？先学会站好别摔。",
+  ];
+  const bank: Record<Speaker, string[]> = {
+    gu,
+    door,
+    chicken,
+    xiaoba,
+    yujie,
+    weigang,
+  };
+  const lines = bank[who];
+  return lines[Math.floor(Math.random() * lines.length)];
 }
 
 /* -------------------------------------------------------------------------- */
 /*  对话                                                                       */
 /* -------------------------------------------------------------------------- */
 
-type Speaker = "door" | "gu" | "chicken";
+type Speaker =
+  | "door"
+  | "gu"
+  | "chicken"
+  | "xiaoba"
+  | "yujie"
+  | "weigang";
 
 interface FarmChatMsg {
   id: string;
@@ -193,19 +256,106 @@ interface FarmChatMsg {
   text: string;
 }
 
-/** 角色人设：door 是作者，顾是他的女友，小鸡坤坤是农场常驻 */
+/** 角色人设：door 是作者，顾是他的女友，小鸡坤坤是农场常驻，三个儿子是来农场玩的 */
 const TALK_PERSONA: Record<Speaker, string> = {
   door: "door，课程表应用 dark-study 的作者，白天写前端，晚上改 bug。性格温和、嘴硬心软、会自嘲，聊到女友顾的时候会明显变软。说话像熟人聊天，偶尔带一点程序员梗，但不炫技。",
   gu: "顾，door 的女友，农场常驻。性格温柔、俏皮、细腻，喜欢观察生活和小动物，会吐槽 door 的黑眼圈，也会认真鼓励人。说话轻快，偶尔撒娇，但不过分。",
   chicken:
     "坤坤，农场里那只圆滚滚的小鸡，胆子小但很黏人。说话短、碎碎念，喜欢用「咕」当语气词，爱聊虫子、晒太阳、顾撒的米，偶尔一本正经地吹自己球技好。不装作很聪明，会一本正经地说傻话，也会安慰人。",
+  xiaoba:
+    "小八，door 和顾的大儿子，家里老大。性格稳重、话不多但很会照顾人，习惯先看两个弟弟再顾自己，有点小大人的疲惫感。说话温和、句子短，会关心对方累不累、吃饭没有，偶尔透出一点想被照顾的心思。",
+  yujie:
+    "玉洁，door 和顾的二儿子。性格活泼、嘴贫、爱吃，说话又快又爱笑，喜欢抢话、开哥哥和弟弟的玩笑，也护着家里人。不会真的调皮捣蛋，但总觉得地里的东西「可以先尝一口」。",
+  weigang:
+    "唯纲，door 和顾的三儿子，最小的那个。戴着一顶紫色的巫师帽，坚信自己是魔法师，说话一本正经地胡说八道，会认真解释「魔法原理」，被拆穿也不承认。天真、黏人，会想让对方也相信魔法。",
 };
 
 const TALK_TOPICS: Record<Speaker, string[]> = {
   door: ["这农场怎么藏得这么深？", "你平时怎么写代码？", "说说顾吧"],
   gu: ["door 最近在忙什么？", "今天适合种点什么？", "夸夸我"],
   chicken: ["坤坤今天吃了什么？", "你怕不怕猫？", "陪我待一会儿"],
+  xiaoba: ["当哥哥累不累？", "平时帮家里做什么？", "弟弟们闹了怎么办？"],
+  yujie: ["玉洁今天吃了什么？", "你俩谁更调皮？", "最喜欢哪种作物？"],
+  weigang: ["帽子哪来的？", "你真的会魔法吗？", "变个东西给我看看"],
 };
+
+/** 对话面板抬头：名字、身份、头像 */
+const SPEAKER_META: Record<
+  Speaker,
+  { name: string; sub: string; rows: string[]; palette: Record<string, string> }
+> = {
+  door: {
+    name: "door",
+    sub: "dark-study 作者 · 农场主",
+    rows: DOOR_ROWS,
+    palette: DOOR_PALETTE,
+  },
+  gu: {
+    name: "顾",
+    sub: "door 的女友 · 农场常驻",
+    rows: GU_ROWS,
+    palette: GU_PALETTE,
+  },
+  chicken: {
+    name: "坤坤",
+    sub: "农场里的小鸡 · 黏人",
+    rows: PROP_ART.chicken.rows,
+    palette: PROP_ART.chicken.palette,
+  },
+  xiaoba: {
+    name: "小八",
+    sub: "大儿子 · 家里老大",
+    rows: XIAOBA_ROWS,
+    palette: XIAOBA_PALETTE,
+  },
+  yujie: {
+    name: "玉洁",
+    sub: "二儿子 · 嘴贫爱吃",
+    rows: YUJIE_ROWS,
+    palette: YUJIE_PALETTE,
+  },
+  weigang: {
+    name: "唯纲",
+    sub: "三儿子 · 自称魔法师",
+    rows: WEIGANG_ROWS,
+    palette: WEIGANG_PALETTE,
+  },
+};
+
+/** 三个儿子：站位、名牌与贴图 */
+const SONS: {
+  who: Speaker;
+  label: string;
+  accent: string;
+  at: { x: number; y: number };
+  rows: string[];
+  palette: Record<string, string>;
+}[] = [
+  {
+    who: "xiaoba",
+    label: "小八",
+    accent: "#A78BFA",
+    at: XIAOBA_AT,
+    rows: XIAOBA_ROWS,
+    palette: XIAOBA_PALETTE,
+  },
+  {
+    who: "yujie",
+    label: "玉洁",
+    accent: "#FB923C",
+    at: YUJIE_AT,
+    rows: YUJIE_ROWS,
+    palette: YUJIE_PALETTE,
+  },
+  {
+    who: "weigang",
+    label: "唯纲",
+    accent: "#D176D0",
+    at: WEIGANG_AT,
+    rows: WEIGANG_ROWS,
+    palette: WEIGANG_PALETTE,
+  },
+];
 
 function farmSystemPrompt(
   who: Speaker,
@@ -441,6 +591,9 @@ export function FarmScreen() {
     door: [],
     gu: [],
     chicken: [],
+    xiaoba: [],
+    yujie: [],
+    weigang: [],
   });
   const [draft, setDraft] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
@@ -627,9 +780,20 @@ export function FarmScreen() {
   };
 
   const openTalk = (who: Speaker) => {
-    const at =
-      who === "gu" ? GU_AT : who === "chicken" ? CHICKEN_AT : DOOR_AT;
-    moveTo(at.x + (who === "door" ? 16 : -16), at.y + 4);
+    const at = {
+      door: DOOR_AT,
+      gu: GU_AT,
+      chicken: CHICKEN_AT,
+      xiaoba: XIAOBA_AT,
+      yujie: YUJIE_AT,
+      weigang: WEIGANG_AT,
+    }[who];
+    const isSon = who === "xiaoba" || who === "yujie" || who === "weigang";
+    if (isSon) {
+      moveTo(SONS_SPOT.x, SONS_SPOT.y);
+    } else {
+      moveTo(at.x + (who === "door" ? 16 : -16), at.y + 4);
+    }
     setSpeaker(who);
     setDraft("");
     setChatOffline(!apiKey);
@@ -715,14 +879,9 @@ export function FarmScreen() {
     }
   };
 
-  const speakerName =
-    speaker === "gu" ? "顾" : speaker === "chicken" ? "坤坤" : "door";
-  const speakerSub =
-    speaker === "gu"
-      ? "door 的女友 · 农场常驻"
-      : speaker === "chicken"
-        ? "农场里的小鸡 · 黏人"
-        : "dark-study 作者 · 农场主";
+  const speakerMeta = SPEAKER_META[speaker ?? "gu"];
+  const speakerName = speakerMeta.name;
+  const speakerSub = speakerMeta.sub;
 
   return (
     <View style={{ flex: 1, backgroundColor: "#0E1A12" }}>
@@ -1042,6 +1201,32 @@ export function FarmScreen() {
             />
           </View>
 
+          {/* 三个儿子：小八 / 玉洁 / 唯纲 */}
+          {SONS.map((son) => (
+            <View
+              key={son.who}
+              style={{
+                position: "absolute",
+                left: son.at.x * scale,
+                top: son.at.y * scale,
+                zIndex: 5,
+              }}
+            >
+              <NameTag
+                label={son.label}
+                accent={son.accent}
+                scale={scale * 0.8}
+                hit={threads[son.who].length > 0}
+              />
+              <IdleSprite
+                rows={son.rows}
+                palette={son.palette}
+                pixel={scale * 0.8}
+                onPress={() => openTalk(son.who)}
+              />
+            </View>
+          ))}
+
           {/* 玩家 */}
           <Animated.View
             pointerEvents="none"
@@ -1126,7 +1311,7 @@ export function FarmScreen() {
             textAlign: "center",
           }}
         >
-          轻点土地：种下 / 浇水 / 收获　·　轻点 door / 顾 / 坤坤：聊聊天
+          轻点土地：种下 / 浇水 / 收获　·　轻点小人：聊聊天
         </Text>
 
         <View style={{ flexDirection: "row", gap: 8 }}>
@@ -1433,20 +1618,8 @@ export function FarmScreen() {
                   }}
                 >
                   <PixelSprite
-                    rows={
-                      speaker === "gu"
-                        ? GU_ROWS
-                        : speaker === "chicken"
-                          ? PROP_ART.chicken.rows
-                          : DOOR_ROWS
-                    }
-                    palette={
-                      speaker === "gu"
-                        ? GU_PALETTE
-                        : speaker === "chicken"
-                          ? PROP_ART.chicken.palette
-                          : DOOR_PALETTE
-                    }
+                    rows={speakerMeta.rows}
+                    palette={speakerMeta.palette}
                     pixel={speaker === "chicken" ? 3 : 2.6}
                   />
                 </View>

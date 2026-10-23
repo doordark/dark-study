@@ -385,3 +385,242 @@ export function WhaleSummonFX({ onDone }: { onDone: () => void }) {
     </Animated.View>
   );
 }
+
+/* -------------------------------------------------------------------------- */
+/*  退场动效：缩成一个小身影、摆尾钻回水里，气泡上浮，界面淡回正常              */
+/* -------------------------------------------------------------------------- */
+
+function CollapseRing({
+  p,
+  size,
+  color,
+  delay,
+}: {
+  p: SharedValue<number>;
+  size: number;
+  color: string;
+  delay: number;
+}) {
+  const style = useAnimatedStyle(() => {
+    const t = window01(p.value, delay, delay + 0.62);
+    return {
+      opacity: (1 - t) * 0.55,
+      transform: [{ scale: 1.55 - 1.3 * t }],
+    };
+  });
+  return (
+    <Animated.View
+      style={[
+        {
+          position: "absolute",
+          left: "50%",
+          top: "50%",
+          width: size,
+          height: size,
+          marginLeft: -size / 2,
+          marginTop: -size / 2,
+          borderRadius: size / 2,
+          borderWidth: 1.5,
+          borderColor: color,
+        },
+        style,
+      ]}
+    />
+  );
+}
+
+function ExitBubble({
+  p,
+  dx,
+  size,
+  delay,
+}: {
+  p: SharedValue<number>;
+  dx: number;
+  size: number;
+  delay: number;
+}) {
+  const style = useAnimatedStyle(() => {
+    const t = window01(p.value, delay, delay + 0.55);
+    return {
+      opacity: (1 - t) * 0.85,
+      transform: [
+        { translateX: dx + Math.sin(t * 7) * 5 },
+        { translateY: -46 * t },
+        { scale: 0.55 + 0.55 * t },
+      ],
+    };
+  });
+  return (
+    <Animated.Image
+      source={BUBBLE}
+      style={[
+        {
+          position: "absolute",
+          left: "50%",
+          top: "50%",
+          width: size,
+          height: size,
+          marginLeft: -size / 2,
+          marginTop: -size / 2,
+        },
+        style,
+      ]}
+    />
+  );
+}
+
+/**
+ * 大肥鱼退场：原地一闪 → 立绘缩小摆尾游向屏幕外 → 水圈收缩、气泡上浮，
+ * 遮罩在末尾淡出，露出正常课表助手界面。
+ */
+export function WhaleLeaveFX({ onDone }: { onDone: () => void }) {
+  const doneRef = useRef(onDone);
+  const firedRef = useRef(false);
+
+  useEffect(() => {
+    doneRef.current = onDone;
+  }, [onDone]);
+
+  const p = useSharedValue(0);
+
+  useEffect(() => {
+    firedRef.current = false;
+    p.value = withTiming(1, { duration: 1500, easing: Easing.inOut(Easing.cubic) });
+
+    const timer = setTimeout(() => {
+      if (firedRef.current) return;
+      firedRef.current = true;
+      doneRef.current();
+    }, 1560);
+    return () => clearTimeout(timer);
+  }, [p]);
+
+  const overlay = useAnimatedStyle(() => ({
+    opacity: interpolate(p.value, [0, 0.1, 0.72, 1], [0, 1, 1, 0]),
+  }));
+
+  const whaleStyle = useAnimatedStyle(() => {
+    const t = p.value;
+    return {
+      opacity: interpolate(t, [0, 0.62, 0.95], [1, 1, 0]),
+      transform: [
+        { translateX: 150 * t * t + Math.sin(t * 9) * 6 },
+        { translateY: 132 * t * t },
+        { scale: interpolate(t, [0, 0.16, 1], [1, 1.12, 0.2]) },
+        { rotate: `${-18 * t}deg` },
+      ],
+    };
+  });
+
+  const textStyle = useAnimatedStyle(() => {
+    const t = window01(p.value, 0.06, 0.26);
+    return {
+      opacity: t * (1 - window01(p.value, 0.62, 0.82)),
+      transform: [{ translateY: -18 * t }],
+    };
+  });
+
+  const flashStyle = useAnimatedStyle(() => ({
+    opacity: (1 - window01(p.value, 0, 0.18)) * 0.5,
+  }));
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        {
+          position: "absolute",
+          top: 0,
+          right: 0,
+          bottom: 0,
+          left: 0,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: "rgba(8,25,50,0.5)",
+          zIndex: 40,
+        },
+        overlay,
+      ]}
+    >
+      <CollapseRing p={p} size={158} color="#7DD3FC" delay={0.02} />
+      <CollapseRing p={p} size={158} color="#E0F2FE" delay={0.12} />
+
+      <ExitBubble p={p} dx={-58} size={16} delay={0.2} />
+      <ExitBubble p={p} dx={44} size={20} delay={0.26} />
+      <ExitBubble p={p} dx={4} size={13} delay={0.32} />
+
+      <Animated.View
+        style={[
+          {
+            position: "absolute",
+            left: "50%",
+            top: "50%",
+            width: 180,
+            height: 216,
+            marginLeft: -90,
+            marginTop: -108,
+          },
+          whaleStyle,
+        ]}
+      >
+        <Image
+          source={WHALE}
+          style={{ width: 180, height: 216 }}
+          resizeMode="contain"
+        />
+      </Animated.View>
+
+      <Animated.View
+        style={[
+          {
+            position: "absolute",
+            left: 0,
+            right: 0,
+            top: "50%",
+            marginTop: 124,
+            alignItems: "center",
+          },
+          textStyle,
+        ]}
+      >
+        <Text
+          style={{
+            fontSize: 19,
+            fontWeight: "900",
+            color: "#E0F2FE",
+            letterSpacing: 2,
+          }}
+        >
+          扑通——
+        </Text>
+        <Text
+          style={{
+            marginTop: 6,
+            fontSize: 10.5,
+            fontWeight: "600",
+            color: "rgba(186,230,253,0.85)",
+            letterSpacing: 1,
+          }}
+        >
+          大肥鱼先溜回水里啦，学累了记得喊我
+        </Text>
+      </Animated.View>
+
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          {
+            position: "absolute",
+            top: 0,
+            right: 0,
+            bottom: 0,
+            left: 0,
+            backgroundColor: "#E0F2FE",
+          },
+          flashStyle,
+        ]}
+      />
+    </Animated.View>
+  );
+}

@@ -41,6 +41,9 @@ import {
   getDateInfo,
   isCourseActive,
   formatClock,
+  addDays,
+  mondayOf,
+  parseIsoDate,
 } from "@/utils/time";
 
 type ViewMode = "day" | "week";
@@ -75,6 +78,7 @@ export function CourseScheduleScreen({
   const addCourse = useStore((s) => s.addCourse);
   const updateCourse = useStore((s) => s.updateCourse);
   const removeCourse = useStore((s) => s.removeCourse);
+  const removeCourseOnce = useStore((s) => s.removeCourseOnce);
 
   const dateInfo = useMemo(
     () => getDateInfo(schedule.startDate),
@@ -143,6 +147,22 @@ export function CourseScheduleScreen({
 
   const totalWeeks = Math.max(1, schedule.totalWeeks ?? 18);
   const activeWeek = Math.min(Math.max(weekIndex, 1), totalWeeks);
+
+  /**
+   * 左上角日期跟随浏览的周次与星期，而不是固定显示今天。
+   * 周视图固定用该周周一；日视图用选中的星期。
+   */
+  const viewDay = mode === "week" ? 1 : weekday;
+  const viewDate = useMemo(
+    () =>
+      addDays(
+        mondayOf(parseIsoDate(schedule.startDate)),
+        (activeWeek - 1) * 7 + (viewDay - 1),
+      ),
+    [schedule.startDate, activeWeek, viewDay],
+  );
+  const viewDateLabel = `${viewDate.getMonth() + 1}月${viewDate.getDate()}日`;
+  const viewWeekdayLabel = WEEKDAY_LABELS[viewDay - 1];
 
   // 冲突检测：同天、节次重叠、且当前周同时上课的课程互相标记
   const conflicts = useMemo(
@@ -294,8 +314,7 @@ export function CourseScheduleScreen({
                     第 {activeWeek} 周
                     <Text className="ml-2 text-[11px] font-medium text-slate-400 dark:text-slate-500">
                       {" "}
-                      {dateInfo.dateLabel} ·{" "}
-                      {WEEKDAY_LABELS[dateInfo.weekday - 1]}
+                      {viewDateLabel} · {viewWeekdayLabel}
                     </Text>
                   </Text>
                 </Pressable>
@@ -658,13 +677,24 @@ export function CourseScheduleScreen({
         periods={schedule.periods}
         totalWeeks={totalWeeks}
         course={editing}
+        occurrenceCount={
+          editing
+            ? schedule.courses.filter(
+                (c) =>
+                  c.name === editing.name &&
+                  c.teacher === editing.teacher &&
+                  c.classroom === editing.classroom,
+              ).length
+            : 1
+        }
         onClose={() => {
           setEditorOpen(false);
           setEditing(undefined);
         }}
         onSave={handleSave}
-        onDelete={(id) => {
-          removeCourse(id);
+        onDelete={(id, scope) => {
+          if (scope === "once") removeCourseOnce(id);
+          else removeCourse(id);
           setEditorOpen(false);
           setEditing(undefined);
         }}
