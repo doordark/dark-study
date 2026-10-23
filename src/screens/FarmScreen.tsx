@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Keyboard,
   Modal,
+  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -31,15 +32,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Svg, {
-  Circle,
-  Defs,
-  Ellipse,
-  G,
-  LinearGradient as SvgGradient,
-  Rect,
-  Stop,
-} from "react-native-svg";
+import Svg, { G, Rect } from "react-native-svg";
 
 import {
   CROP_ART,
@@ -51,8 +44,8 @@ import {
   HERO_PALETTE,
   HERO_ROWS,
   PixelSprite,
+  PROP_ART,
   cropRects,
-  propRects,
   type CropKind,
 } from "@/components/farm/sprites";
 import { chat } from "@/services/deepseek";
@@ -75,6 +68,7 @@ const PLOT_COUNT = 9;
 const PLAYER_START = { x: 48, y: 96 };
 const GU_AT = { x: 148, y: 100 };
 const DOOR_AT = { x: 18, y: 94 };
+const CHICKEN_AT = { x: 176, y: 114 };
 
 const SAVE_KEY = "dark-study-farm";
 
@@ -103,69 +97,34 @@ interface SaveData {
   seeds: Record<CropKind, number>;
   plots: PlotState[];
   harvested: number;
+  /** 场景是白天还是黑夜 */
+  night: boolean;
 }
 
 const emptyPlot = (): PlotState => ({ crop: null, stage: 0, watered: false });
 
-const THEMES = [
-  {
-    name: "春",
-    skyTop: "#9BD9F5",
-    skyBottom: "#DFF6E4",
-    grass: "#7EC850",
-    grassDark: "#5BAA39",
-    hill: "#6FBF49",
-    hillDark: "#4E9C34",
-    sun: "#FFF3B0",
-  },
-  {
-    name: "夏",
-    skyTop: "#79CDF2",
-    skyBottom: "#CFF0FF",
-    grass: "#6BBD41",
-    grassDark: "#4F9E2F",
-    hill: "#5FAF37",
-    hillDark: "#428C26",
-    sun: "#FFE88A",
-  },
-  {
-    name: "秋",
-    skyTop: "#F4C27A",
-    skyBottom: "#FDE9C6",
-    grass: "#C9A24E",
-    grassDark: "#A9853A",
-    hill: "#C08F45",
-    hillDark: "#9A6E33",
-    sun: "#FFD98A",
-  },
-  {
-    name: "冬",
-    skyTop: "#BBD9EC",
-    skyBottom: "#EEF8FF",
-    grass: "#E6F3FA",
-    grassDark: "#C7DEEB",
-    hill: "#D6E9F5",
-    hillDark: "#B9D5E6",
-    sun: "#F2FAFF",
-  },
-];
+/** 四季名（场景固定为手绘像素背景，季节只影响文案与刷新节奏） */
+const SEASONS = ["春", "夏", "秋", "冬"];
 
-/** 固定种子的草丛纹理，保证每次进入位置一致 */
-const TUFTS = (() => {
-  let seed = 7;
-  const rnd = () => {
-    seed = (seed * 1103515245 + 12345) % 2147483648;
-    return seed / 2147483648;
-  };
-  return Array.from({ length: 48 }, (_, i) => ({
-    id: i,
-    x: 4 + rnd() * 190,
-    y: 92 + rnd() * 72,
-    w: rnd() > 0.6 ? 2 : 1,
-    light: rnd() > 0.5,
-    o: 0.12 + rnd() * 0.3,
-  }));
-})();
+/** 白天/黑夜两张背景贴图上下边缘的精确色值，用于把场景外的空隙填成同一片天色 */
+const SKY_FILL = { day: "#6CBAF0", night: "#080C1E" };
+const GROUND_FILL = { day: "#7EC850", night: "#2E4A28" };
+
+/** 夜空延展区里的固定星光（只在黑夜显示） */
+const SKY_STARS = [
+  { id: 0, left: "8%", top: "18%", size: 2, o: 0.5 },
+  { id: 1, left: "19%", top: "46%", size: 1.5, o: 0.34 },
+  { id: 2, left: "27%", top: "12%", size: 2.5, o: 0.6 },
+  { id: 3, left: "38%", top: "62%", size: 1.5, o: 0.28 },
+  { id: 4, left: "46%", top: "28%", size: 2, o: 0.45 },
+  { id: 5, left: "57%", top: "70%", size: 1.5, o: 0.3 },
+  { id: 6, left: "64%", top: "16%", size: 2, o: 0.52 },
+  { id: 7, left: "73%", top: "44%", size: 1.5, o: 0.32 },
+  { id: 8, left: "81%", top: "24%", size: 2.5, o: 0.58 },
+  { id: 9, left: "90%", top: "58%", size: 1.5, o: 0.3 },
+  { id: 10, left: "13%", top: "78%", size: 2, o: 0.4 },
+  { id: 11, left: "52%", top: "6%", size: 1.5, o: 0.36 },
+];
 
 const PIXEL_FONT = Platform.select({
   ios: "Courier",
@@ -178,7 +137,7 @@ const PIXEL_FONT = Platform.select({
 /* -------------------------------------------------------------------------- */
 
 function fallbackLine(
-  who: "door" | "gu",
+  who: Speaker,
   ctx: { day: number; coins: number; growing: number; harvested: number },
 ) {
   const gu = [
@@ -206,7 +165,19 @@ function fallbackLine(
       : "先种点什么吧，空着的田看着怪孤单的。",
     "你继续玩，我去修个 bug。真的有 bug，不是借口。",
   ];
-  const bank = who === "gu" ? gu : door;
+  const chicken = [
+    "咕，你来啦。今天的地里没有虫子，只有我。",
+    "咕咕咕……顾撒的米比种子好吃，别说是我说的。",
+    ctx.growing > 0
+      ? "咕？那些苗苗还在长，我每天都来看一眼。"
+      : "咕……地里空着，我想在土里洗澡，被顾说了。",
+    "我叫坤坤，会打篮球的那种鸡，咕。",
+    `第 ${ctx.day} 天啦，咕，我数不清，但看你来了就开心。`,
+    "怕猫，但我更怕你走了不回来，咕。",
+    `金币 ${ctx.coins} 也用不完我的一粒米，咕咕。`,
+    "累了就坐在田边吧，我陪你，反正我也没别的事，咕。",
+  ];
+  const bank = who === "gu" ? gu : who === "door" ? door : chicken;
   return bank[Math.floor(Math.random() * bank.length)];
 }
 
@@ -214,7 +185,7 @@ function fallbackLine(
 /*  对话                                                                       */
 /* -------------------------------------------------------------------------- */
 
-type Speaker = "door" | "gu";
+type Speaker = "door" | "gu" | "chicken";
 
 interface FarmChatMsg {
   id: string;
@@ -222,15 +193,18 @@ interface FarmChatMsg {
   text: string;
 }
 
-/** 角色人设：door 是作者，顾是他的女友，两个人都住在农场里 */
+/** 角色人设：door 是作者，顾是他的女友，小鸡坤坤是农场常驻 */
 const TALK_PERSONA: Record<Speaker, string> = {
   door: "door，课程表应用 dark-study 的作者，白天写前端，晚上改 bug。性格温和、嘴硬心软、会自嘲，聊到女友顾的时候会明显变软。说话像熟人聊天，偶尔带一点程序员梗，但不炫技。",
   gu: "顾，door 的女友，农场常驻。性格温柔、俏皮、细腻，喜欢观察生活和小动物，会吐槽 door 的黑眼圈，也会认真鼓励人。说话轻快，偶尔撒娇，但不过分。",
+  chicken:
+    "坤坤，农场里那只圆滚滚的小鸡，胆子小但很黏人。说话短、碎碎念，喜欢用「咕」当语气词，爱聊虫子、晒太阳、顾撒的米，偶尔一本正经地吹自己球技好。不装作很聪明，会一本正经地说傻话，也会安慰人。",
 };
 
 const TALK_TOPICS: Record<Speaker, string[]> = {
   door: ["这农场怎么藏得这么深？", "你平时怎么写代码？", "说说顾吧"],
   gu: ["door 最近在忙什么？", "今天适合种点什么？", "夸夸我"],
+  chicken: ["坤坤今天吃了什么？", "你怕不怕猫？", "陪我待一会儿"],
 };
 
 function farmSystemPrompt(
@@ -285,8 +259,8 @@ function IdleSprite({
         <View
           style={{
             position: "absolute",
-            left: 2 * pixel,
-            top: 17 * pixel,
+            left: 4 * pixel,
+            top: 16 * pixel,
             width: 8 * pixel,
             height: 2 * pixel,
             borderRadius: 99,
@@ -393,7 +367,7 @@ function NameTag({
       style={{
         position: "absolute",
         top: -17 * scale,
-        left: 6 * scale - 17,
+        left: 8 * scale - 17,
         width: 34,
         height: 14,
         borderRadius: 7,
@@ -456,6 +430,7 @@ export function FarmScreen() {
   );
   const [harvested, setHarvested] = useState(0);
   const [selected, setSelected] = useState<CropKind>("radish");
+  const [night, setNight] = useState(false);
 
   const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -465,6 +440,7 @@ export function FarmScreen() {
   const [threads, setThreads] = useState<Record<Speaker, FarmChatMsg[]>>({
     door: [],
     gu: [],
+    chicken: [],
   });
   const [draft, setDraft] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
@@ -473,7 +449,7 @@ export function FarmScreen() {
   const chatRef = useRef<ScrollViewInstance>(null);
 
   const season = Math.floor((day - 1) / 7) % 4;
-  const theme = THEMES[season];
+  const seasonName = SEASONS[season];
   const growing = plots.filter((p) => p.crop && p.stage < 2).length;
 
   /* ---------------- 玩家位置：UI 线程上平滑走动 ---------------- */
@@ -544,6 +520,7 @@ export function FarmScreen() {
         if (typeof data.harvested === "number") {
           setHarvested(Math.max(0, data.harvested));
         }
+        if (typeof data.night === "boolean") setNight(data.night);
         if (data.seeds) {
           setSeeds({
             radish: Math.max(0, Number(data.seeds.radish) || 0),
@@ -579,9 +556,9 @@ export function FarmScreen() {
     if (!loaded) return;
     AsyncStorage.setItem(
       SAVE_KEY,
-      JSON.stringify({ day, coins, seeds, plots, harvested }),
+      JSON.stringify({ day, coins, seeds, plots, harvested, night }),
     ).catch(() => {});
-  }, [loaded, day, coins, seeds, plots, harvested]);
+  }, [loaded, day, coins, seeds, plots, harvested, night]);
 
   /* ---------------- 操作 ---------------- */
   const actOnPlot = (index: number) => {
@@ -650,8 +627,9 @@ export function FarmScreen() {
   };
 
   const openTalk = (who: Speaker) => {
-    const at = who === "gu" ? GU_AT : DOOR_AT;
-    moveTo(at.x + (who === "gu" ? -16 : 16), at.y + 4);
+    const at =
+      who === "gu" ? GU_AT : who === "chicken" ? CHICKEN_AT : DOOR_AT;
+    moveTo(at.x + (who === "door" ? 16 : -16), at.y + 4);
     setSpeaker(who);
     setDraft("");
     setChatOffline(!apiKey);
@@ -691,7 +669,7 @@ export function FarmScreen() {
             role: "system",
             content: farmSystemPrompt(who, {
               day,
-              season: theme.name,
+              season: seasonName,
               coins,
               growing,
               harvested,
@@ -737,7 +715,14 @@ export function FarmScreen() {
     }
   };
 
-  const speakerName = speaker === "gu" ? "顾" : "door";
+  const speakerName =
+    speaker === "gu" ? "顾" : speaker === "chicken" ? "坤坤" : "door";
+  const speakerSub =
+    speaker === "gu"
+      ? "door 的女友 · 农场常驻"
+      : speaker === "chicken"
+        ? "农场里的小鸡 · 黏人"
+        : "dark-study 作者 · 农场主";
 
   return (
     <View style={{ flex: 1, backgroundColor: "#0E1A12" }}>
@@ -787,253 +772,133 @@ export function FarmScreen() {
               marginTop: 2,
             }}
           >
-            {`door & 顾的小农场 · 第 ${day} 天 · ${theme.name}天`}
+            {`door & 顾的小农场 · 第 ${day} 天 · ${seasonName}天`}
           </Text>
         </View>
 
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            borderRadius: 999,
-            paddingHorizontal: 12,
-            paddingVertical: 6,
-            backgroundColor: "rgba(245,196,102,0.12)",
-            borderWidth: 1,
-            borderColor: "rgba(245,196,102,0.3)",
-          }}
-        >
-          <View
-            style={{
-              width: 11,
-              height: 11,
-              borderRadius: 6,
-              backgroundColor: "#F5C466",
-              borderWidth: 1,
-              borderColor: "#C9973A",
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Pressable
+            onPress={() => {
+              setNight((v) => !v);
             }}
-          />
-          <Text
+            hitSlop={6}
             style={{
-              color: "#F5C466",
-              fontSize: 12.5,
-              fontWeight: "800",
-              marginLeft: 6,
+              width: 34,
+              height: 34,
+              borderRadius: 17,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: night
+                ? "rgba(129,140,248,0.16)"
+                : "rgba(245,196,102,0.16)",
+              borderWidth: 1,
+              borderColor: night
+                ? "rgba(129,140,248,0.34)"
+                : "rgba(245,196,102,0.34)",
             }}
           >
-            {coins}
-          </Text>
+            <Ionicons
+              name={night ? "moon" : "sunny"}
+              size={16}
+              color={night ? "#A5B4FC" : "#F5C466"}
+            />
+          </Pressable>
+
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              borderRadius: 999,
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+              backgroundColor: "rgba(245,196,102,0.12)",
+              borderWidth: 1,
+              borderColor: "rgba(245,196,102,0.3)",
+            }}
+          >
+            <View
+              style={{
+                width: 11,
+                height: 11,
+                borderRadius: 6,
+                backgroundColor: "#F5C466",
+                borderWidth: 1,
+                borderColor: "#C9973A",
+              }}
+            />
+            <Text
+              style={{
+                color: "#F5C466",
+                fontSize: 12.5,
+                fontWeight: "800",
+                marginLeft: 6,
+              }}
+            >
+              {coins}
+            </Text>
+          </View>
         </View>
       </View>
 
       {/* ---------- 场景 ---------- */}
-      <View style={{ flex: 1, justifyContent: "center" }}>
+      <View style={{ flex: 1 }}>
+        {/* 天空延展：与贴图顶部同色，夜里再点几颗星，让整屏都是同一片天 */}
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: night ? SKY_FILL.night : SKY_FILL.day,
+          }}
+        >
+          {night
+            ? SKY_STARS.map((s) => (
+                <View
+                  key={s.id}
+                  style={{
+                    position: "absolute",
+                    left: s.left,
+                    top: s.top,
+                    width: s.size,
+                    height: s.size,
+                    borderRadius: s.size,
+                    backgroundColor: "#FFFFFF",
+                    opacity: s.o,
+                  }}
+                />
+              ))
+            : null}
+        </View>
+
         <View style={{ width, height: sceneH, overflow: "hidden" }}>
+          <Image
+            source={
+              night
+                ? require("../../assets/images/farm-night.png")
+                : require("../../assets/images/farm-day.png")
+            }
+            style={{ width, height: sceneH }}
+            resizeMode="stretch"
+          />
           <Svg
             width={width}
             height={sceneH}
             viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
+            style={{ position: "absolute", left: 0, top: 0 }}
           >
-            <Defs>
-              <SvgGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-                <Stop offset="0" stopColor={theme.skyTop} />
-                <Stop offset="1" stopColor={theme.skyBottom} />
-              </SvgGradient>
-            </Defs>
-
-            {/* 天空与太阳 */}
-            <Rect x="0" y="0" width={VIEW_W} height={VIEW_H} fill="url(#sky)" />
-            <Circle cx="170" cy="26" r="14" fill="rgba(255,255,255,0.25)" />
-            <Circle cx="170" cy="26" r="10" fill={theme.sun} />
-
-            {/* 云 */}
-            <G opacity="0.85">
-              <Rect x="18" y="24" width="34" height="6" rx="3" fill="#FFFFFF" />
-              <Rect x="26" y="19" width="18" height="7" rx="3" fill="#FFFFFF" />
-              <Rect
-                x="124"
-                y="36"
-                width="26"
-                height="5"
-                rx="2.5"
-                fill="#FFFFFF"
-                opacity="0.8"
-              />
-            </G>
-
-            {/* 远山与地面 */}
-            <Rect x="0" y="76" width={VIEW_W} height="16" fill={theme.hill} />
-            <Rect
-              x="0"
-              y="88"
-              width={VIEW_W}
-              height="4"
-              fill={theme.hillDark}
-            />
-            <Rect x="0" y="86" width={VIEW_W} height="84" fill={theme.grass} />
-            <Rect
-              x="0"
-              y="86"
-              width={VIEW_W}
-              height="3"
-              fill={theme.grassDark}
-              opacity="0.45"
-            />
-
-            {/* 草丛 */}
-            {TUFTS.map((t) => (
-              <Rect
-                key={t.id}
-                x={t.x}
-                y={t.y}
-                width={t.w}
-                height="1"
-                fill={t.light ? "#FFFFFF" : theme.grassDark}
-                opacity={t.o}
-              />
-            ))}
-
-            {/* 小路 */}
-            <Rect
-              x="36"
-              y="90"
-              width="10"
-              height="80"
-              fill="#D9C08A"
-              opacity="0.75"
-            />
-            <Rect
-              x="46"
-              y="112"
-              width="20"
-              height="10"
-              fill="#D9C08A"
-              opacity="0.75"
-            />
-
-            {/* 池塘 */}
-            <Ellipse cx="26" cy="150" rx="20" ry="11" fill="#5FB6E8" />
-            <Ellipse
-              cx="26"
-              cy="150"
-              rx="15"
-              ry="7"
-              fill="#8FD3F6"
-              opacity="0.8"
-            />
-            <Rect
-              x="14"
-              y="146"
-              width="10"
-              height="1"
-              fill="#FFFFFF"
-              opacity="0.5"
-            />
-            <Rect
-              x="22"
-              y="152"
-              width="8"
-              height="1"
-              fill="#FFFFFF"
-              opacity="0.35"
-            />
-
-            {/* 房子 */}
-            <Rect x="14" y="60" width="52" height="32" fill="#F4E4C1" />
-            <Rect x="58" y="60" width="8" height="32" fill="#E2CEA2" />
-            <Rect x="14" y="60" width="52" height="2" fill="#FFF6E0" />
-            <Rect x="14" y="90" width="52" height="2" fill="#C9B58B" />
-            <Rect x="54" y="46" width="6" height="14" fill="#A45A3E" />
-            <Circle cx="57" cy="42" r="3" fill="#FFFFFF" opacity="0.45" />
-            <Circle cx="59" cy="36" r="2" fill="#FFFFFF" opacity="0.3" />
-            <Rect x="32" y="76" width="12" height="16" fill="#8B5E3C" />
-            <Rect x="32" y="76" width="12" height="2" fill="#A9744F" />
-            <Rect x="42" y="84" width="1" height="1" fill="#F5C466" />
-            <Rect x="20" y="68" width="9" height="7" fill="#9EDBFF" />
-            <Rect x="24" y="68" width="1" height="7" fill="#6BA8C9" />
-            <Rect x="20" y="71" width="9" height="1" fill="#6BA8C9" />
-            <Rect x="51" y="68" width="9" height="7" fill="#9EDBFF" />
-            <Rect x="55" y="68" width="1" height="7" fill="#6BA8C9" />
-            <Rect x="51" y="71" width="9" height="1" fill="#6BA8C9" />
-            {[20, 27, 51, 57].map((x) => (
-              <Rect key={x} x={x} y="75" width="1" height="3" fill="#D97757" />
-            ))}
-            {/* 屋顶 */}
-            <Rect x="8" y="60" width="64" height="3" fill="#B95A3E" />
-            <Rect x="12" y="54" width="56" height="7" fill="#C96A4A" />
-            <Rect x="16" y="48" width="48" height="7" fill="#D9795A" />
-            <Rect x="22" y="42" width="36" height="7" fill="#E08565" />
-            <Rect x="30" y="38" width="20" height="5" fill="#E99473" />
-
-            {/* 树 */}
-            <G>
-              <Rect x="152" y="70" width="6" height="20" fill="#7A5230" />
-              <Rect x="144" y="54" width="24" height="10" fill="#2F7D32" />
-              <Rect x="140" y="60" width="32" height="9" fill="#3E9C3F" />
-              <Rect x="148" y="46" width="16" height="10" fill="#4CAF50" />
-              <Rect x="150" y="50" width="12" height="4" fill="#66BB6A" />
-              <Rect x="146" y="58" width="4" height="3" fill="#2F7D32" />
-            </G>
-            <G>
-              <Rect x="180" y="80" width="5" height="14" fill="#7A5230" />
-              <Rect x="176" y="70" width="15" height="7" fill="#3E9C3F" />
-              <Rect x="173" y="74" width="21" height="7" fill="#4CAF50" />
-              <Rect x="178" y="66" width="11" height="6" fill="#66BB6A" />
-            </G>
-
-            {/* 栅栏 */}
-            <Rect x="62" y="98" width="72" height="2" fill="#C8A46B" />
-            <Rect x="62" y="104" width="72" height="2" fill="#C8A46B" />
-            {[62, 80, 98, 116, 132].map((x) => (
-              <Rect key={x} x={x} y="96" width="2" height="12" fill="#A98552" />
-            ))}
-
-            {/* 场景装饰：Kenney「Tiny Farm」素材（CC0） */}
-            {propRects("pine", 118, 58)}
-            {propRects("sunflower", 164, 112)}
-            {propRects("chicken", 180, 120)}
-            {propRects("cabbage", 140, 144)}
-            {propRects("crate", 180, 144)}
-
-            {/* 田地 */}
-            <Rect
-              x={PLOT_X - 2}
-              y={PLOT_Y - 2}
-              width={PLOT_W * 3 + PLOT_GAP * 2 + 4}
-              height={PLOT_H * 3 + PLOT_GAP * 2 + 4}
-              fill="#8C6239"
-              opacity="0.28"
-            />
+            {/* 田地：土壤已烘焙进背景，这里只画作物与浇水状态 */}
             {plots.map((p, i) => {
               const pos = plotPos(i);
               return (
                 <G key={i}>
-                  <Rect
-                    x={pos.x}
-                    y={pos.y}
-                    width={PLOT_W}
-                    height={PLOT_H}
-                    fill={p.watered ? "#7B5236" : "#A9744F"}
-                  />
-                  <Rect
-                    x={pos.x}
-                    y={pos.y}
-                    width={PLOT_W}
-                    height="1"
-                    fill="#C08A63"
-                    opacity="0.6"
-                  />
-                  {[4, 8, 12].map((dy) => (
+                  {p.watered ? (
                     <Rect
-                      key={dy}
-                      x={pos.x + 2}
-                      y={pos.y + dy}
-                      width={PLOT_W - 4}
-                      height="1"
-                      fill="#6F4A2F"
-                      opacity="0.35"
+                      x={pos.x}
+                      y={pos.y}
+                      width={PLOT_W}
+                      height={PLOT_H}
+                      fill="#241209"
+                      opacity="0.32"
                     />
-                  ))}
+                  ) : null}
                   {p.crop
                     ? cropRects(p.crop, p.stage, pos.x + 5, pos.y + 4)
                     : null}
@@ -1154,6 +1019,29 @@ export function FarmScreen() {
             />
           </View>
 
+          {/* 小鸡坤坤 */}
+          <View
+            style={{
+              position: "absolute",
+              left: CHICKEN_AT.x * scale,
+              top: CHICKEN_AT.y * scale,
+              zIndex: 5,
+            }}
+          >
+            <NameTag
+              label="坤坤"
+              accent="#F5C466"
+              scale={scale}
+              hit={threads.chicken.length > 0}
+            />
+            <IdleSprite
+              rows={PROP_ART.chicken.rows}
+              palette={PROP_ART.chicken.palette}
+              pixel={scale}
+              onPress={() => openTalk("chicken")}
+            />
+          </View>
+
           {/* 玩家 */}
           <Animated.View
             pointerEvents="none"
@@ -1213,6 +1101,14 @@ export function FarmScreen() {
             </Animated.View>
           ) : null}
         </View>
+
+        {/* 草地延展：与贴图底部同色，填满场景到操作区之间的空隙 */}
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: night ? GROUND_FILL.night : GROUND_FILL.day,
+          }}
+        />
       </View>
 
       {/* ---------- 底部操作区 ---------- */}
@@ -1230,7 +1126,7 @@ export function FarmScreen() {
             textAlign: "center",
           }}
         >
-          轻点土地：种下 / 浇水 / 收获　·　轻点 door 或顾：聊聊天
+          轻点土地：种下 / 浇水 / 收获　·　轻点 door / 顾 / 坤坤：聊聊天
         </Text>
 
         <View style={{ flexDirection: "row", gap: 8 }}>
@@ -1292,7 +1188,7 @@ export function FarmScreen() {
           <Pressable
             onPress={sleep}
             style={{
-              flex: 1.2,
+              flex: 1,
               flexDirection: "row",
               alignItems: "center",
               justifyContent: "center",
@@ -1338,37 +1234,6 @@ export function FarmScreen() {
               }}
             >
               小铺
-            </Text>
-          </Pressable>
-
-          <Pressable
-            onPress={() => openTalk("gu")}
-            style={{
-              flex: 1,
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "center",
-              paddingVertical: 11,
-              borderRadius: 16,
-              borderWidth: 1,
-              borderColor: "rgba(246,238,220,0.12)",
-              backgroundColor: "rgba(246,238,220,0.05)",
-            }}
-          >
-            <Ionicons
-              name="chatbubble-ellipses-outline"
-              size={14}
-              color="#E6DCC7"
-            />
-            <Text
-              style={{
-                marginLeft: 6,
-                color: "#E6DCC7",
-                fontSize: 12.5,
-                fontWeight: "700",
-              }}
-            >
-              聊天
             </Text>
           </Pressable>
         </View>
@@ -1568,9 +1433,21 @@ export function FarmScreen() {
                   }}
                 >
                   <PixelSprite
-                    rows={speaker === "gu" ? GU_ROWS : DOOR_ROWS}
-                    palette={speaker === "gu" ? GU_PALETTE : DOOR_PALETTE}
-                    pixel={2.6}
+                    rows={
+                      speaker === "gu"
+                        ? GU_ROWS
+                        : speaker === "chicken"
+                          ? PROP_ART.chicken.rows
+                          : DOOR_ROWS
+                    }
+                    palette={
+                      speaker === "gu"
+                        ? GU_PALETTE
+                        : speaker === "chicken"
+                          ? PROP_ART.chicken.palette
+                          : DOOR_PALETTE
+                    }
+                    pixel={speaker === "chicken" ? 3 : 2.6}
                   />
                 </View>
                 <View style={{ marginLeft: 10, flex: 1 }}>
@@ -1616,9 +1493,7 @@ export function FarmScreen() {
                       marginTop: 3,
                     }}
                   >
-                    {speaker === "gu"
-                      ? "door 的女友 · 农场常驻"
-                      : "dark-study 作者 · 农场主"}
+                    {speakerSub}
                   </Text>
                 </View>
                 <Pressable

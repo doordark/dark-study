@@ -745,14 +745,13 @@ export function AssistantScreen() {
             </View>
           ) : null}
 
-          {/* 输入区：独立组件，实心表面与背景彻底分离 */}
+          {/* 输入区：极简输入框，直接浮在背景之上 */}
           <ChatInputBar
             value={input}
             onChangeText={setInput}
             onSend={() => send(input)}
             busy={busy}
             placeholder={whale ? "跟大肥鱼说点什么吧，大爹…" : undefined}
-            cute={whale}
             bottomInset={kbHeight > 0 ? 10 : undefined}
           />
         </View>

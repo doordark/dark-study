@@ -18,9 +18,16 @@ const SPARKLES = require("../../assets/stickers/sparkles.png");
 const HEART = require("../../assets/stickers/heart.png");
 const BUBBLE = require("../../assets/stickers/bubble.png");
 
-const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
-const window01 = (v: number, from: number, to: number) =>
-  clamp01((v - from) / (to - from));
+// 这两个工具函数会被 useAnimatedStyle 的 worklet 调用，
+// 必须显式声明为 worklet，否则 UI 线程会当成远程函数同步调用而直接崩溃
+const clamp01 = (v: number) => {
+  "worklet";
+  return Math.min(1, Math.max(0, v));
+};
+const window01 = (v: number, from: number, to: number) => {
+  "worklet";
+  return clamp01((v - from) / (to - from));
+};
 
 interface SparkleProps {
   p: SharedValue<number>;

@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Network from "expo-network";
 import { router } from "expo-router";
 import React, { useMemo, useState } from "react";
-import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Modal, Pressable, ScrollView, Text, View } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
 
 import { Backdrop } from "@/components/Backdrop";
@@ -96,6 +96,7 @@ export function GradesScreen() {
   const [editingRule, setEditingRule] = useState<GradeRule | undefined>();
   const [yearVisible, setYearVisible] = useState(false);
   const [editingYear, setEditingYear] = useState<GradeYear | undefined>();
+  const [importSheet, setImportSheet] = useState(false);
 
   const activeRule =
     gradeRules.find((r) => r.id === activeGradeRuleId) ?? gradeRules[0];
@@ -503,13 +504,28 @@ export function GradesScreen() {
                   </Pressable>
                 </View>
 
-                <View className="mt-1 flex-row items-end">
-                  <Text className="text-[42px] font-extrabold text-slate-800 dark:text-white">
-                    {formatGpa(stats.value)}
-                  </Text>
-                  <Text className="mb-2 ml-2 text-[11px] text-slate-400 dark:text-slate-500">
-                    平均绩点
-                  </Text>
+                <View className="mt-1 flex-row items-end justify-between">
+                  <View className="flex-row items-end">
+                    <Text className="text-[42px] font-extrabold text-slate-800 dark:text-white">
+                      {formatGpa(stats.value)}
+                    </Text>
+                    <Text className="mb-2 ml-2 text-[11px] text-slate-400 dark:text-slate-500">
+                      平均绩点
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={() => setImportSheet(true)}
+                    className="mb-1.5 flex-row items-center rounded-full bg-sky-500/15 px-3 py-1.5"
+                  >
+                    <Ionicons
+                      name="cloud-upload-outline"
+                      size={13}
+                      color="#38BDF8"
+                    />
+                    <Text className="ml-1 text-[11px] font-bold text-sky-500 dark:text-sky-300">
+                      导入成绩
+                    </Text>
+                  </Pressable>
                 </View>
 
                 <View className="mt-1 flex-row flex-wrap gap-x-4 gap-y-1">
@@ -622,66 +638,6 @@ export function GradesScreen() {
                     </Pressable>
                   ))
                 )}
-              </View>
-            </GlassContainer>
-          </Animated.View>
-
-          {/* 导入 */}
-          <Animated.View entering={FadeInDown.delay(150).springify()} className="mt-3">
-            <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
-              <View className="px-4 py-4">
-                <View className="flex-row items-center justify-between">
-                  <Text className="text-[14px] font-bold text-slate-800 dark:text-white">
-                    导入成绩
-                  </Text>
-                  <View className="rounded-full bg-sky-500/15 px-2.5 py-1">
-                    <Text className="text-[10px] font-semibold text-sky-600 dark:text-sky-300">
-                      归入 {targetYearName}
-                    </Text>
-                  </View>
-                </View>
-                <Text className="mt-0.5 text-[11px] leading-4 text-slate-500 dark:text-slate-400">
-                  拍照、相册或表格文件。联网且有 API Key 时走 AI，否则自动本地离线识别
-                </Text>
-                <View className="mt-3 flex-row gap-x-2.5">
-                  {[
-                    {
-                      key: "image" as From,
-                      icon: "images" as const,
-                      label: "相册",
-                    },
-                    {
-                      key: "camera" as From,
-                      icon: "camera" as const,
-                      label: "拍照",
-                    },
-                    {
-                      key: "text" as From,
-                      icon: "document-text" as const,
-                      label: "表格",
-                    },
-                  ].map((it) => (
-                    <Pressable
-                      key={it.key}
-                      onPress={() => startGradeTask(it.key)}
-                      className="flex-1 items-center rounded-2xl border border-white/25 bg-white/25 py-3 dark:border-white/10 dark:bg-white/[0.06]"
-                    >
-                      <Ionicons name={it.icon} size={18} color="#38BDF8" />
-                      <Text className="mt-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
-                        {it.label}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-                <Pressable
-                  onPress={openCreate}
-                  className="mt-2.5 flex-row items-center justify-center rounded-2xl bg-sky-500/85 py-2.5"
-                >
-                  <Ionicons name="add" size={16} color="#fff" />
-                  <Text className="ml-1 text-[12px] font-bold text-white">
-                    手动添加成绩
-                  </Text>
-                </Pressable>
               </View>
             </GlassContainer>
           </Animated.View>
@@ -820,6 +776,91 @@ export function GradesScreen() {
           }}
         />
       ) : null}
+
+      {/* 导入成绩：从统计卡旁的按钮弹出上传方式 */}
+      <Modal
+        visible={importSheet}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setImportSheet(false)}
+      >
+        <View className="flex-1 justify-end bg-black/45">
+          <Pressable className="flex-1" onPress={() => setImportSheet(false)} />
+          <Animated.View entering={FadeInDown.springify()}>
+            <GlassContainer
+              radius={32}
+              intensity={62}
+              borderOpacity={0.3}
+              style={{ paddingBottom: 22 }}
+            >
+              <View className="px-5 pt-5">
+                <View className="flex-row items-center justify-between">
+                  <Text className="text-[17px] font-bold text-slate-800 dark:text-white">
+                    导入成绩
+                  </Text>
+                  <Pressable
+                    onPress={() => setImportSheet(false)}
+                    className="h-8 w-8 items-center justify-center rounded-full bg-white/25 dark:bg-white/[0.08]"
+                  >
+                    <Ionicons name="close" size={16} color="#94A3B8" />
+                  </Pressable>
+                </View>
+                <Text className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                  归入 {targetYearName} · 拍照、相册或表格文件。联网且有 API Key
+                  时走 AI，否则自动本地离线识别
+                </Text>
+
+                <View className="mt-4 flex-row gap-x-2.5">
+                  {[
+                    {
+                      key: "image" as From,
+                      icon: "images" as const,
+                      label: "相册",
+                    },
+                    {
+                      key: "camera" as From,
+                      icon: "camera" as const,
+                      label: "拍照",
+                    },
+                    {
+                      key: "text" as From,
+                      icon: "document-text" as const,
+                      label: "表格",
+                    },
+                  ].map((it) => (
+                    <Pressable
+                      key={it.key}
+                      onPress={() => {
+                        setImportSheet(false);
+                        void startGradeTask(it.key);
+                      }}
+                      className="flex-1 items-center rounded-2xl border border-white/25 bg-white/25 py-3.5 dark:border-white/10 dark:bg-white/[0.06]"
+                    >
+                      <Ionicons name={it.icon} size={19} color="#38BDF8" />
+                      <Text className="mt-1.5 text-[11.5px] font-semibold text-slate-600 dark:text-slate-300">
+                        {it.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+
+                <Pressable
+                  onPress={() => {
+                    setImportSheet(false);
+                    openCreate();
+                  }}
+                  className="mt-3 flex-row items-center justify-center rounded-2xl border border-sky-400/40 py-2.5"
+                >
+                  <Ionicons name="add" size={16} color="#38BDF8" />
+                  <Text className="ml-1 text-[12px] font-bold text-sky-500 dark:text-sky-300">
+                    手动添加成绩
+                  </Text>
+                </Pressable>
+              </View>
+            </GlassContainer>
+          </Animated.View>
+        </View>
+      </Modal>
     </View>
   );
 }

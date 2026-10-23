@@ -25,6 +25,16 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 const VISIT_KEY = "dark-study-night-visits";
 const TOTAL_STARS = 7;
 
+/** 猫头鹰要听够几次呼唤才肯带路：前几句是对话，最后一句才放行 */
+const OWL_LINES = [
+  "（它歪了歪头，圆眼睛在你身上打量了好一会儿）",
+  "（它低头啄了啄羽毛，又抬起来看你，像是在确认什么）",
+  "（它轻轻叫了一声，声音被夜风卷走了）",
+  "（它朝小径的方向跳了半步，又回头望你）",
+  "（它终于展开翅膀，落在小径入口回头等你）",
+] as const;
+const OWL_TAPS_NEEDED = OWL_LINES.length + 1;
+
 function seededDots(count: number) {
   let seed = 20261021;
   const rnd = () => {
@@ -932,17 +942,14 @@ export function NightSky({
             onTap={() => {
               const n = owlTaps.current + 1;
               owlTaps.current = n;
-              if (n >= 3) {
+              // 前几次都只是对话，最后一次呼唤它才肯带路
+              if (n >= OWL_TAPS_NEEDED) {
                 enterFarm();
                 return;
               }
-              setOwlHint(
-                n === 1
-                  ? "（它眨了眨眼，好像还想听你再叫一声）"
-                  : "（它朝小径的方向跳了一下，再叫一声试试）",
-              );
+              setOwlHint(OWL_LINES[n - 1] ?? "");
               if (hintTimer.current) clearTimeout(hintTimer.current);
-              hintTimer.current = setTimeout(() => setOwlHint(""), 2400);
+              hintTimer.current = setTimeout(() => setOwlHint(""), 3000);
             }}
           />
         </>
