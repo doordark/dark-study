@@ -28,7 +28,7 @@ import { useImportTask, type TaskKind } from "@/store/useImportTask";
 import { useSettings } from "@/store/useSettings";
 import { useActiveSchedule, useStore } from "@/store/useStore";
 import { toIsoDate } from "@/utils/time";
-import type { GradeRecord } from "@/types";
+import type { GradeDraft } from "@/types";
 
 type From = "image" | "camera" | "text";
 type Source =
@@ -74,6 +74,7 @@ export function ImportScreen() {
   const apiKey = useSettings((s) => s.apiKey);
   const activeSchedule = useActiveSchedule();
   const activeGradeSemester = useStore((s) => s.activeGradeSemester);
+  const activeGradeYearId = useStore((s) => s.activeGradeYearId);
 
   /** 统一取源：相册 / 拍照 / 文档三选一，取消返回 null */
   const pickSource = async (from: From): Promise<Source | null> => {
@@ -205,7 +206,7 @@ export function ImportScreen() {
       const online = await isOnline();
       const useAI = online && !!apiKey;
       const src = source;
-      const runOffline = async (): Promise<Omit<GradeRecord, "id">[]> => {
+      const runOffline = async (): Promise<GradeDraft[]> => {
         task.setPhase(
           "text" in src
             ? "离线模式：正在解析成绩表格…"
@@ -217,7 +218,7 @@ export function ImportScreen() {
           : await recognizeGradesOffline(src.uri, activeGradeSemester);
       };
 
-      let grades: Omit<GradeRecord, "id">[];
+      let grades: GradeDraft[];
       if (useAI) {
         try {
           task.setPhase("AI 正在识别课程成绩…", 38);
@@ -228,7 +229,7 @@ export function ImportScreen() {
           );
         } catch (aiError) {
           // 云端超时/失败时自动降级到本地，避免一直转圈
-          task.setPhase("AI 识别未完成，正在切换本地离线识别…", 58);
+          task.setPhase("AI 识别未完成，哔哔~~正在切换本地离线识别…", 58);
           try {
             grades = await runOffline();
           } catch {
@@ -244,7 +245,7 @@ export function ImportScreen() {
         return;
       }
       task.complete(
-        { type: "grades", grades },
+        { type: "grades", grades, yearId: activeGradeYearId },
         `${useAI ? "识别完成" : "离线识别完成"}：共 ${grades.length} 条成绩，请确认后导入`,
       );
     });

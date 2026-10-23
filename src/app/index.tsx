@@ -13,6 +13,7 @@ export default function Home() {
       onAssistant={() => router.push('/assistant')}
       onGrades={() => router.push('/grades')}
       onSettings={() => router.push('/settings')}
+      onFarm={() => router.push('/farm')}
     />
   );
 }

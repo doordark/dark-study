@@ -58,6 +58,12 @@ export interface Schedule {
 /** 分数录入方式：百分制数字 / 字母等级 / 文字等级 */
 export type GradeScoreType = "numeric" | "letter" | "text";
 
+/** 学年分组（可自由命名，如「大一」「2024-2025学年」），内部再分上 / 下 / 短学期 */
+export interface GradeYear {
+  id: string;
+  name: string;
+}
+
 /** 成绩记录 */
 export interface GradeRecord {
   id: string;
@@ -70,11 +76,16 @@ export interface GradeRecord {
   score: string;
   /** 绩点（识别自成绩单，或由分数换算），无法换算时为 null */
   gpa: number | null;
+  /** 所属学年 id */
+  yearId: string;
   /** 所属学期 */
   semester: SemesterKind;
   /** 课程类型 id（必修课 / 选修课 / 通识选修课 / 用户自定义） */
   type: string;
 }
+
+/** 识别/解析产出的成绩草稿：入库时才补 id 与所属学年 */
+export type GradeDraft = Omit<GradeRecord, "id" | "yearId">;
 
 /** 课程类型 */
 export interface GradeType {
@@ -92,13 +103,40 @@ export interface GradeRule {
   excludedCourseIds: string[];
 }
 
-/** 课表助手消息 */
+/** 联网检索来源 */
+export interface ChatSource {
+  title: string;
+  url: string;
+}
+
+/** 大爹专属：大肥鱼除改课表外的权限 */
+export type WhaleAction =
+  /** 修改召唤口令 */
+  | { type: "set_summon_phrase"; phrase: string }
+  /** 修改软件背景色调 / 光效 */
+  | { type: "set_background"; tint: string; effect?: string }
+  /** 联网找资料（随后会二次生成回答） */
+  | { type: "web_search"; query: string }
+  /** 生成图片 */
+  | {
+      type: "generate_image";
+      prompt: string;
+      size?: "square" | "portrait" | "landscape";
+    };
+
+/** 助手消息 */
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
   /** 助手建议的课表操作（可批量），供用户一键应用 */
   actions?: ScheduleAction[];
+  /** 大肥鱼生成的图片地址 */
+  imageUri?: string;
+  /** 图片宽高比（宽 / 高） */
+  imageAspect?: number;
+  /** 联网检索引用 */
+  sources?: ChatSource[];
   timestamp: number;
 }
 
@@ -116,6 +154,9 @@ export type ScheduleAction =
   | { type: "create_schedule"; scheduleName: string }
   /** 把另一份课表的课程合并进当前课表（时间/周数自动换算） */
   | { type: "merge_schedule"; sourceScheduleName: string };
+
+/** 助手可执行的完整操作：课表操作 + 大爹专属权限 */
+export type AssistantAction = ScheduleAction | WhaleAction;
 
 /** 课表合并结果报告 */
 export interface MergeReport {

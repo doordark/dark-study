@@ -27,6 +27,7 @@ import type {
   GradeRecord,
   GradeRule,
   GradeScoreType,
+  GradeYear,
   SemesterKind,
 } from "@/types";
 import {
@@ -97,6 +98,8 @@ export interface GradeEditorPanelProps {
   visible: boolean;
   /** 传入则为编辑，undefined 为新建 */
   grade?: GradeRecord;
+  /** 新建时默认归入的学年 */
+  defaultYearId: string;
   /** 新建时默认归入的学期 */
   defaultSemester: SemesterKind;
   onClose: () => void;
@@ -107,13 +110,16 @@ export interface GradeEditorPanelProps {
 export function GradeEditorPanel({
   visible,
   grade,
+  defaultYearId,
   defaultSemester,
   onClose,
   onSave,
   onDelete,
 }: GradeEditorPanelProps) {
   const types = useStore((s) => s.gradeTypes);
+  const years = useStore((s) => s.gradeYears);
   const addGradeType = useStore((s) => s.addGradeType);
+  const removeGradeType = useStore((s) => s.removeGradeType);
   const sheetH = useSheetHeight(0.82);
   const scrollRef = useRef<ScrollViewInstance>(null);
 
@@ -128,11 +134,13 @@ export function GradeEditorPanel({
   const [type, setType] = useState(
     grade?.type ?? types[0]?.id ?? "required",
   );
+  const [yearId, setYearId] = useState(grade?.yearId ?? defaultYearId);
   const [semester, setSemester] = useState<SemesterKind>(
     grade?.semester ?? defaultSemester,
   );
   const [addingType, setAddingType] = useState(false);
   const [newTypeName, setNewTypeName] = useState("");
+  const [manageTypes, setManageTypes] = useState(false);
 
   const fillGpa = (nextScoreType: GradeScoreType, nextScore: string) => {
     const derived = deriveGpa(nextScoreType, nextScore);
@@ -162,6 +170,17 @@ export function GradeEditorPanel({
     setType(id);
     setNewTypeName("");
     setAddingType(false);
+  };
+
+  const deleteType = (id: string) => {
+    if (types.length <= 1) {
+      Alert.alert("至少保留一个课程类型");
+      return;
+    }
+    const fallback = types.find((t) => t.id !== id);
+    removeGradeType(id);
+    if (type === id && fallback) setType(fallback.id);
+    if (types.length <= 2) setManageTypes(false);
   };
 
   const submit = () => {
@@ -208,6 +227,7 @@ export function GradeEditorPanel({
       scoreType,
       score: trimmedScore,
       gpa: gpaNum,
+      yearId,
       semester,
       type,
     });
@@ -329,36 +349,63 @@ export function GradeEditorPanel({
                       className="rounded-2xl border border-white/30 bg-white/50 px-3.5 py-2.5 text-[14px] text-slate-800 dark:border-white/10 dark:bg-white/[0.07] dark:text-slate-100"
                     />
                     <Text className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">
-                      默认按常见 4.0 制档位换算，可手动修改；识别成绩单时优先使用原文绩点
+                      默认 60 分起算 1.0，每高 1 分加 0.1（80 分 = 3.0），可手动修改；识别成绩单时优先使用原文绩点
                     </Text>
                   </View>
 
-                  <Text className="mb-1.5 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-                    课程类型
-                  </Text>
+                  <View className="mb-1.5 flex-row items-center justify-between">
+                    <Text className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                      课程类型
+                    </Text>
+                    <Pressable onPress={() => setManageTypes((v) => !v)}>
+                      <Text
+                        className={`text-[10px] font-semibold ${
+                          manageTypes
+                            ? "text-sky-500 dark:text-sky-300"
+                            : "text-slate-400 dark:text-slate-500"
+                        }`}
+                      >
+                        {manageTypes ? "完成" : "长按类型可删除"}
+                      </Text>
+                    </Pressable>
+                  </View>
                   <View className="mb-1 flex-row flex-wrap gap-2">
                     {types.map((t) => {
                       const on = type === t.id;
                       return (
-                        <Pressable
-                          key={t.id}
-                          onPress={() => setType(t.id)}
-                          className={`rounded-full border px-3 py-1.5 ${
-                            on
-                              ? "border-sky-400/70 bg-sky-400/80"
-                              : "border-white/30 bg-white/25 dark:border-white/10 dark:bg-white/[0.05]"
-                          }`}
-                        >
-                          <Text
-                            className={`text-[11px] font-semibold ${
+                        <View key={t.id} className="relative">
+                          <Pressable
+                            onPress={() => setType(t.id)}
+                            onLongPress={() => setManageTypes(true)}
+                            delayLongPress={320}
+                            className={`rounded-full border py-1.5 ${
+                              manageTypes ? "pr-6 pl-3" : "px-3"
+                            } ${
                               on
-                                ? "text-white"
-                                : "text-slate-600 dark:text-slate-300"
+                                ? "border-sky-400/70 bg-sky-400/80"
+                                : "border-white/30 bg-white/25 dark:border-white/10 dark:bg-white/[0.05]"
                             }`}
                           >
-                            {t.name}
-                          </Text>
-                        </Pressable>
+                            <Text
+                              className={`text-[11px] font-semibold ${
+                                on
+                                  ? "text-white"
+                                  : "text-slate-600 dark:text-slate-300"
+                              }`}
+                            >
+                              {t.name}
+                            </Text>
+                          </Pressable>
+                          {manageTypes ? (
+                            <Pressable
+                              onPress={() => deleteType(t.id)}
+                              hitSlop={8}
+                              className="absolute right-0.5 top-0.5 h-[15px] w-[15px] items-center justify-center rounded-full bg-rose-500"
+                            >
+                              <Ionicons name="close" size={10} color="#fff" />
+                            </Pressable>
+                          ) : null}
+                        </View>
                       );
                     })}
                     <Pressable
@@ -370,6 +417,11 @@ export function GradeEditorPanel({
                       </Text>
                     </Pressable>
                   </View>
+                  {manageTypes ? (
+                    <Text className="mb-1 text-[10px] text-rose-400 dark:text-rose-300">
+                      点击类型右上角 × 删除；相关成绩会自动归入其他类型
+                    </Text>
+                  ) : null}
                   {addingType ? (
                     <View className="mb-2 mt-2 flex-row items-center gap-x-2">
                       <TextInput
@@ -389,6 +441,36 @@ export function GradeEditorPanel({
                   ) : null}
 
                   <Text className="mb-1.5 mt-2 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                    学年
+                  </Text>
+                  <View className="mb-3 flex-row flex-wrap gap-2">
+                    {years.map((y) => {
+                      const on = yearId === y.id;
+                      return (
+                        <Pressable
+                          key={y.id}
+                          onPress={() => setYearId(y.id)}
+                          className={`rounded-full border px-3 py-1.5 ${
+                            on
+                              ? "border-sky-400/70 bg-sky-400/80"
+                              : "border-white/30 bg-white/25 dark:border-white/10 dark:bg-white/[0.05]"
+                          }`}
+                        >
+                          <Text
+                            className={`text-[11px] font-semibold ${
+                              on
+                                ? "text-white"
+                                : "text-slate-600 dark:text-slate-300"
+                            }`}
+                          >
+                            {y.name}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+
+                  <Text className="mb-1.5 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
                     学期
                   </Text>
                   <View className="mb-4 flex-row gap-x-2">
@@ -437,6 +519,142 @@ export function GradeEditorPanel({
                     >
                       <Text className="text-[12px] font-semibold text-rose-500 dark:text-rose-300">
                         删除这门成绩
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </ScrollView>
+              </GlassContainer>
+            </Animated.View>
+          </KeyboardAvoidingView>
+        </View>
+      </GlassTargetProvider>
+    </Modal>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  学年编辑（新建 / 重命名 / 删除）                                            */
+/* -------------------------------------------------------------------------- */
+
+export interface GradeYearEditorProps {
+  visible: boolean;
+  /** undefined = 新建学年 */
+  year?: GradeYear;
+  canDelete: boolean;
+  /** 该学年下的成绩数量，删除前提示用 */
+  gradeCount: number;
+  onClose: () => void;
+  onSave: (name: string) => void;
+  onDelete?: () => void;
+}
+
+export function GradeYearEditor({
+  visible,
+  year,
+  canDelete,
+  gradeCount,
+  onClose,
+  onSave,
+  onDelete,
+}: GradeYearEditorProps) {
+  const sheetH = useSheetHeight(0.42);
+  const [name, setName] = useState(year?.name ?? "");
+
+  const submit = () => {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      Alert.alert("请填写学年名称", "例如「大一」「2024-2025学年」");
+      return;
+    }
+    onSave(trimmed);
+  };
+
+  const confirmDelete = () => {
+    if (!year || !onDelete) return;
+    Alert.alert(
+      "删除学年",
+      gradeCount > 0
+        ? `「${year.name}」下的 ${gradeCount} 门成绩会一并删除，且无法恢复。`
+        : `确定删除「${year.name}」？`,
+      [
+        { text: "取消", style: "cancel" },
+        {
+          text: "删除",
+          style: "destructive",
+          onPress: () => {
+            onDelete();
+            onClose();
+          },
+        },
+      ],
+    );
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <GlassTargetProvider>
+        <View className="flex-1 justify-end bg-black/45">
+          <Pressable className="flex-1" onPress={onClose} />
+          <KeyboardAvoidingView behavior="padding">
+            <Animated.View
+              entering={FadeInDown.springify()}
+              exiting={FadeOutDown}
+            >
+              <GlassContainer
+                radius={32}
+                intensity={62}
+                borderOpacity={0.3}
+                style={{ height: sheetH, paddingBottom: 16 }}
+              >
+                <ScrollView
+                  className="px-5 pt-5"
+                  style={{ flex: 1 }}
+                  keyboardShouldPersistTaps="handled"
+                >
+                  <View className="mb-4 flex-row items-center justify-between">
+                    <Text className="text-[17px] font-bold text-slate-800 dark:text-white">
+                      {year ? "编辑学年" : "新建学年"}
+                    </Text>
+                    <Pressable
+                      onPress={onClose}
+                      className="h-8 w-8 items-center justify-center rounded-full bg-white/25 dark:bg-white/[0.08]"
+                    >
+                      <Ionicons name="close" size={16} color="#94A3B8" />
+                    </Pressable>
+                  </View>
+
+                  <Field
+                    label="学年名称"
+                    value={name}
+                    placeholder="如 大一 / 大二 / 2024-2025学年"
+                    onChange={setName}
+                  />
+
+                  <Text className="mb-3 mt-1 text-[10px] leading-4 text-slate-400 dark:text-slate-500">
+                    每个学年内部再分为上学期、下学期与短学期，可分别统计，也可统计学年总绩点
+                  </Text>
+
+                  <Pressable
+                    onPress={submit}
+                    className="items-center rounded-2xl bg-sky-500/85 py-3"
+                  >
+                    <Text className="text-[13px] font-bold text-white">
+                      {year ? "保存名称" : "创建学年"}
+                    </Text>
+                  </Pressable>
+
+                  {year && canDelete && onDelete ? (
+                    <Pressable
+                      onPress={confirmDelete}
+                      className="mt-2.5 items-center rounded-2xl border border-rose-400/40 bg-rose-400/10 py-2.5"
+                    >
+                      <Text className="text-[12px] font-semibold text-rose-500 dark:text-rose-300">
+                        删除这个学年
                       </Text>
                     </Pressable>
                   ) : null}

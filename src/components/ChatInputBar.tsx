@@ -10,6 +10,8 @@ export interface ChatInputBarProps {
   onSend: () => void;
   busy?: boolean;
   placeholder?: string;
+  /** 鲸鱼模式：输入栏换成更软萌的天蓝色配色 */
+  cute?: boolean;
   /** 覆盖底部安全区（键盘弹出时由页面传入，避免重复留白） */
   bottomInset?: number;
 }
@@ -25,6 +27,7 @@ export function ChatInputBar({
   onSend,
   busy = false,
   placeholder = "例如：把周四的课和周五的换一下…",
+  cute = false,
   bottomInset,
 }: ChatInputBarProps) {
   const { colorScheme } = useColorScheme();
@@ -51,10 +54,20 @@ export function ChatInputBar({
           borderWidth: 1,
           borderColor: focused
             ? "rgba(56,189,248,0.85)"
+            : cute
+              ? isDark
+                ? "rgba(56,189,248,0.4)"
+                : "rgba(125,211,252,0.9)"
+              : isDark
+                ? "rgba(255,255,255,0.14)"
+                : "rgba(186,230,253,0.95)",
+          backgroundColor: cute
+            ? isDark
+              ? "#0F1E33"
+              : "#F0F9FF"
             : isDark
-              ? "rgba(255,255,255,0.14)"
-              : "rgba(186,230,253,0.95)",
-          backgroundColor: isDark ? "#121A2B" : "#FFFFFF",
+              ? "#121A2B"
+              : "#FFFFFF",
           paddingLeft: 14,
           paddingRight: 5,
           paddingVertical: 5,

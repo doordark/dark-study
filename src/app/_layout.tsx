@@ -25,6 +25,10 @@ export default function RootLayout() {
           <Stack.Screen name="assistant" options={{ presentation: "modal" }} />
           <Stack.Screen name="grades" options={{ presentation: "modal" }} />
           <Stack.Screen name="settings" options={{ presentation: "modal" }} />
+          <Stack.Screen
+            name="farm"
+            options={{ presentation: "fullScreenModal", animation: "fade" }}
+          />
         </Stack>
         {/* 全局导入任务悬浮层：分析进度弹窗 / 可拖动进度球，退出导入页后任务继续 */}
         <ImportTaskOverlay />

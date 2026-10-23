@@ -1,7 +1,7 @@
 import { recognizeText } from "rn-mlkit-ocr";
 
 import { DEFAULT_PERIODS } from "@/constants/sample";
-import type { Course, CourseColor, GradeRecord, Schedule, SemesterKind } from "@/types";
+import type { Course, CourseColor, GradeDraft, Schedule, SemesterKind } from "@/types";
 import { normalizeGradeInput } from "@/utils/grades";
 import {
   addDays,
@@ -502,7 +502,6 @@ export function recognizeScheduleFromTextOffline(text: string): Schedule {
 /*  成绩单解析                                                          */
 /* ------------------------------------------------------------------ */
 
-type GradeDraft = Omit<GradeRecord, "id">;
 type GradeColumnKey = "name" | "credit" | "score" | "gpa" | "type" | "semester";
 
 const GRADE_HEADER_PATTERNS: [GradeColumnKey, RegExp][] = [

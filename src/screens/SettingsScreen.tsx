@@ -139,7 +139,7 @@ function UpdateCard() {
                 检查更新
               </Text>
               <Text className="text-[10.5px] text-slate-500 dark:text-slate-400">
-                当前版本 v{version} · 新版本发布在 GitHub Releases
+                当前版本 v{version}
               </Text>
             </View>
           </View>
@@ -166,7 +166,7 @@ function UpdateCard() {
             <View className="flex-row items-center rounded-2xl bg-emerald-400/15 px-3.5 py-3">
               <Ionicons name="checkmark-circle" size={16} color="#34D399" />
               <Text className="ml-2 flex-1 text-[12px] font-semibold text-emerald-600 dark:text-emerald-300">
-                已是最新版本 v{info?.version ?? version}
+                已是最新版本QwQ v{info?.version ?? version}
               </Text>
               <Pressable onPress={check} hitSlop={8}>
                 <Text className="text-[11px] font-semibold text-sky-600 dark:text-sky-300">
@@ -239,7 +239,7 @@ function UpdateCard() {
               <View className="flex-row items-center rounded-2xl bg-emerald-400/15 px-3.5 py-3">
                 <Ionicons name="checkmark-circle" size={16} color="#34D399" />
                 <Text className="ml-2 flex-1 text-[12px] font-semibold text-emerald-600 dark:text-emerald-300">
-                  安装包已就绪
+                  安装包准备就绪！
                 </Text>
               </View>
               <PrimaryBtn label="立即安装" onPress={install} />
@@ -262,7 +262,7 @@ function UpdateCard() {
             <>
               <View className="rounded-2xl bg-rose-400/15 px-3.5 py-3">
                 <Text className="text-[11.5px] text-rose-500 dark:text-rose-300">
-                  {message || "检查更新失败，请检查网络后重试"}
+                  {message || "检查更新失败，请检查网络后重试QAQ"}
                 </Text>
               </View>
               <PrimaryBtn label="重试" onPress={check} />
@@ -591,7 +591,7 @@ export function SettingsScreen() {
                   课程表
                 </Text>
                 <Text className="mb-3 text-[10.5px] text-slate-500 dark:text-slate-400">
-                  可为每个学期建立一份课表（如「大二下」），点按任意一行即可切换；其他课表可一键合并进当前课表
+                  可为每个学期建立一份课表，点按任意一行即可切换；其他课表可一键合并进当前课表
                 </Text>
 
                 {schedules.map((item) => {
@@ -720,7 +720,7 @@ export function SettingsScreen() {
 
                 {saved ? (
                   <Text className="mt-2 text-[11px] text-emerald-300">
-                    已保存
+                    你的小助手已获取大脑
                   </Text>
                 ) : null}
 
@@ -773,7 +773,7 @@ export function SettingsScreen() {
           <UpdateCard />
 
           <Text className="mt-6 text-center text-[10px] text-slate-400 dark:text-slate-500">
-            dark-study v{currentVersion()} · HyperOS 4 Design System
+            dark♂study v{currentVersion()} · by door♂
           </Text>
         </ScrollView>
 

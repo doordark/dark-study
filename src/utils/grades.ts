@@ -1,4 +1,5 @@
 import type {
+  GradeDraft,
   GradeRecord,
   GradeRule,
   GradeScoreType,
@@ -47,32 +48,20 @@ const LETTER_GPA: Record<string, number> = {
 /** 文字等级 → 常见 4.0 制绩点 */
 const TEXT_GPA: Record<string, number> = {
   优秀: 4.0,
-  良好: 3.3,
-  中等: 2.7,
+  良好: 3.5,
+  中等: 2.5,
   及格: 1.5,
   不及格: 0,
   // 「合格 / 通过」类通常不计入绩点
 };
 
-const NUMERIC_BANDS: [number, number][] = [
-  [90, 4.0],
-  [85, 3.7],
-  [82, 3.3],
-  [78, 3.0],
-  [75, 2.7],
-  [72, 2.3],
-  [68, 2.0],
-  [64, 1.5],
-  [60, 1.0],
-];
-
-/** 百分制分数 → 绩点（常见 4.0 制档位） */
+/**
+ * 百分制分数 → 绩点：60 分起算 1.0，每高 1 分加 0.1
+ * （60 → 1.0，80 → 3.0，85 → 3.5，100 → 5.0），低于 60 记 0
+ */
 export function numericScoreToGpa(score: number): number {
-  if (!Number.isFinite(score)) return 0;
-  for (const [min, gpa] of NUMERIC_BANDS) {
-    if (score >= min) return gpa;
-  }
-  return 0;
+  if (!Number.isFinite(score) || score < 60) return 0;
+  return Math.round((1 + (score - 60) * 0.1) * 10) / 10;
 }
 
 /** 判断原始分数的展示类型 */
@@ -82,7 +71,10 @@ export function detectScoreType(raw: string): GradeScoreType {
   const num = Number(text);
   if (text !== "" && Number.isFinite(num)) return "numeric";
   if (LETTER_GPA[text.toUpperCase()] != null) return "letter";
-  if (TEXT_GPA[text] != null || /通过|合格|不合格|未通过|缓考|免修/.test(text)) {
+  if (
+    TEXT_GPA[text] != null ||
+    /通过|合格|不合格|未通过|缓考|免修/.test(text)
+  ) {
     return "text";
   }
   return "text";
@@ -170,7 +162,7 @@ export function calcGradeStats(
   };
 }
 
-/** 规范化一条识别/迁移来的成绩（补全类型、绩点与学期） */
+/** 规范化一条识别/迁移来的成绩（补全类型、绩点与学期；学年由入库方补上） */
 export function normalizeGradeInput(input: {
   name?: unknown;
   credit?: unknown;
@@ -180,7 +172,7 @@ export function normalizeGradeInput(input: {
   gpa?: unknown;
   type?: unknown;
   semester?: unknown;
-}): Omit<GradeRecord, "id"> | null {
+}): GradeDraft | null {
   const name = String(input.name ?? "").trim();
   if (!name) return null;
 

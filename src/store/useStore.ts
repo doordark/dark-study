@@ -1,12 +1,13 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-import { DEFAULT_GRADE_RULES, DEFAULT_GRADE_TYPES, SAMPLE_SCHEDULE } from "@/constants/sample";
+import { DEFAULT_GRADE_RULES, DEFAULT_GRADE_TYPES, DEFAULT_GRADE_YEARS, SAMPLE_SCHEDULE } from "@/constants/sample";
 import type {
   Course,
   GradeRecord,
   GradeRule,
   GradeType,
+  GradeYear,
   MergeReport,
   Schedule,
   SemesterKind,
@@ -154,6 +155,10 @@ interface AppState {
   /** 当前选中的课表 id */
   activeScheduleId: string;
   grades: GradeRecord[];
+  /** 学年分组（如「大一」「大二」），可自由命名、删除，内部再分上 / 下 / 短 */
+  gradeYears: GradeYear[];
+  /** 当前选中的学年 id（导入成绩时作为默认归属学年） */
+  activeGradeYearId: string;
   /** 课程类型（必修 / 选修 / 通识选修 / 自定义） */
   gradeTypes: GradeType[];
   /** 成绩计算规则（如「保研绩点」） */
@@ -198,8 +203,17 @@ interface AppState {
   addGrade: (grade: Omit<GradeRecord, "id">) => string;
   updateGrade: (id: string, patch: Partial<GradeRecord>) => void;
   removeGrade: (id: string) => void;
+  /** 新建学年并切换为当前，返回学年 id */
+  addGradeYear: (name: string) => string;
+  /** 重命名学年 */
+  updateGradeYear: (id: string, name: string) => void;
+  /** 删除学年：该学年下的成绩一并移除，至少保留一个学年 */
+  removeGradeYear: (id: string) => void;
+  setActiveGradeYear: (id: string) => void;
   /** 添加课程类型，返回类型 id（同名的直接复用） */
   addGradeType: (name: string) => string;
+  /** 删除课程类型：相关成绩归入剩余的第一个类型，并从规则排除项中移除 */
+  removeGradeType: (id: string) => void;
   /** 新建计算规则并切换为当前，返回规则 id */
   addGradeRule: (name: string) => string;
   updateGradeRule: (id: string, patch: Partial<GradeRule>) => void;
@@ -215,6 +229,8 @@ export const useStore = create<AppState>()(
       schedules: [SAMPLE_SCHEDULE],
       activeScheduleId: SAMPLE_SCHEDULE.id,
       grades: [],
+      gradeYears: DEFAULT_GRADE_YEARS.map((y) => ({ ...y })),
+      activeGradeYearId: DEFAULT_GRADE_YEARS[0].id,
       gradeTypes: DEFAULT_GRADE_TYPES,
       gradeRules: DEFAULT_GRADE_RULES,
       activeGradeRuleId: DEFAULT_GRADE_RULES[0].id,
@@ -408,6 +424,51 @@ export const useStore = create<AppState>()(
       removeGrade: (id) =>
         set((s) => ({ grades: s.grades.filter((g) => g.id !== id) })),
 
+      addGradeYear: (name) => {
+        const id = `year-${uid()}`;
+        set((s) => ({
+          gradeYears: [
+            ...s.gradeYears,
+            { id, name: name.trim() || `学年 ${s.gradeYears.length + 1}` },
+          ],
+          activeGradeYearId: id,
+        }));
+        return id;
+      },
+
+      updateGradeYear: (id, name) =>
+        set((s) => ({
+          gradeYears: s.gradeYears.map((y) =>
+            y.id === id ? { ...y, name: name.trim() || y.name } : y,
+          ),
+        })),
+
+      removeGradeYear: (id) =>
+        set((s) => {
+          // 至少保留一个学年，避免成绩无处归属
+          if (s.gradeYears.length <= 1) return {};
+          const gradeYears = s.gradeYears.filter((y) => y.id !== id);
+          const removedIds = new Set(
+            s.grades.filter((g) => g.yearId === id).map((g) => g.id),
+          );
+          return {
+            gradeYears,
+            activeGradeYearId:
+              s.activeGradeYearId === id
+                ? gradeYears[0].id
+                : s.activeGradeYearId,
+            grades: s.grades.filter((g) => g.yearId !== id),
+            gradeRules: s.gradeRules.map((r) => ({
+              ...r,
+              excludedCourseIds: r.excludedCourseIds.filter(
+                (cid) => !removedIds.has(cid),
+              ),
+            })),
+          };
+        }),
+
+      setActiveGradeYear: (id) => set({ activeGradeYearId: id }),
+
       addGradeType: (name) => {
         const trimmed = name.trim();
         if (!trimmed) return "";
@@ -419,6 +480,24 @@ export const useStore = create<AppState>()(
         }));
         return id;
       },
+
+      removeGradeType: (id) =>
+        set((s) => {
+          const gradeTypes = s.gradeTypes.filter((t) => t.id !== id);
+          // 至少保留一个类型
+          if (!gradeTypes.length) return {};
+          const fallbackId = gradeTypes[0].id;
+          return {
+            gradeTypes,
+            grades: s.grades.map((g) =>
+              g.type === id ? { ...g, type: fallbackId } : g,
+            ),
+            gradeRules: s.gradeRules.map((r) => ({
+              ...r,
+              excludedTypes: r.excludedTypes.filter((t) => t !== id),
+            })),
+          };
+        }),
 
       addGradeRule: (name) => {
         const id = uid();
@@ -468,6 +547,8 @@ export const useStore = create<AppState>()(
           schedules: [SAMPLE_SCHEDULE],
           activeScheduleId: SAMPLE_SCHEDULE.id,
           grades: [],
+          gradeYears: DEFAULT_GRADE_YEARS.map((y) => ({ ...y })),
+          activeGradeYearId: DEFAULT_GRADE_YEARS[0].id,
           gradeTypes: DEFAULT_GRADE_TYPES,
           gradeRules: DEFAULT_GRADE_RULES,
           activeGradeRuleId: DEFAULT_GRADE_RULES[0].id,
@@ -476,7 +557,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: "dark-study-storage",
-      version: 5,
+      version: 6,
       storage: createJSONStorage(() => migratingStorage("courseflow-storage")),
       migrate: (persisted, version) => {
         const s = (persisted ?? {}) as Record<string, any>;
@@ -549,6 +630,25 @@ export const useStore = create<AppState>()(
             })
             .filter(Boolean);
           delete s.gpaRules;
+        }
+
+        // v<6：成绩新增「学年」分组，存量成绩统一归入默认学年
+        if (version < 6) {
+          if (!Array.isArray(s.gradeYears) || !s.gradeYears.length) {
+            s.gradeYears = DEFAULT_GRADE_YEARS.map((y) => ({ ...y }));
+          }
+          if (
+            !s.activeGradeYearId ||
+            !(s.gradeYears as GradeYear[]).some(
+              (y) => y.id === s.activeGradeYearId,
+            )
+          ) {
+            s.activeGradeYearId = (s.gradeYears as GradeYear[])[0].id;
+          }
+          const fallbackYearId = (s.gradeYears as GradeYear[])[0].id;
+          s.grades = (Array.isArray(s.grades) ? s.grades : []).map(
+            (g: GradeRecord) => ({ ...g, yearId: g.yearId || fallbackYearId }),
+          );
         }
 
         return s as unknown as AppState;

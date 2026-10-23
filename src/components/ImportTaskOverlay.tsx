@@ -131,6 +131,8 @@ function TaskDialog() {
   const addScheduleWithData = useStore((s) => s.addScheduleWithData);
   const mergeIncoming = useStore((s) => s.mergeIncoming);
   const addGrade = useStore((s) => s.addGrade);
+  /** 识别结果默认归入当前学年 */
+  const activeGradeYearId = useStore((s) => s.activeGradeYearId);
   /** 当前课表已有课程时，导入前需选择：融合 / 新建 / 覆盖 */
   const hasCourses = useStore((s) => {
     const cur =
@@ -226,9 +228,10 @@ function TaskDialog() {
 
   const applyGrades = () => {
     if (!result || result.type !== "grades") return;
-    result.grades.forEach((g) => addGrade(g));
+    const yearId = result.yearId ?? activeGradeYearId;
+    result.grades.forEach((g) => addGrade({ ...g, yearId }));
     ack(
-      `已导入 ${result.grades.length} 条成绩，可在「成绩」页按学期查看和修改`,
+      `已导入 ${result.grades.length} 条成绩，可在「成绩」页按学年、学期查看和修改`,
     );
   };
 

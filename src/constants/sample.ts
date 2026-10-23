@@ -1,4 +1,4 @@
-import type { GradeRule, GradeType, Schedule } from "@/types";
+import type { GradeRule, GradeType, GradeYear, Schedule } from "@/types";
 import { resolveSemester } from "@/utils/time";
 
 /** 默认作息（12 节制，典型国内高校） */
@@ -33,9 +33,9 @@ export const SAMPLE_SCHEDULE: Schedule = {
   courses: [
     {
       id: "c1",
-      name: "数据结构与算法",
-      teacher: "陈明远",
-      classroom: "教三 305",
+      name: "数据结构",
+      teacher: "顾林",
+      classroom: "尚七 513",
       weekday: 1,
       startPeriod: 1,
       endPeriod: 2,
@@ -46,8 +46,8 @@ export const SAMPLE_SCHEDULE: Schedule = {
     {
       id: "c2",
       name: "高等数学 A",
-      teacher: "林岚",
-      classroom: "教一 201",
+      teacher: "胡柏遇",
+      classroom: "新教楼 201",
       weekday: 1,
       startPeriod: 3,
       endPeriod: 4,
@@ -58,8 +58,8 @@ export const SAMPLE_SCHEDULE: Schedule = {
     {
       id: "c3",
       name: "大学英语",
-      teacher: "Sophia Wang",
-      classroom: "外语楼 402",
+      teacher: "Charley Qing",
+      classroom: "语林楼 124",
       weekday: 2,
       startPeriod: 3,
       endPeriod: 4,
@@ -69,9 +69,9 @@ export const SAMPLE_SCHEDULE: Schedule = {
     },
     {
       id: "c4",
-      name: "操作系统原理",
-      teacher: "张浩宇",
-      classroom: "教二 118",
+      name: "程序设计",
+      teacher: "徐乙",
+      classroom: "康尔楼 118",
       weekday: 2,
       startPeriod: 5,
       endPeriod: 6,
@@ -95,7 +95,7 @@ export const SAMPLE_SCHEDULE: Schedule = {
       id: "c6",
       name: "体育（篮球）",
       teacher: "赵铁柱",
-      classroom: "风雨操场",
+      classroom: "东操场",
       weekday: 3,
       startPeriod: 7,
       endPeriod: 8,
@@ -176,6 +176,11 @@ export const DEFAULT_GRADE_TYPES: GradeType[] = [
   { id: "required", name: "必修课" },
   { id: "elective", name: "选修课" },
   { id: "general", name: "通识选修课" },
+];
+
+/** 默认学年分组：用户可自由重命名，也可继续新建其他学年 */
+export const DEFAULT_GRADE_YEARS: GradeYear[] = [
+  { id: "year-default", name: "默认学年" },
 ];
 
 /** 默认计算规则：全部成绩计入（用户可复制为「综测」「保研」等命名规则） */

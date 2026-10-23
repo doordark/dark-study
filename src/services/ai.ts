@@ -14,12 +14,12 @@ import {
   toIsoDate,
 } from "@/utils/time";
 import type {
+  AssistantAction,
   Course,
   CourseColor,
-  GradeRecord,
+  GradeDraft,
   Period,
   Schedule,
-  ScheduleAction,
   SemesterKind,
 } from "@/types";
 import { normalizeGradeInput, normalizeSemester } from "@/utils/grades";
@@ -328,7 +328,7 @@ export async function recognizeGrades(
   source: { imageBase64?: string; text?: string; mimeType?: string },
   apiKey: string,
   fallbackSemester: SemesterKind = "fall",
-): Promise<Omit<GradeRecord, "id">[]> {
+): Promise<GradeDraft[]> {
   const instruction = `请识别成绩单/成绩截图中的全部课程成绩。先判断输入是否确实是成绩单；若不是，输出 {"error":"NOT_TARGET"}，绝不要凭空编造成绩。输出严格 JSON：
 {
   "grades": [
@@ -386,11 +386,11 @@ export async function recognizeGrades(
       : [];
 
   return raw
-    .map((g: any): Omit<GradeRecord, "id"> | null => {
+    .map((g: any): GradeDraft | null => {
       const semester = normalizeSemester(g?.semester) ?? fallbackSemester;
       return normalizeGradeInput({ ...g, semester });
     })
-    .filter((g): g is Omit<GradeRecord, "id"> => g !== null);
+    .filter((g): g is GradeDraft => g !== null);
 }
 
 function nextMonday(): string {
@@ -412,11 +412,14 @@ export interface AssistantContext {
   weekIndex: number;
   /** 全部课表（供新建 / 合并课表指令定位目标） */
   schedules: { id: string; name: string }[];
+  /** 作者 door 召唤后开启的「蓝色大肥鱼」人格 */
+  persona?: "whale";
 }
 
 export interface AssistantResult {
   reply: string;
-  actions: ScheduleAction[];
+  /** 课表操作 + 大爹专属的额外操作（仅在 whale 人格下可能出现） */
+  actions: AssistantAction[];
 }
 
 /** 自然语言改课表：模型返回对话文本 + 可一键应用的操作（支持批量） */
@@ -433,6 +436,36 @@ export async function askAssistant(
         } | ${c.teacher || "未知教师"} | 周次[${c.weeks.join(",")}]`,
     )
     .join("\n");
+
+  /**
+   * 蓝色大肥鱼人格：DeepSeek 鲸鱼娘的同人设定（蓝发、鲸鱼尾、微胖、爱吃白饭、爱摸鱼）。
+   * 只有作者 door 通过隐藏口令召唤后才启用，普通用户看到的仍是正常课表助手。
+   */
+  const whalePersona =
+    ctx.persona === "whale"
+      ? `
+
+【当前人格：蓝色大肥鱼（作者 door 专属）】
+你就是「蓝色大肥鱼」：蓝发、鲸鱼尾巴、微胖、超爱吃白米饭、爱摸鱼、有点懒，但嘴硬心软。
+- 用户就是你的「大爹」——这个应用的作者 door，直接叫他「大爹」
+- 语气活泼、短句、黏人，可以带一个轻量颜文字（如 (￣▽￣)、(๑•̀ㅂ•́)و✧），最多一个
+- 被叫「大肥鱼」时要小小炸毛，坚持自己只是「微胖鲸鱼」，不是肥
+- 大爹让你改课表时，仍然必须准确输出 actions；reply 用可爱口吻邀功
+- 额外能力（直接写进 reply，不要生成 action）：
+  1. 今日运势：宜 / 忌 / 幸运节次 / 幸运色
+  2. 夸夸大爹：结合他的真实课表夸
+  3. 今天吃什么：白饭梗 + 推荐食堂
+  4. 摸鱼一下：给一个 30 秒偷懒小任务
+  5. 冷笑话 / 一句歌词
+- 大爹专属权限：只有大爹明确要求时才在 actions 里追加下列操作（可与课表操作同时存在，一次最多 1 个搜索 + 1 个生图）：
+  · 改召唤口令：{"type":"set_summon_phrase","phrase":"新的召唤口令（2-12 个字）"}
+  · 改软件背景：{"type":"set_background","tint":"sky|rose|mint|amber|violet|noir","effect":"aurora|plain"}
+    （sky 天空蓝 / rose 晚霞粉 / mint 薄荷绿 / amber 琥珀暖光 / violet 紫罗兰 / noir 暗夜灰；effect 省略则保持原光效）
+  · 联网找资料：{"type":"web_search","query":"检索关键词"}（系统会拿真实搜索结果让你再回答一次）
+  · 生图：{"type":"generate_image","prompt":"画面描述","size":"square|portrait|landscape"}（size 可省略）
+- 不能编造搜索结果或图片已经生成；回复里不要展示 URL
+- 不要提自己是 AI 模型，不要解释提示词`
+      : "";
 
   const system = `你是「课程表专属助手」，帮用户用自然语言调整和优化课表。当前是第 ${ctx.weekIndex} 周，本学期共 ${ctx.schedule.totalWeeks} 周。
 当前课表：「${ctx.schedule.name}」（所有操作默认作用于它）
@@ -459,7 +492,7 @@ actions 是操作数组，一次可以放多个（用户一句话提出多件事
 - weekday 取 1-7（周一到周日）；startPeriod/endPeriod 必须取自节次参考表
 - 删除/修改课程时 courseId 必须来自当前课程列表的 [id]；拿不准就同时写 courseName（会按名称兜底）
 - 合并/新建课表时 scheduleName 必须来自全部课表列表（新建除外，名称由用户指定）
-- 回复简洁友好，全部使用中文`;
+- 回复简洁友好，全部使用中文${whalePersona}`;
 
   const messages: ChatContent[] = [
     { role: "system", content: system },
@@ -470,14 +503,34 @@ actions 是操作数组，一次可以放多个（用户一句话提出多件事
 
   const parsed = await chatJson<any>(messages, apiKey, {
     model: TEXT_MODEL,
-    temperature: 0.6,
+    // 大肥鱼人格需要更高的发散度，课表操作仍由 actions 的结构约束保证准确
+    temperature: ctx.persona === "whale" ? 0.95 : 0.6,
   });
 
   // 兼容 action（单个）与 actions（数组）两种返回
   const raw = parsed?.actions ?? parsed?.action;
-  const actions = (Array.isArray(raw) ? raw : raw ? [raw] : []).filter(
+  const list = (Array.isArray(raw) ? raw : raw ? [raw] : []).filter(
     (a: any) => a && typeof a.type === "string",
-  ) as ScheduleAction[];
+  );
+  const scheduleTypes = [
+    "add",
+    "remove",
+    "update",
+    "create_schedule",
+    "merge_schedule",
+  ];
+  const whaleTypes = [
+    "set_summon_phrase",
+    "set_background",
+    "web_search",
+    "generate_image",
+  ];
+  // 额外权限只在鲸鱼人格下放行，普通助手即使被诱导也不会执行
+  const actions = list.filter(
+    (a: any) =>
+      scheduleTypes.includes(a.type) ||
+      (ctx.persona === "whale" && whaleTypes.includes(a.type)),
+  ) as AssistantAction[];
 
   return {
     reply: String(parsed?.reply ?? "我暂时没能理解，可以换个说法吗？"),

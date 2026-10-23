@@ -30,7 +30,9 @@ import {
   GlassContainer,
   GlassTargetProvider,
 } from "@/components/GlassContainer";
+import { NightSky } from "@/components/NightSky";
 import { WeekGrid } from "@/components/WeekGrid";
+import { GravityBadge, GravityCard } from "@/components/ZeroG";
 import { WEEKDAY_LABELS } from "@/constants/palette";
 import { useActiveSchedule, useStore } from "@/store/useStore";
 import type { Course } from "@/types";
@@ -52,6 +54,8 @@ export interface CourseScheduleScreenProps {
   onGrades: () => void;
   /** 打开设置 */
   onSettings: () => void;
+  /** 通往星露坡的小径（隐藏） */
+  onFarm?: () => void;
   /** 外部控制的主题层容器样式 */
   style?: StyleProp<ViewStyle>;
 }
@@ -61,6 +65,7 @@ export function CourseScheduleScreen({
   onAssistant,
   onGrades,
   onSettings,
+  onFarm,
   style,
 }: CourseScheduleScreenProps) {
   const schedule = useActiveSchedule();
@@ -85,6 +90,50 @@ export function CourseScheduleScreen({
   const [editorToken, setEditorToken] = useState(0);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [now, setNow] = useState(() => new Date());
+  const [nightOpen, setNightOpen] = useState(false);
+
+  // 第二个彩蛋：同样是静默触发，不给任何提示
+  const [gravityToken, setGravityToken] = useState(0);
+  const [gravityOff, setGravityOff] = useState(false);
+  const gravityTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleWeekTitleLongPress = () => {
+    setGravityToken((t) => t + 1);
+    setGravityOff(true);
+    if (gravityTimer.current) clearTimeout(gravityTimer.current);
+    gravityTimer.current = setTimeout(() => setGravityOff(false), 2400);
+  };
+
+  // 彩蛋入口：静默累计点击，不做任何显式提示
+  const [secretCharge, setSecretCharge] = useState(0);
+  const tapsRef = React.useRef<number[]>([]);
+  const chargeTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleClockTap = () => {
+    const t = Date.now();
+    tapsRef.current = tapsRef.current.filter((item) => t - item < 5000);
+    tapsRef.current.push(t);
+    const count = tapsRef.current.length;
+    setSecretCharge(Math.min(count, 7));
+    if (chargeTimer.current) clearTimeout(chargeTimer.current);
+    chargeTimer.current = setTimeout(() => {
+      tapsRef.current = [];
+      setSecretCharge(0);
+    }, 3000);
+    if (count >= 7) {
+      tapsRef.current = [];
+      setSecretCharge(0);
+      setNightOpen(true);
+    }
+  };
+
+  React.useEffect(
+    () => () => {
+      if (chargeTimer.current) clearTimeout(chargeTimer.current);
+      if (gravityTimer.current) clearTimeout(gravityTimer.current);
+    },
+    [],
+  );
 
   // 每 30 秒刷新一次时钟，保持「进行中」状态准确
   React.useEffect(() => {
@@ -110,7 +159,8 @@ export function CourseScheduleScreen({
   );
 
   /* ---------------- 日视图：左右滑动切换星期 ---------------- */
-  const winW = useWindowDimensions().width;
+  const { width: winW, height: winH } = useWindowDimensions();
+  const liftDistance = Math.round(Math.min(winH * 0.07, 64));
   const dayTx = useSharedValue(0);
   const prevWeekdayRef = React.useRef(weekday);
 
@@ -236,14 +286,19 @@ export function CourseScheduleScreen({
                     style={{ marginLeft: 2 }}
                   />
                 </Pressable>
-                <Text className="text-[24px] font-extrabold leading-7 text-slate-800 dark:text-white">
-                  第 {activeWeek} 周
-                  <Text className="ml-2 text-[11px] font-medium text-slate-400 dark:text-slate-500">
-                    {" "}
-                    {dateInfo.dateLabel} ·{" "}
-                    {WEEKDAY_LABELS[dateInfo.weekday - 1]}
+                <Pressable
+                  onLongPress={handleWeekTitleLongPress}
+                  delayLongPress={800}
+                >
+                  <Text className="text-[24px] font-extrabold leading-7 text-slate-800 dark:text-white">
+                    第 {activeWeek} 周
+                    <Text className="ml-2 text-[11px] font-medium text-slate-400 dark:text-slate-500">
+                      {" "}
+                      {dateInfo.dateLabel} ·{" "}
+                      {WEEKDAY_LABELS[dateInfo.weekday - 1]}
+                    </Text>
                   </Text>
-                </Text>
+                </Pressable>
               </View>
               <View className="flex-row items-center gap-x-2">
                 {/* 视图切换 */}
@@ -272,13 +327,30 @@ export function CourseScheduleScreen({
                   </View>
                 </GlassContainer>
                 {/* 时钟 */}
-                <GlassContainer radius={13} intensity={42} borderOpacity={0.2}>
-                  <View className="flex-row items-center px-2.5 py-1.5">
-                    <Ionicons name="time-outline" size={12} color="#38BDF8" />
-                    <Text className="ml-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                <GlassContainer
+                  radius={13}
+                  intensity={42}
+                  borderOpacity={0.2 + secretCharge * 0.015}
+                >
+                  <Pressable
+                    onPress={handleClockTap}
+                    className="flex-row items-center px-2.5 py-1.5"
+                  >
+                    <Ionicons
+                      name="time-outline"
+                      size={12}
+                      color={secretCharge >= 4 ? "#7DD3FC" : "#38BDF8"}
+                    />
+                    <Text
+                      className={`ml-1 text-[11px] font-semibold ${
+                        secretCharge >= 4
+                          ? "text-sky-500 dark:text-sky-300"
+                          : "text-slate-600 dark:text-slate-300"
+                      }`}
+                    >
                       {formatClock(now)}
                     </Text>
-                  </View>
+                  </Pressable>
                 </GlassContainer>
               </View>
             </View>
@@ -423,28 +495,34 @@ export function CourseScheduleScreen({
                   ) : (
                     <View className="gap-y-2">
                       {dayCourses.map((course, i) => (
-                        <CourseCard
+                        <GravityCard
                           key={course.id}
-                          course={course}
-                          periods={schedule.periods}
+                          token={gravityToken}
                           index={i}
-                          conflict={conflicts.has(course.id)}
-                          // 仅当浏览的就是「本周 + 今天」时才按真实时钟判定进行中，
-                          // 避免翻看其他周/其他天时误标多门「进行中」
-                          active={
-                            activeWeek === dateInfo.weekIndex &&
-                            weekday === dateInfo.weekday &&
-                            isCourseActive(
-                              course,
-                              schedule.periods,
-                              dateInfo.weekIndex,
-                              dateInfo.weekday,
-                              now,
-                            )
-                          }
-                          onPress={(c) => openEdit(c)}
-                          onLongPress={(c) => openEdit(c)}
-                        />
+                          lift={liftDistance}
+                        >
+                          <CourseCard
+                            course={course}
+                            periods={schedule.periods}
+                            index={i}
+                            conflict={conflicts.has(course.id)}
+                            // 仅当浏览的就是「本周 + 今天」时才按真实时钟判定进行中，
+                            // 避免翻看其他周/其他天时误标多门「进行中」
+                            active={
+                              activeWeek === dateInfo.weekIndex &&
+                              weekday === dateInfo.weekday &&
+                              isCourseActive(
+                                course,
+                                schedule.periods,
+                                dateInfo.weekIndex,
+                                dateInfo.weekday,
+                                now,
+                              )
+                            }
+                            onPress={(c) => openEdit(c)}
+                            onLongPress={(c) => openEdit(c)}
+                          />
+                        </GravityCard>
                       ))}
 
                       {/* 空闲时段提示 */}
@@ -482,6 +560,9 @@ export function CourseScheduleScreen({
           <ActionBar items={actions} />
         </View>
       </Backdrop>
+
+      {/* ---------- 隐藏的失重时刻 ---------- */}
+      {gravityOff ? <GravityBadge key={gravityToken} /> : null}
 
       {/* ---------- 课表快捷切换 ---------- */}
       <Modal
@@ -588,6 +669,18 @@ export function CourseScheduleScreen({
           setEditing(undefined);
         }}
       />
+
+      {/* ---------- 隐藏的夜空 ---------- */}
+      {nightOpen ? (
+        <NightSky
+          onClose={() => setNightOpen(false)}
+          onEnterFarm={() => {
+            setNightOpen(false);
+            onFarm?.();
+          }}
+          courseNames={schedule.courses.map((c) => c.name)}
+        />
+      ) : null}
     </View>
   );
 }

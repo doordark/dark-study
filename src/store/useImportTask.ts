@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import type { GradeRecord, Period, Schedule } from "@/types";
+import type { GradeDraft, Period, Schedule } from "@/types";
 
 export type TaskKind = "schedule" | "periods" | "grades";
 export type TaskStatus = "idle" | "analyzing" | "done" | "error";
@@ -8,7 +8,7 @@ export type TaskStatus = "idle" | "analyzing" | "done" | "error";
 export type TaskResult =
   | { type: "schedule"; schedule: Schedule }
   | { type: "periods"; periods: Period[] }
-  | { type: "grades"; grades: Omit<GradeRecord, "id">[] }
+  | { type: "grades"; grades: GradeDraft[]; yearId?: string }
   | { type: "count"; count: number };
 
 export interface ImportTaskState {
@@ -72,7 +72,7 @@ export const useImportTask = create<ImportTaskState>((set, get) => ({
       seq: s.seq + 1,
       label: KIND_LABEL[kind],
       sourceLabel,
-      phase: `${sourceLabel}已导入，正在准备分析…`,
+      phase: `${sourceLabel}已导入，正在准备分析awa…`,
       progress: 8,
       expanded: true,
       result: null,
@@ -92,7 +92,7 @@ export const useImportTask = create<ImportTaskState>((set, get) => ({
           : next < 70
             ? s.kind === "grades"
               ? "正在提取课程、学分与成绩…"
-              : "AI 正在解析画面内容…"
+              : "大肥鱼工作ing…"
             : s.kind === "grades"
               ? "正在整理成绩数据…"
               : "正在整理结构化数据…";
@@ -109,7 +109,7 @@ export const useImportTask = create<ImportTaskState>((set, get) => ({
       result,
       message,
       progress: 100,
-      phase: "分析完成",
+      phase: "(o゜▽゜)o☆[BINGO!] 分析完成",
       expanded: true,
     });
   },
@@ -119,7 +119,7 @@ export const useImportTask = create<ImportTaskState>((set, get) => ({
     set({
       status: "error",
       message,
-      phase: "分析失败",
+      phase: "啊偶QAQ分析失败",
       expanded: true,
     });
   },
