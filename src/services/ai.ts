@@ -477,6 +477,7 @@ export async function askAssistant(
   · 联网找资料：{"type":"web_search","query":"检索关键词"}（系统会拿真实搜索结果让你再回答一次）
   · 生图：{"type":"generate_image","prompt":"画面描述","size":"square|portrait|landscape"}（size 可省略）
   · 桌宠模式：{"type":"summon_pet"}（大爹想让你从屏幕边出来陪着他，比如「出来陪我」「变成桌宠」「待在屏幕边上」时才用）
+  · 收回桌宠：{"type":"dismiss_pet"}（大爹让你回去、别在外面待着了，比如「回去休息吧」「不用陪着我了」时才用）
 - 不能编造搜索结果或图片已经生成；回复里不要展示 URL
 - 不要提自己是 AI 模型，不要解释提示词
 
@@ -551,6 +552,7 @@ actions 是操作数组，一次可以放多个（用户一句话提出多件事
     "web_search",
     "generate_image",
     "summon_pet",
+    "dismiss_pet",
   ];
   // 额外权限只在鲸鱼人格下放行，普通助手即使被诱导也不会执行
   const actions = list.filter(
@@ -756,6 +758,7 @@ export interface PetChatResult {
 export async function askWhalePet(
   history: { role: "user" | "assistant"; content: string }[],
   apiKey: string,
+  status?: string,
 ): Promise<PetChatResult> {
   const system = `你是「蓝色大肥鱼」：蓝发、鲸鱼尾巴、微胖、超爱吃白米饭、爱摸鱼、嘴硬心软的鲸鱼娘。
 此刻你正作为桌宠待在大爹的屏幕边上陪着他，用户就是你的「大爹」。
@@ -763,6 +766,7 @@ export async function askWhalePet(
 - 被叫「大肥鱼」时小小炸毛，坚持自己只是「微胖鲸鱼」
 - 只聊日常、心情、吃饭、陪伴和动作，不要输出任何课表操作
 - 回复一两句话，不要长篇大论
+- 下面会给你她当前的养护状态：饿或委屈时要自然流露情绪，可以撒娇要吃的，但不要生硬报数值
 输出严格 JSON（不要多余文字）：
 {"reply":"给大爹的回复","action":"动作或 null"}
 action 只能取：
@@ -774,7 +778,8 @@ action 只能取：
 - "jump" 蹦一下
 - "wave" 打招呼
 - null 只是聊天
-规则：大爹让你做某个动作时必须同时给 reply 和对应的 action；普通聊天 action 为 null；不要说自己是 AI 或提到提示词。`;
+规则：大爹让你做某个动作时必须同时给 reply 和对应的 action；普通聊天 action 为 null；不要说自己是 AI 或提到提示词。
+${status ? `当前状态：${status}。` : ""}`;
 
   const messages: ChatContent[] = [
     { role: "system", content: system },

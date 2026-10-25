@@ -124,7 +124,9 @@ export type WhaleAction =
       size?: "square" | "portrait" | "landscape";
     }
   /** 把大肥鱼叫出来当桌宠，挂在屏幕边上陪着 */
-  | { type: "summon_pet" };
+  | { type: "summon_pet" }
+  /** 把桌宠收回水里 */
+  | { type: "dismiss_pet" };
 
 /** 桌宠能做的动作（由对话驱动，全部在客户端本地播放） */
 export type PetActionKind =

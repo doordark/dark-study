@@ -43,6 +43,7 @@ import {
 import { speakWhale, stopWhaleVoice } from "@/services/whaleVoice";
 import { useSettings } from "@/store/useSettings";
 import { useWhalePet } from "@/store/useWhalePet";
+import { useWhaleVoice } from "@/store/useWhaleVoice";
 import { useActiveSchedule, useStore } from "@/store/useStore";
 import type {
   AssistantAction,
@@ -98,8 +99,6 @@ function pickStickerForReply(reply: string): WhaleStickerId | null {
 
 /** 作者 door 的召唤口令（可被识别为开启 / 收回人格） */
 const WHALE_KEY = "dark-study-whale-persona";
-/** 大肥鱼语音开关：默认开启，记住大爹上次的选择 */
-const VOICE_KEY = "dark-study-whale-voice";
 /** 除自定义口令外始终有效的通用召唤词 */
 const SUMMON_ALIASES = ["召唤大肥鱼", "大肥鱼出来", "肥鱼出来"];
 const DISMISS_ALIASES = ["大爹走了", "退下吧", "变回课表助手"];
@@ -142,7 +141,9 @@ export function AssistantScreen() {
   const [kbHeight, setKbHeight] = useState(0);
   const scrollRef = useRef<ScrollViewInstance>(null);
   const [whale, setWhale] = useState(false);
-  const [voiceOn, setVoiceOn] = useState(true);
+  const voiceOn = useWhaleVoice((s) => s.on);
+  const toggleVoiceStore = useWhaleVoice((s) => s.toggle);
+  const hydrateVoice = useWhaleVoice((s) => s.hydrate);
   const spokenId = useRef<string | null>(null);
   const [summonFx, setSummonFx] = useState(false);
   const [leaveFx, setLeaveFx] = useState(false);
@@ -153,6 +154,7 @@ export function AssistantScreen() {
   const reactionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stickerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showPet = useWhalePet((s) => s.show);
+  const hidePet = useWhalePet((s) => s.hide);
 
   // 本地精确口令只作为「零延迟快捷通道」：其余任何说法都交给模型按语义识别
   const isSummonCmd = (text: string) => {
@@ -175,18 +177,10 @@ export function AssistantScreen() {
     };
   }, []);
 
-  // 语音开关同样是本地记忆，默认开着
+  // 语音开关与桌宠共用同一份本地记忆，默认开着
   useEffect(() => {
-    let alive = true;
-    AsyncStorage.getItem(VOICE_KEY)
-      .then((raw) => {
-        if (alive && raw === "0") setVoiceOn(false);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, []);
+    hydrateVoice();
+  }, [hydrateVoice]);
 
   /** 大肥鱼开口：每条新的助手消息只读一次，静音或人格不在时默默跳过 */
   useEffect(() => {
@@ -304,11 +298,10 @@ export function AssistantScreen() {
     leaveWhale("呜……那我先变回正经的课表助手。大爹下次记得再叫我呀。");
   };
 
-  /** 聊天框最上方的声音按钮：静音 / 开启鱼语 */
+  /** 聊天框最上方的声音按钮：静音 / 开启鱼语（桌宠也一起静音） */
   const toggleVoice = () => {
     const next = !voiceOn;
-    setVoiceOn(next);
-    AsyncStorage.setItem(VOICE_KEY, next ? "1" : "0").catch(() => {});
+    toggleVoiceStore();
     if (next) speakWhale("声音开好啦，大爹。");
     else stopWhaleVoice();
   };
@@ -518,6 +511,13 @@ export function AssistantScreen() {
           ),
         ]);
         pushSticker("excited");
+      } else if (action.type === "dismiss_pet") {
+        hidePet();
+        setMessages((prev) => [
+          ...prev,
+          localMsg("（尾巴一摆，乖乖缩回水里）那我先回去啦，大爹想我就再叫一声。"),
+        ]);
+        pushSticker("calm");
       }
     }
     requestAnimationFrame(() =>

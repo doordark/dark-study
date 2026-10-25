@@ -21,6 +21,7 @@ import Animated, {
   cancelAnimation,
   runOnJS,
   useAnimatedStyle,
+  useFrameCallback,
   useSharedValue,
   withRepeat,
   withSequence,
@@ -31,15 +32,25 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColorScheme } from "nativewind";
 
 import { ChatInputBar } from "@/components/ChatInputBar";
+import {
+  WHALE_STICKERS,
+  matchSticker,
+  randomSticker,
+} from "@/constants/whaleStickers";
+import type { WhaleStickerId } from "@/constants/whaleStickers";
 import { askWhalePet } from "@/services/ai";
+import { speakWhale, stopWhaleVoice } from "@/services/whaleVoice";
 import { useSettings } from "@/store/useSettings";
 import { useWhalePet } from "@/store/useWhalePet";
+import type { WhaleCare } from "@/store/useWhalePet";
+import { useWhaleVoice } from "@/store/useWhaleVoice";
 import type { PetActionKind } from "@/types";
 import { uid } from "@/utils/id";
 
-/* eslint-disable react-hooks/immutability --
-   Reanimated shared value（x/y/scale/bob/turn/hop）本质是跨渲染、跨线程可变的容器，
-   手势回调与 effect 对其赋值是官方标准用法，React 编译器的不可变假设不适用 */
+/* eslint-disable react-hooks/immutability, react-hooks/refs --
+   Reanimated shared value（坐标 / 速度 / 挤压 / 朝向）本质是跨渲染、跨线程可变的容器，
+   手势回调、帧回调与 effect 对其赋值是官方标准用法；手势回调只在事件触发时执行，
+   不会在渲染期读 ref。React 编译器的不可变/纯函数假设不适用于这些场景 */
 
 type PetFrame = "idle" | "happy" | "sleep" | "dance" | "eat" | "study";
 
@@ -54,9 +65,20 @@ const SPRITES: Record<PetFrame, ImageSourcePropType> = {
 };
 
 const SIZE = 84;
-const RATIO = 1.37;
-const EDGE = 8;
-const PANEL_W = 246;
+/** 立绘高宽比（素材是竖构图） */
+const H = SIZE * 1.37;
+const EDGE = 10;
+/** 底部操作栏预留：桌宠落地时停在胶囊栏上方，不挡按钮 */
+const FLOOR_RESERVE = 72;
+const PANEL_W = 264;
+const PANEL_H = 336;
+
+const IDLE_DELAY_MIN = 9_000;
+const IDLE_DELAY_MAX = 17_000;
+const SLEEP_AFTER = 86_000;
+/** 甩出去的判定门槛（px/s），低于它就是轻轻放下 */
+const THROW_DEAD_ZONE = 500;
+const MAX_THROW_SPEED = 3600;
 
 /** 被戳的时候随口说的话 */
 const POKE_LINES = [
@@ -69,12 +91,34 @@ const POKE_LINES = [
   "你学习，我看着你，不吵。",
 ];
 
+/** 饿的时候的抱怨 */
+const HUNGRY_LINES = [
+  "肚子空空的…大爹有没有白饭？",
+  "呜，我好像饿扁了一点点…",
+  "再不吃东西，尾巴都没力气摆了。",
+];
+
+/** 长时间没人理她 */
+const LONELY_LINES = [
+  "……大爹是不是把我忘了。",
+  "我自己在这儿游了好久啦。",
+  "没关系，你忙你的，我不吵…",
+];
+
+/** 好感很高时才会说 */
+const CLOSE_LINES = [
+  "大爹在的地方，我就想待着。",
+  "今天也一起加油吧，我陪着你。",
+  "嘿嘿，能出来陪你真好。",
+];
+
 /** 没人理的时候自己嘀咕 */
 const AMBIENT_LINES = [
   "大爹，写累了就歇会儿。",
   "我不占地方，就在边上待着。",
   "这屏幕好亮啊，眼睛会疼的。",
   "要不要摸一下我的头？",
+  "鲸鱼也是需要休息的哦。",
 ];
 
 /** 各动作随口说的话 */
@@ -88,8 +132,8 @@ const ACTION_LINES: Record<PetActionKind, string> = {
   wave: "大爹～我在这儿呢",
 };
 
-/** 三下点开小对话框后的快捷动作 */
-const PET_CHIPS = ["跳个舞", "转个圈", "吃团子", "陪我学习"];
+/** 小对话框里的快捷动作 */
+const PET_CHIPS = ["跳个舞", "转个圈", "吃团子", "陪我学习", "摸摸头"];
 
 /** 本地动作口令：精确说法零延迟直接播，不吃 API */
 const LOCAL_ACTIONS: { re: RegExp; action: PetActionKind; reply: string }[] = [
@@ -110,30 +154,67 @@ const LOCAL_ACTIONS: { re: RegExp; action: PetActionKind; reply: string }[] = [
   { re: /打招呼|招手|^hi$|^hello$/i, action: "wave", reply: "大爹～我在这儿呢" },
 ];
 
-const SLEEP_AFTER = 26_000;
-const AMBIENT_EVERY = 24_000;
-
 interface PetMsg {
   id: string;
   role: "user" | "assistant";
   text: string;
 }
 
-/** 随机挑一句，抽到组件外避免被 React 编译器误判为渲染期副作用 */
-function randomLine(lines: string[]): string {
-  return lines[Math.floor(Math.random() * lines.length)];
+const petMsg = (role: PetMsg["role"], text: string): PetMsg => ({
+  id: uid(),
+  role,
+  text,
+});
+
+/** 组件外的纯工具：随机取值 / 分页 / 夹取 */
+const pick = <T,>(pool: readonly T[]): T =>
+  pool[Math.floor(Math.random() * pool.length)];
+
+/** 随机与时间抽到组件外，避免被 React 编译器误判为渲染期副作用 */
+const rand = () => Math.random();
+const randBetween = (min: number, max: number) =>
+  min + Math.random() * (max - min);
+const nowMs = () => Date.now();
+
+const clampNumber = (v: number, min: number, max: number) =>
+  Math.min(Math.max(v, min), max);
+
+/** 气泡太长就分页，一页一页说完，避免糊成一大坨 */
+function splitPages(text: string): string[] {
+  const clean = text.trim();
+  if (clean.length <= 34) return [clean];
+  const out: string[] = [];
+  for (let i = 0; i < clean.length; i += 30) out.push(clean.slice(i, i + 30));
+  return out;
 }
 
-/** 当前时间戳，同上抽到组件外 */
-const tapNow = () => Date.now();
+function careHint(care: WhaleCare): string {
+  const lines = [
+    `饱食度 ${Math.round(care.fullness)}/100`,
+    `心情 ${Math.round(care.mood)}/100`,
+    `好感 ${Math.round(care.bond)}/100`,
+  ];
+  if (care.fullness < 25) lines.push("她现在很饿，说话会没力气");
+  if (care.mood < 30) lines.push("她有点委屈，因为很久没人陪了");
+  return lines.join("，");
+}
 
 /**
- * 大肥鱼桌宠：常驻在应用最上层的可拖拽小鲸鱼。
- * 拖到哪停在哪（松手自动吸到最近屏幕边），轻点有反应，连点三下开小对话框，
- * 长按收回。对话里可以让她跳舞、转圈、吃团子、陪你学习。
+ * 大肥鱼桌宠：常驻应用最上层的可拖拽小鲸鱼。
+ *
+ * 交互（参考 dsh-pet / dsh-pet-indesktop 的手感重做）：
+ * - 拖拽跟手，甩出去会按重力飞行、撞墙反弹、落地压扁（Q 弹）
+ * - 轻轻放下就浮在原地；没人陪时会自己沿屏幕慢慢游动、东张西望
+ * - 点一下 Q 弹回应，连点三下打开小对话框，长按收回
+ * - 面板里能看到饱食 / 心情 / 好感，可以喂饭、摸头
+ * - 回复带情绪表情包，开了语音就会念出来
  */
 export function WhalePet() {
   const visible = useWhalePet((s) => s.visible);
+  const hydrateVoice = useWhaleVoice((s) => s.hydrate);
+  useEffect(() => {
+    hydrateVoice();
+  }, [hydrateVoice]);
   if (!visible) return null;
   // 每次被叫出来都重新挂载：气泡、表情与睡眠计时自然重置
   return <WhalePetLayer />;
@@ -141,27 +222,49 @@ export function WhalePet() {
 
 function WhalePetLayer() {
   const hide = useWhalePet((s) => s.hide);
+  const care = useWhalePet((s) => s.care);
+  const feedPet = useWhalePet((s) => s.feed);
+  const patPet = useWhalePet((s) => s.pat);
+  const tickPet = useWhalePet((s) => s.tick);
   const apiKey = useSettings((s) => s.apiKey);
+  const voiceOn = useWhaleVoice((s) => s.on);
+  const toggleVoice = useWhaleVoice((s) => s.toggle);
+
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme !== "light";
 
-  const x = useSharedValue(width - SIZE - EDGE);
-  const y = useSharedValue(height * 0.6);
-  const startX = useSharedValue(0);
-  const startY = useSharedValue(0);
-  const scale = useSharedValue(0.4);
+  // 位置 / 速度 / 状态机：0 待机，1 拖拽中，2 飞行中
+  const boxX = useSharedValue(width - SIZE - EDGE);
+  const boxY = useSharedValue(height * 0.6);
+  const velocityX = useSharedValue(0);
+  const velocityY = useSharedValue(0);
+  const phase = useSharedValue(0);
+  const face = useSharedValue(1);
+  const sqX = useSharedValue(1);
+  const sqY = useSharedValue(1);
+  const tilt = useSharedValue(0);
   const bob = useSharedValue(0);
-  /** 动作：左右扭动的角度 / 蹦跳的位移 / 转圈角度 */
-  const turn = useSharedValue(0);
-  const hop = useSharedValue(0);
+  const lift = useSharedValue(0);
+  const scale = useSharedValue(0.5);
+  /** 本次抛掷是否已经触发过落地反馈 */
+  const landed = useSharedValue(0);
+  const dragStartX = useSharedValue(0);
+  const dragStartY = useSharedValue(0);
+  // 活动边界（跟随屏幕尺寸 / 安全区更新）
+  const minX = useSharedValue(EDGE);
+  const maxX = useSharedValue(width - SIZE - EDGE);
+  const minY = useSharedValue(insets.top + 48);
+  const maxY = useSharedValue(height - H - insets.bottom - FLOOR_RESERVE);
 
   const [frame, setFrame] = useState<PetFrame>("idle");
   const [bubble, setBubble] = useState<string | null>(
-    "大爹，我出来啦～拖我到哪儿都行，戳我三下能说话",
+    "大爹，我出来啦～拖我、戳我都行，点三下能说话",
   );
+  const [bubbleBelow, setBubbleBelow] = useState(false);
   const [nearRight, setNearRight] = useState(true);
+  const [sticker, setSticker] = useState<WhaleStickerId | null>(null);
 
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMsgs, setChatMsgs] = useState<PetMsg[]>([]);
@@ -170,41 +273,121 @@ function WhalePetLayer() {
   const [panelPos, setPanelPos] = useState({ left: 12, top: 120 });
   const [kbHeight, setKbHeight] = useState(0);
 
+  const chatOpenRef = useRef(false);
   const bubbleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stickerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const frameTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sleepTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const actionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chatRef = useRef<ScrollViewInstance>(null);
   const taps = useRef({ count: 0, at: 0 });
+  const lastPat = useRef(0);
+  const lastSpoke = useRef(0);
+  const bubblePages = useRef<string[]>([]);
+  const bubblePage = useRef(0);
 
-  const showBubble = (text: string, ms = 2600) => {
+  /** 只在开着语音时开口，且两次朗读之间留点空隙 */
+  const say = (text: string) => {
+    if (!useWhaleVoice.getState().on) return;
+    const now = nowMs();
+    if (now - lastSpoke.current < 1800) return;
+    lastSpoke.current = now;
+    speakWhale(text);
+  };
+
+  const clearBubble = () => {
     if (bubbleTimer.current) clearTimeout(bubbleTimer.current);
-    setBubble(text);
-    bubbleTimer.current = setTimeout(() => setBubble(null), ms);
+    bubbleTimer.current = null;
+    bubblePages.current = [];
+    bubblePage.current = 0;
   };
 
-  /** 重新计时：一段时间没人碰就打瞌睡 */
-  const armSleep = () => {
+  /** 冒一句话：自动分页、按当前位置决定朝左还是朝右、贴顶时翻到下方 */
+  const showBubble = (text: string, ms = 2800) => {
+    clearBubble();
+    bubblePages.current = splitPages(text);
+    bubblePage.current = 0;
+    setBubble(bubblePages.current[0] ?? null);
+    setNearRight(boxX.value > width / 2);
+    setBubbleBelow(boxY.value < insets.top + 96);
+    const next = () => {
+      bubblePage.current += 1;
+      if (bubblePage.current >= bubblePages.current.length) {
+        setBubble(null);
+        return;
+      }
+      setBubble(bubblePages.current[bubblePage.current]);
+      bubbleTimer.current = setTimeout(next, ms);
+    };
+    bubbleTimer.current = setTimeout(next, ms);
+  };
+
+  const showSticker = (id: WhaleStickerId, ms = 2600) => {
+    if (stickerTimer.current) clearTimeout(stickerTimer.current);
+    setSticker(id);
+    stickerTimer.current = setTimeout(() => setSticker(null), ms);
+  };
+
+  /** 被摸 / 被戳的 Q 弹：高度压下去，宽度横向摊开 */
+  const squash = (depth = 0.82) => {
+    sqY.value = withSequence(
+      withTiming(depth, { duration: 90, easing: Easing.out(Easing.quad) }),
+      withSpring(1, { damping: 9, stiffness: 170, mass: 0.7 }),
+    );
+    sqX.value = withSequence(
+      withTiming(1 + (1 - depth) * 0.55, {
+        duration: 90,
+        easing: Easing.out(Easing.quad),
+      }),
+      withSpring(1, { damping: 9, stiffness: 170, mass: 0.7 }),
+    );
+  };
+
+  const armIdle = () => {
+    if (idleTimer.current) clearTimeout(idleTimer.current);
     if (sleepTimer.current) clearTimeout(sleepTimer.current);
-    setFrame((f) => (f === "sleep" ? "idle" : f));
-    sleepTimer.current = setTimeout(() => setFrame("sleep"), SLEEP_AFTER);
+    idleTimer.current = setTimeout(
+      runIdleTick,
+      IDLE_DELAY_MIN + randBetween(0, IDLE_DELAY_MAX - IDLE_DELAY_MIN),
+    );
+    sleepTimer.current = setTimeout(() => {
+      if (chatOpenRef.current) return;
+      if (phase.value !== 0) return;
+      setFrame("sleep");
+    }, SLEEP_AFTER);
   };
 
-  // 登场：从右下角弹出来；开场招呼用初始 state，这里只负责按时收起
-  useEffect(() => {
-    x.value = width - SIZE - EDGE;
-    y.value = height * 0.6;
-    scale.value = 0.4;
-    scale.value = withSpring(1, { damping: 14, stiffness: 190 });
-    bubbleTimer.current = setTimeout(() => setBubble(null), 4200);
-    sleepTimer.current = setTimeout(() => setFrame("sleep"), SLEEP_AFTER);
-  }, [width, height, x, y, scale]);
+  const wake = () => {
+    setFrame((f) => (f === "sleep" ? "idle" : f));
+    armIdle();
+  };
 
-  // 待机呼吸
+  // 登场：从右下角弹出来，开场招呼只显示一小会儿
+  useEffect(() => {
+    const lo = insets.top + 48;
+    const hi = Math.max(lo, height - H - insets.bottom - FLOOR_RESERVE);
+    minX.value = EDGE;
+    maxX.value = Math.max(EDGE, width - SIZE - EDGE);
+    minY.value = lo;
+    maxY.value = hi;
+    boxX.value = maxX.value;
+    boxY.value = Math.min(Math.max(height * 0.62, lo), hi);
+    scale.value = withSpring(1, { damping: 14, stiffness: 190 });
+    bubbleTimer.current = setTimeout(() => setBubble(null), 4600);
+    armIdle();
+    return () => {
+      if (bubbleTimer.current) clearTimeout(bubbleTimer.current);
+      if (idleTimer.current) clearTimeout(idleTimer.current);
+      if (sleepTimer.current) clearTimeout(sleepTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [width, height, insets.top, insets.bottom]);
+
+  // 待机呼吸：鲸鱼浮在空气里轻轻起伏
   useEffect(() => {
     bob.value = withRepeat(
-      withTiming(1, { duration: 1800, easing: Easing.inOut(Easing.sin) }),
+      withTiming(1, { duration: 1900, easing: Easing.inOut(Easing.sin) }),
       -1,
       true,
     );
@@ -214,7 +397,13 @@ function WhalePetLayer() {
     };
   }, [bob]);
 
-  // 键盘高度：打开对话框时用，避免输入框被键盘盖住
+  // 养护心跳：每分钟按真实时间结算一次（应用开着也不会忘记饿）
+  useEffect(() => {
+    const timer = setInterval(() => tickPet(), 60_000);
+    return () => clearInterval(timer);
+  }, [tickPet]);
+
+  // 键盘高度：打开对话框时避免输入框被盖住
   useEffect(() => {
     const showEvt =
       Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
@@ -230,112 +419,122 @@ function WhalePetLayer() {
     };
   }, []);
 
-  // 自己嘀咕 + 组件卸载时清理全部定时器
-  useEffect(() => {
-    const ambient = setInterval(() => {
-      setBubble((cur) => {
-        if (cur) return cur;
-        return AMBIENT_LINES[Math.floor(Math.random() * AMBIENT_LINES.length)];
-      });
-    }, AMBIENT_EVERY);
-    return () => {
-      clearInterval(ambient);
+  // 卸载时把定时器、动画和声音全部收干净
+  useEffect(
+    () => () => {
+      stopWhaleVoice();
       if (bubbleTimer.current) clearTimeout(bubbleTimer.current);
+      if (stickerTimer.current) clearTimeout(stickerTimer.current);
       if (frameTimer.current) clearTimeout(frameTimer.current);
+      if (idleTimer.current) clearTimeout(idleTimer.current);
       if (sleepTimer.current) clearTimeout(sleepTimer.current);
       if (leaveTimer.current) clearTimeout(leaveTimer.current);
-      if (actionTimer.current) clearTimeout(actionTimer.current);
-    };
-  }, []);
+      cancelAnimation(tilt);
+      cancelAnimation(lift);
+      cancelAnimation(sqX);
+      cancelAnimation(sqY);
+    },
+    [tilt, lift, sqX, sqY],
+  );
 
-  const pan = Gesture.Pan()
-    .enabled(!chatOpen)
-    .minDistance(5)
-    .onStart(() => {
-      startX.value = x.value;
-      startY.value = y.value;
-    })
-    .onUpdate((e) => {
-      const minY = insets.top + 56;
-      const maxY = height - SIZE * RATIO - insets.bottom - 18;
-      x.value = Math.min(
-        Math.max(startX.value + e.translationX, EDGE),
-        width - SIZE - EDGE,
-      );
-      y.value = Math.min(Math.max(startY.value + e.translationY, minY), maxY);
-    })
-    .onEnd(() => {
-      const right = x.value > width / 2;
-      x.value = withSpring(right ? width - SIZE - EDGE : EDGE, {
-        damping: 26,
-        stiffness: 240,
-      });
-      runOnJS(setNearRight)(right);
-    });
+  /* ------------------------------------------------------------------ */
+  /*  动作与闲逛                                                         */
+  /* ------------------------------------------------------------------ */
 
-  const style = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: x.value },
-      { translateY: y.value },
-      { scale: scale.value },
-    ],
-  }));
+  const finishWalk = () => {
+    cancelAnimation(tilt);
+    tilt.value = withTiming(0, { duration: 180 });
+    armIdle();
+  };
 
-  const bobStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateY: bob.value * 3 + hop.value },
-      { rotate: `${turn.value}deg` },
-    ],
-  }));
+  /** 沿屏幕慢慢游到目标位置（鲸鱼不需要腿，靠尾巴摆） */
+  const walkTo = (target: number) => {
+    if (phase.value !== 0) return;
+    const from = boxX.value;
+    if (Math.abs(target - from) < 24) return;
+    face.value = target > from ? 1 : -1;
+    cancelAnimation(tilt);
+    tilt.value = withRepeat(
+      withTiming(face.value * 2.4, {
+        duration: 330,
+        easing: Easing.inOut(Easing.sin),
+      }),
+      -1,
+      true,
+    );
+    const dist = Math.abs(target - from);
+    boxX.value = withTiming(
+      target,
+      {
+        duration: Math.min(4200, Math.max(720, (dist / 66) * 1000)),
+        easing: Easing.inOut(Easing.quad),
+      },
+      (finished) => {
+        if (finished) runOnJS(finishWalk)();
+      },
+    );
+  };
+
+  const walkSomewhere = () => {
+    if (phase.value !== 0) return;
+    const dir = rand() < 0.5 ? -1 : 1;
+    const dist = 60 + randBetween(0, 150);
+    walkTo(clampNumber(boxX.value + dir * dist, minX.value, maxX.value));
+  };
 
   /** 收掉正在播放的动作 */
   const stopAction = () => {
-    if (actionTimer.current) clearTimeout(actionTimer.current);
-    cancelAnimation(turn);
-    cancelAnimation(hop);
-    turn.value = 0;
-    hop.value = 0;
+    if (frameTimer.current) clearTimeout(frameTimer.current);
+    frameTimer.current = null;
+    cancelAnimation(tilt);
+    cancelAnimation(lift);
+    tilt.value = 0;
+    lift.value = 0;
   };
 
-  /** 播放一个动作，结束后回到待机 */
-  const playAction = (kind: PetActionKind) => {
+  /** 播放一个动作，结束后回到待机并重新计时 */
+  const playAction = (kind: PetActionKind, silent = false) => {
+    if (phase.value === 2) return;
     stopAction();
+    wake();
     if (sleepTimer.current) clearTimeout(sleepTimer.current);
-    if (frameTimer.current) clearTimeout(frameTimer.current);
 
     const settle = (ms: number) => {
-      actionTimer.current = setTimeout(() => {
+      frameTimer.current = setTimeout(() => {
         setFrame("idle");
-        turn.value = 0;
-        hop.value = 0;
-        armSleep();
+        cancelAnimation(tilt);
+        tilt.value = 0;
+        lift.value = 0;
+        armIdle();
       }, ms);
     };
 
     switch (kind) {
       case "dance":
         setFrame("dance");
-        turn.value = withRepeat(
+        tilt.value = withRepeat(
           withTiming(9, { duration: 240, easing: Easing.inOut(Easing.quad) }),
           -1,
           true,
         );
-        hop.value = withRepeat(withTiming(-5, { duration: 240 }), -1, true);
+        lift.value = withRepeat(withTiming(-6, { duration: 240 }), -1, true);
         settle(3200);
         break;
       case "spin":
         setFrame("dance");
-        turn.value = withTiming(
+        tilt.value = withTiming(
           720,
           { duration: 1100, easing: Easing.inOut(Easing.cubic) },
           () => {
-            turn.value = 0;
+            tilt.value = 0;
           },
         );
         settle(1250);
         break;
       case "eat":
         setFrame("eat");
+        feedPet();
+        showSticker("cozy", 2800);
         settle(3200);
         break;
       case "study":
@@ -348,61 +547,287 @@ function WhalePetLayer() {
         break;
       case "jump":
         setFrame("happy");
-        hop.value = withSequence(
-          withTiming(-14, { duration: 170, easing: Easing.out(Easing.quad) }),
+        lift.value = withSequence(
+          withTiming(-18, { duration: 170, easing: Easing.out(Easing.quad) }),
           withTiming(0, { duration: 200, easing: Easing.in(Easing.quad) }),
-          withTiming(-10, { duration: 150 }),
+          withTiming(-12, { duration: 150 }),
           withTiming(0, { duration: 180 }),
         );
         settle(900);
         break;
       case "wave":
         setFrame("happy");
-        turn.value = withRepeat(withTiming(7, { duration: 170 }), 5, true);
+        tilt.value = withRepeat(withTiming(7, { duration: 170 }), 5, true);
         settle(1100);
         break;
     }
-    showBubble(ACTION_LINES[kind], 2600);
+    showBubble(ACTION_LINES[kind], 2200);
+    if (!silent) say(ACTION_LINES[kind]);
   };
 
-  const poke = () => {
+  /** 空闲时的自娱自乐：饿 / 孤独会优先抱怨，其余时间游动、小动作、自语 */
+  const runIdleTick = () => {
+    // 正在对话、被拖着/飞着、或动作还没播完时，先不安排新的自娱自乐
+    if (chatOpenRef.current || phase.value !== 0 || frameTimer.current) {
+      armIdle();
+      return;
+    }
+    const c = useWhalePet.getState().care;
+    const roll = rand();
+    setFrame((f) => (f === "sleep" ? "idle" : f));
+
+    if (c.fullness < 25 && roll < 0.55) {
+      showBubble(pick(HUNGRY_LINES));
+      showSticker("plead");
+    } else if (c.mood < 32 && roll < 0.55) {
+      showBubble(pick(LONELY_LINES));
+      showSticker("sad");
+    } else if (roll < 0.3) {
+      walkSomewhere();
+    } else if (roll < 0.48) {
+      playAction(pick(["jump", "wave", "spin"] as const), true);
+    } else if (roll < 0.66) {
+      showBubble(
+        c.bond > 78 && rand() < 0.5
+          ? pick(CLOSE_LINES)
+          : pick(AMBIENT_LINES),
+      );
+      if (rand() < 0.4) showSticker(randomSticker());
+    }
+    armIdle();
+  };
+
+  /* ------------------------------------------------------------------ */
+  /*  抛掷物理（参考 dsh-pet：重力 / 反弹 / 摩擦 / 落地压扁）             */
+  /* ------------------------------------------------------------------ */
+
+  const onFloorHit = (impact: number) => {
+    // 冲击越大压得越狠：300px/s 轻落，1500px/s 重砸
+    const t = clampNumber((impact - 300) / 1200, 0, 1);
+    squash(0.8 - 0.26 * t);
+    if (impact > 1100) {
+      showSticker("shock", 1800);
+      showBubble("呜哇——摔成鱼饼了！", 1800);
+    }
+  };
+
+  const onLandRest = () => {
+    setFrame("idle");
+    landed.value = 0;
+    armIdle();
+  };
+
+  const onThrowStart = () => {
     stopAction();
-    setFrame("happy");
-    scale.value = withSequence(
-      withSpring(1.12, { damping: 26, stiffness: 240 }),
-      withSpring(1, { damping: 26, stiffness: 240 }),
+    wake();
+    landed.value = 0;
+    clearBubble();
+    setBubble(null);
+  };
+
+  const onDragStart = () => {
+    stopAction();
+    wake();
+    cancelAnimation(boxX);
+    cancelAnimation(boxY);
+    lift.value = withTiming(-8, { duration: 120 });
+  };
+
+  const onDragEnd = (thrown: boolean) => {
+    lift.value = withTiming(0, { duration: 200 });
+    if (!thrown) {
+      phase.value = 0;
+      armIdle();
+    }
+  };
+
+  useFrameCallback((info) => {
+    if (phase.value !== 2) return;
+    const dt = Math.min(
+      Math.max((info.timeSincePreviousFrame ?? 16) / 1000, 0.001),
+      0.05,
     );
+    let x = boxX.value;
+    let y = boxY.value;
+    let vx = velocityX.value;
+    let vy = velocityY.value;
+    let floorHit = 0;
+
+    // 一帧位移超过 8px 就拆步，避免高速时跳过落地 / 反弹
+    const travel = Math.hypot(vx, vy) * dt;
+    const steps = Math.min(16, Math.max(1, Math.ceil(travel / 8)));
+    const stepDt = dt / steps;
+
+    for (let i = 0; i < steps; i++) {
+      vy += 1400 * stepDt;
+      x += vx * stepDt;
+      y += vy * stepDt;
+      if (x < minX.value) {
+        x = minX.value;
+        vx = Math.abs(vx) * 0.78;
+      } else if (x > maxX.value) {
+        x = maxX.value;
+        vx = -Math.abs(vx) * 0.78;
+      }
+      if (y < minY.value) {
+        y = minY.value;
+        vy = Math.abs(vy) * 0.78;
+      } else if (y > maxY.value) {
+        floorHit = Math.max(floorHit, Math.abs(vy));
+        y = maxY.value;
+        vx *= Math.max(0, 1 - 2.5 * stepDt);
+        vy = Math.abs(vy) < 40 ? 0 : -Math.abs(vy) * 0.78;
+      }
+    }
+
+    boxX.value = x;
+    boxY.value = y;
+    velocityX.value = vx;
+    velocityY.value = vy;
+    tilt.value = Math.max(-14, Math.min(14, vx * 0.012));
+    if (Math.abs(vx) > 80) face.value = vx > 0 ? 1 : -1;
+
+    if (floorHit > 260 && landed.value === 0) {
+      landed.value = 1;
+      runOnJS(onFloorHit)(floorHit);
+    }
+
+    const atRest =
+      y >= maxY.value - 1 && Math.abs(vy) < 1 && Math.abs(vx) < 15;
+    if (atRest) {
+      phase.value = 0;
+      tilt.value = withTiming(0, { duration: 180 });
+      runOnJS(onLandRest)();
+    }
+  }, true);
+
+  const pan = Gesture.Pan()
+    .enabled(!chatOpen)
+    .minDistance(4)
+    .onStart(() => {
+      phase.value = 1;
+      dragStartX.value = boxX.value;
+      dragStartY.value = boxY.value;
+      cancelAnimation(boxX);
+      cancelAnimation(boxY);
+      runOnJS(onDragStart)();
+    })
+    .onUpdate((e) => {
+      boxX.value = Math.min(
+        Math.max(dragStartX.value + e.translationX, minX.value),
+        maxX.value,
+      );
+      boxY.value = Math.min(
+        Math.max(dragStartY.value + e.translationY, minY.value),
+        maxY.value,
+      );
+    })
+    .onEnd((e) => {
+      const speed = Math.hypot(e.velocityX, e.velocityY);
+      if (speed >= THROW_DEAD_ZONE) {
+        const clamped = MAX_THROW_SPEED * (1 - Math.exp(-speed / MAX_THROW_SPEED));
+        velocityX.value = (e.velocityX / speed) * clamped;
+        velocityY.value = (e.velocityY / speed) * clamped;
+        phase.value = 2;
+        runOnJS(onThrowStart)();
+        runOnJS(onDragEnd)(true);
+      } else {
+        phase.value = 0;
+        runOnJS(onDragEnd)(false);
+      }
+    });
+
+  const wrapperStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: boxX.value },
+      {
+        translateY: boxY.value + (H * (1 - sqY.value)) / 2 - lift.value,
+      },
+      { scale: scale.value },
+      { rotate: `${tilt.value}deg` },
+      { scaleX: face.value * sqX.value },
+      { scaleY: sqY.value },
+    ],
+  }));
+
+  const bobStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateY: bob.value * 3.4 },
+      { rotate: `${(bob.value - 0.5) * 1.6}deg` },
+    ],
+  }));
+
+  /* ------------------------------------------------------------------ */
+  /*  点按 / 对话                                                       */
+  /* ------------------------------------------------------------------ */
+
+  const poke = () => {
+    wake();
+    squash(0.84);
+    lift.value = withSequence(
+      withTiming(-7, { duration: 110, easing: Easing.out(Easing.quad) }),
+      withSpring(0, { damping: 17, stiffness: 220 }),
+    );
+    setFrame("happy");
     if (frameTimer.current) clearTimeout(frameTimer.current);
     frameTimer.current = setTimeout(() => setFrame("idle"), 1500);
-    showBubble(randomLine(POKE_LINES));
-    armSleep();
+
+    // 点一下算摸头：加心情，但短时间内连点不会无限刷
+    if (nowMs() - lastPat.current > 6000) {
+      lastPat.current = nowMs();
+      patPet();
+    }
+
+    const c = useWhalePet.getState().care;
+    const line =
+      c.fullness < 20 && rand() < 0.5
+        ? pick(HUNGRY_LINES)
+        : c.bond > 78 && rand() < 0.4
+          ? pick(CLOSE_LINES)
+          : pick(POKE_LINES);
+    showBubble(line);
+    if (rand() < 0.35) showSticker(matchSticker(line) ?? randomSticker());
+    say(line);
   };
 
   /** 三下点开小对话框，位置贴着桌宠并夹在屏幕内 */
   const openChat = () => {
-    if (chatOpen) return;
-    const px = x.value;
-    const py = y.value;
-    const left = Math.min(
-      Math.max(px + SIZE / 2 - PANEL_W / 2, 8),
-      width - PANEL_W - 8,
-    );
+    if (chatOpenRef.current) return;
+    const px = boxX.value;
+    const py = boxY.value;
+    const left = clampNumber(px + SIZE / 2 - PANEL_W / 2, 8, width - PANEL_W - 8);
+    const above = py - PANEL_H - 10;
     const top =
-      py - 306 > insets.top + 52
-        ? py - 306
-        : Math.min(py + SIZE * RATIO + 12, height - 330);
+      above > insets.top + 8
+        ? above
+        : clampNumber(
+            py + H + 10,
+            insets.top + 8,
+            height - PANEL_H - insets.bottom - 8,
+          );
     setPanelPos({ left, top });
+    chatOpenRef.current = true;
     setChatOpen(true);
+    clearBubble();
     setBubble(null);
+    stopAction();
+    // 停下正在进行的游动，免得面板开着鱼还在滑
+    cancelAnimation(boxX);
+    cancelAnimation(boxY);
+    setFrame("idle");
+    if (idleTimer.current) clearTimeout(idleTimer.current);
+    if (sleepTimer.current) clearTimeout(sleepTimer.current);
     if (chatMsgs.length === 0) {
       setChatMsgs([
-        {
-          id: uid(),
-          role: "assistant",
-          text: "大爹叫我？想聊什么，还是想看我跳舞呀～",
-        },
+        petMsg("assistant", "大爹叫我？想聊什么，还是想看我跳舞呀～"),
       ]);
     }
+  };
+
+  const closeChat = () => {
+    chatOpenRef.current = false;
+    setChatOpen(false);
+    armIdle();
   };
 
   const onPetPress = () => {
@@ -410,7 +835,7 @@ function WhalePetLayer() {
       poke();
       return;
     }
-    const now = tapNow();
+    const now = nowMs();
     if (now - taps.current.at > 750) taps.current.count = 0;
     taps.current.count += 1;
     taps.current.at = now;
@@ -422,83 +847,135 @@ function WhalePetLayer() {
     poke();
   };
 
-  /** 发一句话：动作口令本地直接播，日常闲聊交给模型 */
+  /** 面板里的「摸摸头」 */
+  const patHead = () => {
+    patPet();
+    lastPat.current = nowMs();
+    setFrame("happy");
+    squash(0.82);
+    const c = useWhalePet.getState().care;
+    const line = c.mood > 96 ? "嘿嘿…再摸下去我要化成一滩水了。" : pick(POKE_LINES);
+    showBubble(line);
+    showSticker("shy");
+    say(line);
+    if (frameTimer.current) clearTimeout(frameTimer.current);
+    frameTimer.current = setTimeout(() => setFrame("idle"), 1600);
+  };
+
+  /** 面板里的「喂白饭」 */
+  const feedFromPanel = () => {
+    playAction("eat");
+  };
+
+  /** 发一句话：动作口令 / 喂饭 / 摸头走本地，日常闲聊交给模型 */
   const sendChat = (text?: string) => {
     const content = (text ?? input).trim();
     if (!content || busy) return;
     setInput("");
-    setChatMsgs((prev) => [
-      ...prev,
-      { id: uid(), role: "user", text: content },
-    ]);
+    setChatMsgs((prev) => [...prev, petMsg("user", content)].slice(-30));
+
+    const reply = (line: string, stickerId?: WhaleStickerId) => {
+      setTimeout(() => {
+        setChatMsgs((prev) => [...prev, petMsg("assistant", line)].slice(-30));
+        showBubble(line, 2400);
+        showSticker(stickerId ?? matchSticker(line) ?? randomSticker(), 2800);
+        say(line);
+      }, 220);
+    };
+
+    /** 只往对话里补一句，气泡和语音交给动作本身 */
+    const pushReply = (line: string) => {
+      setTimeout(() => {
+        setChatMsgs((prev) => [...prev, petMsg("assistant", line)].slice(-30));
+      }, 220);
+    };
+
+    // 想让她回去：桌宠自己收起来
+    if (/回去|退下|收起来|藏起来|走吧|变回去|别陪我/.test(content)) {
+      reply("呜…那我先回水里啦，大爹记得再叫我。", "sad");
+      setTimeout(() => dismiss(), 900);
+      return;
+    }
+    if (/饿|喂|吃|饭|团子|零食/.test(content)) {
+      pushReply("白饭！嗷呜——好吃，谢谢大爹。");
+      playAction("eat");
+      return;
+    }
+    if (/摸|抱|亲|贴|rua|头/i.test(content)) {
+      pushReply("唔…摸头的话，我就原谅你啦。");
+      patHead();
+      return;
+    }
 
     const local = LOCAL_ACTIONS.find((a) => a.re.test(content));
     if (local) {
-      setTimeout(() => {
-        setChatMsgs((prev) => [
-          ...prev,
-          { id: uid(), role: "assistant", text: local.reply },
-        ]);
-        playAction(local.action);
-      }, 260);
+      pushReply(local.reply);
+      setTimeout(() => playAction(local.action), 240);
       return;
     }
 
     if (!apiKey) {
-      setTimeout(() => {
-        setChatMsgs((prev) => [
-          ...prev,
-          {
-            id: uid(),
-            role: "assistant",
-            text: "大爹没喂我 Key，我只能自己玩玩…去设置里填一下，我就能陪你聊天啦。",
-          },
-        ]);
-      }, 300);
+      reply(
+        "大爹没喂我 Key，我只能自己玩玩…去设置里填一下，我就能陪你聊天啦。",
+        "plead",
+      );
       return;
     }
 
     setBusy(true);
-    const history = [...chatMsgs, { role: "user" as const, text: content }].map(
-      (m) => ({ role: m.role, content: m.text }),
-    );
-    askWhalePet(history, apiKey)
+    const history = [
+      ...chatMsgs,
+      { role: "user" as const, text: content },
+    ].map((m) => ({ role: m.role, content: m.text }));
+    askWhalePet(history, apiKey, careHint(useWhalePet.getState().care))
       .then((res) => {
-        setChatMsgs((prev) => [
-          ...prev,
-          { id: uid(), role: "assistant", text: res.reply },
-        ]);
-        if (res.action) playAction(res.action);
+        setChatMsgs((prev) =>
+          [...prev, petMsg("assistant", res.reply)].slice(-30),
+        );
+        showBubble(res.reply, 2800);
+        showSticker(matchSticker(res.reply) ?? randomSticker(), 2800);
+        say(res.reply);
+        // 回复已经念过一遍，动作只播画面，不再重复念台词
+        if (res.action) playAction(res.action, true);
       })
       .catch((e) => {
-        setChatMsgs((prev) => [
-          ...prev,
-          {
-            id: uid(),
-            role: "assistant",
-            text: e instanceof Error ? e.message : "鱼脑子卡住了，再说一次？",
-          },
-        ]);
+        setChatMsgs((prev) =>
+          [
+            ...prev,
+            petMsg(
+              "assistant",
+              e instanceof Error ? e.message : "鱼脑子卡住了，再说一次？",
+            ),
+          ].slice(-30),
+        );
       })
       .finally(() => setBusy(false));
   };
 
   const dismiss = () => {
     if (leaveTimer.current) return;
-    setChatOpen(false);
+    stopWhaleVoice();
+    closeChat();
     stopAction();
-    showBubble("那我先回水里啦，大爹记得再叫我…", 1200);
+    showBubble("那我先回水里啦，大爹记得再叫我…", 1000);
     setFrame("sleep");
+    scale.value = withTiming(0.35, {
+      duration: 620,
+      easing: Easing.in(Easing.cubic),
+    });
     leaveTimer.current = setTimeout(() => {
       leaveTimer.current = null;
       hide();
-    }, 900);
+    }, 700);
   };
 
   const panelTop =
     kbHeight > 0
-      ? Math.max(insets.top + 56, height - kbHeight - 316)
+      ? Math.max(insets.top + 8, height - kbHeight - PANEL_H - 8)
       : panelPos.top;
+
+  const hungry = care.fullness < 25;
+  const lonely = care.mood < 32;
 
   return (
     <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
@@ -506,38 +983,99 @@ function WhalePetLayer() {
         <Animated.View
           style={[
             { position: "absolute", left: 0, top: 0, zIndex: 20 },
-            { width: SIZE, height: SIZE * RATIO },
-            style,
+            { width: SIZE, height: H },
+            wrapperStyle,
           ]}
         >
+          {/* 饿 / 委屈的小角标 */}
+          {hungry || lonely ? (
+            <Animated.View
+              entering={FadeIn.duration(200)}
+              exiting={FadeOut.duration(160)}
+              pointerEvents="none"
+              style={{
+                position: "absolute",
+                top: -6,
+                right: 0,
+                width: 18,
+                height: 18,
+                borderRadius: 9,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: hungry ? "rgba(251,191,36,0.95)" : "#38BDF8",
+                borderWidth: 1,
+                borderColor: "rgba(255,255,255,0.65)",
+                zIndex: 4,
+              }}
+            >
+              <Ionicons
+                name={hungry ? "restaurant" : "sad"}
+                size={10}
+                color="#172033"
+              />
+            </Animated.View>
+          ) : null}
+
+          {/* 气泡：贴顶时自动翻到下方，靠边时自动朝内 */}
           {bubble ? (
             <Animated.View
-              entering={FadeIn.duration(160)}
+              entering={FadeIn.duration(150)}
               exiting={FadeOut.duration(120)}
               pointerEvents="none"
               style={{
                 position: "absolute",
-                bottom: SIZE * RATIO - 6,
-                width: 176,
+                width: 186,
+                ...(bubbleBelow ? { top: H + 8 } : { bottom: H + 8 }),
                 ...(nearRight ? { right: 0 } : { left: 0 }),
-                borderRadius: 12,
+                borderRadius: 13,
                 paddingHorizontal: 9,
                 paddingVertical: 7,
-                backgroundColor: "rgba(10,18,34,0.86)",
+                backgroundColor: isDark
+                  ? "rgba(10,18,34,0.9)"
+                  : "rgba(255,255,255,0.95)",
                 borderWidth: 1,
-                borderColor: "rgba(125,211,252,0.26)",
+                borderColor: isDark
+                  ? "rgba(125,211,252,0.26)"
+                  : "rgba(56,189,248,0.3)",
+                zIndex: 5,
               }}
             >
-              <Text style={{ color: "#E4F2FF", fontSize: 10.5 }}>
+              <Text
+                style={{
+                  fontSize: 10.5,
+                  color: isDark ? "#E4F2FF" : "#0F2A43",
+                }}
+              >
                 {bubble}
               </Text>
             </Animated.View>
+          ) : null}
+
+          {/* 情绪表情包：贴在气泡的对面一侧 */}
+          {sticker ? (
+            <Animated.Image
+              key={sticker}
+              source={WHALE_STICKERS[sticker]}
+              resizeMode="contain"
+              entering={FadeInDown.springify().damping(18)}
+              exiting={FadeOut.duration(140)}
+              pointerEvents="none"
+              style={{
+                position: "absolute",
+                bottom: H * 0.46,
+                ...(nearRight ? { left: -54 } : { right: -54 }),
+                width: 58,
+                height: 58,
+                zIndex: 3,
+              }}
+            />
           ) : null}
 
           <Pressable
             onPress={onPetPress}
             onLongPress={dismiss}
             delayLongPress={620}
+            hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
           >
             <Animated.View style={bobStyle}>
               <View
@@ -554,7 +1092,7 @@ function WhalePetLayer() {
               <Animated.Image
                 source={SPRITES[frame]}
                 resizeMode="contain"
-                style={{ width: SIZE, height: SIZE * RATIO }}
+                style={{ width: SIZE, height: H }}
               />
             </Animated.View>
           </Pressable>
@@ -572,13 +1110,13 @@ function WhalePetLayer() {
             top: panelTop,
             width: PANEL_W,
             zIndex: 30,
-            borderRadius: 20,
+            borderRadius: 22,
             paddingTop: 10,
             paddingBottom: 2,
             overflow: "hidden",
             backgroundColor: isDark
-              ? "rgba(10,18,34,0.95)"
-              : "rgba(255,255,255,0.96)",
+              ? "rgba(10,18,34,0.96)"
+              : "rgba(255,255,255,0.97)",
             borderWidth: 1,
             borderColor: isDark
               ? "rgba(125,211,252,0.3)"
@@ -611,7 +1149,23 @@ function WhalePetLayer() {
             >
               大肥鱼
             </Text>
-            <Pressable onPress={() => setChatOpen(false)} hitSlop={8}>
+            <Pressable
+              onPress={() => {
+                const next = !voiceOn;
+                toggleVoice();
+                if (next) speakWhale("声音开好啦，大爹。");
+                else stopWhaleVoice();
+              }}
+              hitSlop={8}
+              style={{ marginRight: 10 }}
+            >
+              <Ionicons
+                name={voiceOn ? "volume-high" : "volume-mute"}
+                size={15}
+                color={voiceOn ? "#38BDF8" : isDark ? "#64748B" : "#94A3B8"}
+              />
+            </Pressable>
+            <Pressable onPress={closeChat} hitSlop={8}>
               <Ionicons
                 name="close"
                 size={15}
@@ -620,9 +1174,66 @@ function WhalePetLayer() {
             </Pressable>
           </View>
 
+          {/* 养护状态：饱食 / 心情 / 好感 */}
+          <View
+            style={{
+              flexDirection: "row",
+              gap: 8,
+              paddingHorizontal: 12,
+              paddingTop: 9,
+            }}
+          >
+            <CareBar
+              label="饱食"
+              value={care.fullness}
+              color="#FBBF24"
+              isDark={isDark}
+            />
+            <CareBar
+              label="心情"
+              value={care.mood}
+              color="#38BDF8"
+              isDark={isDark}
+            />
+            <CareBar
+              label="好感"
+              value={care.bond}
+              color="#F472B6"
+              isDark={isDark}
+            />
+          </View>
+
+          <View
+            style={{
+              flexDirection: "row",
+              gap: 6,
+              paddingHorizontal: 12,
+              paddingTop: 8,
+            }}
+          >
+            <CareAction
+              icon="restaurant"
+              label={hungry ? "喂白饭" : "喂一口"}
+              onPress={feedFromPanel}
+              isDark={isDark}
+            />
+            <CareAction
+              icon="hand-left"
+              label="摸摸头"
+              onPress={patHead}
+              isDark={isDark}
+            />
+            <CareAction
+              icon="moon"
+              label="收起来"
+              onPress={dismiss}
+              isDark={isDark}
+            />
+          </View>
+
           <ScrollView
             ref={chatRef}
-            style={{ maxHeight: 118, marginTop: 8 }}
+            style={{ maxHeight: 96, marginTop: 9 }}
             contentContainerStyle={{ paddingHorizontal: 10, gap: 6 }}
             showsVerticalScrollIndicator={false}
             onContentSizeChange={() =>
@@ -717,5 +1328,112 @@ function WhalePetLayer() {
         </Animated.View>
       ) : null}
     </View>
+  );
+}
+
+/** 养护数值的小进度条 */
+function CareBar({
+  label,
+  value,
+  color,
+  isDark,
+}: {
+  label: string;
+  value: number;
+  color: string;
+  isDark: boolean;
+}) {
+  return (
+    <View style={{ flex: 1 }}>
+      <View
+        style={{
+          flexDirection: "row",
+          justifyContent: "space-between",
+          marginBottom: 3,
+        }}
+      >
+        <Text
+          style={{
+            fontSize: 8.5,
+            color: isDark ? "rgba(148,197,235,0.75)" : "#64748B",
+          }}
+        >
+          {label}
+        </Text>
+        <Text
+          style={{
+            fontSize: 8.5,
+            color: isDark ? "rgba(148,197,235,0.75)" : "#64748B",
+          }}
+        >
+          {Math.round(value)}
+        </Text>
+      </View>
+      <View
+        style={{
+          height: 4,
+          borderRadius: 2,
+          overflow: "hidden",
+          backgroundColor: isDark
+            ? "rgba(255,255,255,0.1)"
+            : "rgba(148,163,184,0.22)",
+        }}
+      >
+        <View
+          style={{
+            width: `${clampNumber(value, 3, 100)}%`,
+            height: "100%",
+            borderRadius: 2,
+            backgroundColor: color,
+          }}
+        />
+      </View>
+    </View>
+  );
+}
+
+/** 面板里的养护按钮 */
+function CareAction({
+  icon,
+  label,
+  onPress,
+  isDark,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+  isDark: boolean;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={{
+        flex: 1,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 4,
+        borderRadius: 10,
+        borderWidth: 1,
+        paddingVertical: 6,
+        borderColor: isDark
+          ? "rgba(125,211,252,0.24)"
+          : "rgba(14,165,233,0.22)",
+        backgroundColor: isDark
+          ? "rgba(125,211,252,0.08)"
+          : "rgba(14,165,233,0.07)",
+      }}
+    >
+      <Ionicons
+        name={icon}
+        size={11}
+        color={isDark ? "#9BD9FF" : "#0369A1"}
+      />
+      <Text
+        style={{ fontSize: 9.5, color: isDark ? "#9BD9FF" : "#0369A1" }}
+      >
+        {label}
+      </Text>
+    </Pressable>
   );
 }
