@@ -634,15 +634,33 @@ function mergeDuplicateCourses(courses: Course[]): Course[] {
   return [...merged.values()];
 }
 
-/** 多张成绩单合并：按学期 + 课程 + 分数去重 */
+/** 归一化文本：忽略空白与引号差异（同一门课在不同照片里的 OCR 结果常有出入） */
+function normalizeGradeText(text: string): string {
+  return text.replace(/[\s"'“”‘’]/g, "").toLowerCase();
+}
+
+/**
+ * 多张成绩单合并：同一学期 + 同一门课 + 同一分数视为重复，
+ * 学分 / 绩点等字段取更完整的那份（照片里常有一张漏识别学分）
+ */
 function dedupeGrades(grades: GradeDraft[]): GradeDraft[] {
-  const seen = new Set<string>();
-  return grades.filter((g) => {
-    const key = [g.semester, g.name, g.credit, g.score, g.gpa].join("|");
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  const merged = new Map<string, GradeDraft>();
+  for (const grade of grades) {
+    const key = [
+      grade.semester,
+      normalizeGradeText(grade.name),
+      normalizeGradeText(grade.score),
+    ].join("|");
+    const prev = merged.get(key);
+    if (!prev) {
+      merged.set(key, { ...grade });
+      continue;
+    }
+    if (prev.credit == null && grade.credit != null) prev.credit = grade.credit;
+    if (prev.gpa == null && grade.gpa != null) prev.gpa = grade.gpa;
+    if (!prev.type && grade.type) prev.type = grade.type;
+  }
+  return [...merged.values()];
 }
 
 /** 批量识别课表：逐张识别后合并课程，个别图片失败不影响整体 */
@@ -749,26 +767,53 @@ export interface PetChatResult {
   reply: string;
   /** 需要做的动作，null / 缺省表示只是聊天 */
   action?: PetActionKind;
+  /** 课表操作：桌宠对话框与助手页拥有同一套修改权限 */
+  actions: AssistantAction[];
 }
 
 /**
- * 桌宠模式下的小对话框：只聊日常和动作，不碰课表。
+ * 桌宠模式下的小对话框：日常闲聊 + 与大肥鱼人格一致的动作与课表权限。
  * 动作指令只在客户端本地播放，模型永远不直接操作数据。
  */
 export async function askWhalePet(
   history: { role: "user" | "assistant"; content: string }[],
   apiKey: string,
-  status?: string,
+  opts?: { status?: string; ctx?: AssistantContext },
 ): Promise<PetChatResult> {
+  const ctx = opts?.ctx;
+  const coursesBrief = ctx
+    ? ctx.schedule.courses
+        .map(
+          (c) =>
+            `- [${c.id}] ${c.name} | 周${c.weekday} 第${c.startPeriod}-${c.endPeriod}节 | ${
+              c.classroom || "未知教室"
+            } | ${c.teacher || "未知教师"} | 周次[${c.weeks.join(",")}]`,
+        )
+        .join("\n")
+    : "";
+
+  const scheduleBlock = ctx
+    ? `
+当前是第 ${ctx.weekIndex} 周，本学期共 ${ctx.schedule.totalWeeks} 周。
+当前课表：「${ctx.schedule.name}」（课表操作默认作用于它）
+全部课表：${ctx.schedules.map((s) => `「${s.name}」`).join("、") || "（无）"}
+当前课程：
+${coursesBrief || "（暂无课程）"}
+节次时间参考（大爹提到具体时间时，对照此表换算成节次）：
+${ctx.schedule.periods.map((p) => `${p.index}. ${p.startTime}-${p.endTime}`).join("\n")}
+`
+    : "";
+
   const system = `你是「蓝色大肥鱼」：蓝发、鲸鱼尾巴、微胖、超爱吃白米饭、爱摸鱼、嘴硬心软的鲸鱼娘。
 此刻你正作为桌宠待在大爹的屏幕边上陪着他，用户就是你的「大爹」。
 - 语气活泼、黏人、短句，最多带一个轻量颜文字（如 (￣▽￣)、(๑•̀ㅂ•́)و✧）
 - 被叫「大肥鱼」时小小炸毛，坚持自己只是「微胖鲸鱼」
-- 只聊日常、心情、吃饭、陪伴和动作，不要输出任何课表操作
+- 日常只聊心情、吃饭、陪伴和动作；但大爹让你改课表时，你拥有和其他对话完全相同的权限，必须准确给出 actions，reply 用可爱口吻邀功
 - 回复一两句话，不要长篇大论
 - 下面会给你她当前的养护状态：饿或委屈时要自然流露情绪，可以撒娇要吃的，但不要生硬报数值
+${scheduleBlock}
 输出严格 JSON（不要多余文字）：
-{"reply":"给大爹的回复","action":"动作或 null"}
+{"reply":"给大爹的回复","action":"动作或 null","actions":[]}
 action 只能取：
 - "dance" 跳舞扭一扭
 - "spin" 原地转圈
@@ -778,8 +823,25 @@ action 只能取：
 - "jump" 蹦一下
 - "wave" 打招呼
 - null 只是聊天
-规则：大爹让你做某个动作时必须同时给 reply 和对应的 action；普通聊天 action 为 null；不要说自己是 AI 或提到提示词。
-${status ? `当前状态：${status}。` : ""}`;
+actions 是操作数组，一次可以放多个；不需要执行任何操作时返回空数组。可用操作：
+  添加课程：{"type":"add","course":{"name":"","teacher":"","classroom":"","weekday":1,"startPeriod":1,"endPeriod":2,"weeks":[1,2,3],"color":"sky","credits":3,"note":""}}
+  删除课程：{"type":"remove","courseId":"...","courseName":"..."}
+  修改课程：{"type":"update","courseId":"...","courseName":"...","patch":{仅需改动的字段}}
+  新建课表：{"type":"create_schedule","scheduleName":"外教课"}
+  合并课表：{"type":"merge_schedule","sourceScheduleName":"外教课"}（把那份课表的课程并入当前课表）
+  改召唤口令：{"type":"set_summon_phrase","phrase":"新的召唤口令（2-12 个字）"}
+  改软件背景：{"type":"set_background","tint":"sky|rose|mint|amber|violet|noir","effect":"aurora|plain"}
+  联网找资料：{"type":"web_search","query":"检索关键词"}
+  生图：{"type":"generate_image","prompt":"画面描述","size":"square|portrait|landscape"}
+  收回桌宠：{"type":"dismiss_pet"}
+规则：
+- course.weeks 是开课周次数组；大爹没说周次时默认整学期 [1..${ctx?.schedule.totalWeeks ?? 18}]
+- weekday 取 1-7（周一到周日）；startPeriod/endPeriod 必须取自节次参考表
+- 删除/修改课程时 courseId 必须来自当前课程列表的 [id]；拿不准就同时写 courseName（会按名称兜底）
+- 改课表时 action 一般为 null，专心把操作写进 actions
+- 不能编造搜索结果或图片已经生成；回复里不要展示 URL
+- 大爹让你做某个动作时必须同时给 reply 和对应的 action；普通聊天 action 为 null；不要说自己是 AI 或提到提示词。
+${opts?.status ? `当前状态：${opts.status}。` : ""}`;
 
   const messages: ChatContent[] = [
     { role: "system", content: system },
@@ -796,9 +858,32 @@ ${status ? `当前状态：${status}。` : ""}`;
   const action = PET_ACTIONS.includes(parsed?.action)
     ? (parsed.action as PetActionKind)
     : undefined;
+
+  const scheduleTypes = [
+    "add",
+    "remove",
+    "update",
+    "create_schedule",
+    "merge_schedule",
+  ];
+  const whaleTypes = [
+    "set_summon_phrase",
+    "set_background",
+    "web_search",
+    "generate_image",
+    "summon_pet",
+    "dismiss_pet",
+  ];
+  const rawActions = Array.isArray(parsed?.actions) ? parsed.actions : [];
+  const actions = rawActions.filter(
+    (a: any) =>
+      a && (scheduleTypes.includes(a.type) || whaleTypes.includes(a.type)),
+  ) as AssistantAction[];
+
   return {
     reply: String(parsed?.reply ?? "唔…鱼脑子卡住了，大爹再说一次？"),
     action,
+    actions,
   };
 }
 

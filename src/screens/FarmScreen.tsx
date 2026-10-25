@@ -4,6 +4,7 @@
 
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -65,7 +66,8 @@ import { useSettings } from "@/store/useSettings";
 /* -------------------------------------------------------------------------- */
 
 const VIEW_W = 200;
-const VIEW_H = 170;
+/** 场景纵向扩展到 210：背景向下多留 40 单位草坪，人物可以站得更开 */
+const VIEW_H = 210;
 
 /* 九块田地：坐标对齐背景里烘焙好的土壤格 */
 const PLOT_X = 64;
@@ -76,19 +78,17 @@ const PLOT_GAP_X = 2;
 const PLOT_GAP_Y = 2;
 const PLOT_COUNT = 9;
 
-const PLAYER_START = { x: 50, y: 101 };
+const PLAYER_START = { x: 46, y: 104 };
 /** 顾：田地右侧的草坪 */
 const GU_AT = { x: 146, y: 104 };
 /** door：屋前小路左侧 */
-const DOOR_AT = { x: 26, y: 101 };
+const DOOR_AT = { x: 22, y: 101 };
 /** 小鸡坤坤：鸡窝前 */
 const CHICKEN_AT = { x: 156, y: 146 };
-/** 三个儿子：池塘边与草地上散开站着 */
-const XIAOBA_AT = { x: 4, y: 112 };
-const YUJIE_AT = { x: 18, y: 148 };
-const WEIGANG_AT = { x: 44, y: 146 };
-/** 跟儿子们聊天时玩家站的位置（池塘与田地之间的草地） */
-const SONS_SPOT = { x: 31, y: 143 };
+/** 三个儿子：院子里分散站位，不再挤在池塘边 */
+const XIAOBA_AT = { x: 9, y: 114 };
+const YUJIE_AT = { x: 96, y: 162 };
+const WEIGANG_AT = { x: 168, y: 180 };
 
 /** 房子所占区域：轻点即进屋睡觉 */
 const HOUSE_RECT = { x: 3, y: 42, w: 78, h: 56 };
@@ -1088,7 +1088,8 @@ export function FarmScreen() {
     }[who];
     const isSon = who === "xiaoba" || who === "yujie" || who === "weigang";
     if (isSon) {
-      moveTo(SONS_SPOT.x, SONS_SPOT.y);
+      // 儿子们站位分散，玩家走到对应的人身边说话
+      moveTo(at.x + 2, at.y + 7);
     } else {
       moveTo(at.x + (who === "door" ? 16 : -16), at.y + 4);
     }
@@ -1273,78 +1274,14 @@ export function FarmScreen() {
       </View>
 
       {/* ---------- 场景 ---------- */}
-      <View style={{ flex: 1 }}>
-        {/* 天空延展：与贴图顶端同色，白天飘云，夜里点星 */}
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: night ? SKY_FILL.night : SKY_FILL.day,
-            overflow: "hidden",
-          }}
+      <View style={{ flex: 1, overflow: "hidden", justifyContent: "flex-end" }}>
+        {/* 天空延展：渐变衔接贴图自带的天空，太阳 / 月亮只由贴图提供，避免出现两个 */}
+        <LinearGradient
+          colors={
+            night ? ["#04060E", SKY_FILL.night] : ["#5EA8E4", SKY_FILL.day]
+          }
+          style={{ flex: 1, overflow: "hidden" }}
         >
-          {/* 天上的太阳 / 月亮，让延展出来的天空不至于太空 */}
-          {night ? (
-            <>
-              <View
-                style={{
-                  position: "absolute",
-                  right: width * 0.12 - 12,
-                  top: 12,
-                  width: 78,
-                  height: 78,
-                  borderRadius: 39,
-                  backgroundColor: "rgba(246,238,220,0.1)",
-                }}
-              />
-              <View
-                style={{
-                  position: "absolute",
-                  right: width * 0.12,
-                  top: 24,
-                  width: 54,
-                  height: 54,
-                  borderRadius: 27,
-                  backgroundColor: "#F6EEDC",
-                }}
-              />
-              <View
-                style={{
-                  position: "absolute",
-                  right: width * 0.12 + 10,
-                  top: 18,
-                  width: 54,
-                  height: 54,
-                  borderRadius: 27,
-                  backgroundColor: SKY_FILL.night,
-                }}
-              />
-            </>
-          ) : (
-            <>
-              <View
-                style={{
-                  position: "absolute",
-                  right: width * 0.1 - 16,
-                  top: 4,
-                  width: 94,
-                  height: 94,
-                  borderRadius: 47,
-                  backgroundColor: "rgba(255,240,180,0.16)",
-                }}
-              />
-              <View
-                style={{
-                  position: "absolute",
-                  right: width * 0.1,
-                  top: 20,
-                  width: 62,
-                  height: 62,
-                  borderRadius: 31,
-                  backgroundColor: "rgba(255,240,180,0.92)",
-                }}
-              />
-            </>
-          )}
           {night ? (
             SKY_STARS.map((s) => (
               <View
@@ -1363,15 +1300,14 @@ export function FarmScreen() {
             ))
           ) : (
             <>
-              <Cloud left={width * 0.04} top={30} size={112} delay={0} />
-              <Cloud left={width * 0.42} top={82} size={84} delay={5200} />
-              <Cloud left={width * 0.58} top={22} size={134} delay={9800} />
+              <Cloud left={width * 0.04} top={18} size={104} delay={0} />
+              <Cloud left={width * 0.52} top={64} size={78} delay={5200} />
             </>
           )}
-        </View>
+        </LinearGradient>
 
-        {/* 场景贴底：多出来的高度留给天空，农场紧贴操作区 */}
-        <View style={{ width, height: sceneH, overflow: "hidden" }}>
+        {/* 场景贴底：贴图自身含天空，多出来的高度只用于很窄的渐变延展 */}
+        <View style={{ width, height: sceneH, overflow: "hidden", flexShrink: 0 }}>
           <Animated.View style={[StyleSheet.absoluteFill, dayLayerStyle]}>
             <Image
               source={require("../../assets/images/farm-day.png")}

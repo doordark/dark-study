@@ -31,21 +31,31 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColorScheme } from "nativewind";
 
+import { ChatImage } from "@/components/ChatImage";
 import { ChatInputBar } from "@/components/ChatInputBar";
-import {
-  WHALE_STICKERS,
-  matchSticker,
-  randomSticker,
-} from "@/constants/whaleStickers";
-import type { WhaleStickerId } from "@/constants/whaleStickers";
+import { BACKGROUND_PRESETS, resolveTint } from "@/constants/backgrounds";
 import { askWhalePet } from "@/services/ai";
+import { applyScheduleActions } from "@/services/assistantSchedule";
+import {
+  answerFromSearch,
+  buildImageUrl,
+  imageAspect,
+  searchWeb,
+} from "@/services/whaleTools";
 import { speakWhale, stopWhaleVoice } from "@/services/whaleVoice";
+import { useActiveSchedule, useStore } from "@/store/useStore";
 import { useSettings } from "@/store/useSettings";
 import { useWhalePet } from "@/store/useWhalePet";
 import type { WhaleCare } from "@/store/useWhalePet";
 import { useWhaleVoice } from "@/store/useWhaleVoice";
-import type { PetActionKind } from "@/types";
+import type {
+  AssistantAction,
+  PetActionKind,
+  ScheduleAction,
+  WhaleAction,
+} from "@/types";
 import { uid } from "@/utils/id";
+import { getDateInfo } from "@/utils/time";
 
 /* eslint-disable react-hooks/immutability, react-hooks/refs --
    Reanimated shared value（坐标 / 速度 / 挤压 / 朝向）本质是跨渲染、跨线程可变的容器，
@@ -158,6 +168,11 @@ interface PetMsg {
   id: string;
   role: "user" | "assistant";
   text: string;
+  /** 待确认的课表操作 */
+  actions?: ScheduleAction[];
+  /** 生成图 */
+  imageUri?: string;
+  imageAspect?: number;
 }
 
 const petMsg = (role: PetMsg["role"], text: string): PetMsg => ({
@@ -165,6 +180,18 @@ const petMsg = (role: PetMsg["role"], text: string): PetMsg => ({
   role,
   text,
 });
+
+const SCHEDULE_TYPES = new Set([
+  "add",
+  "remove",
+  "update",
+  "create_schedule",
+  "merge_schedule",
+]);
+const isScheduleAction = (a: AssistantAction): a is ScheduleAction =>
+  SCHEDULE_TYPES.has(a.type);
+const isWhaleAction = (a: AssistantAction): a is WhaleAction =>
+  !SCHEDULE_TYPES.has(a.type);
 
 /** 组件外的纯工具：随机取值 / 分页 / 夹取 */
 const pick = <T,>(pool: readonly T[]): T =>
@@ -227,8 +254,14 @@ function WhalePetLayer() {
   const patPet = useWhalePet((s) => s.pat);
   const tickPet = useWhalePet((s) => s.tick);
   const apiKey = useSettings((s) => s.apiKey);
+  const setWhalePhrase = useSettings((s) => s.setWhalePhrase);
+  const setBackgroundTint = useSettings((s) => s.setBackgroundTint);
+  const setBackgroundEffect = useSettings((s) => s.setBackgroundEffect);
   const voiceOn = useWhaleVoice((s) => s.on);
   const toggleVoice = useWhaleVoice((s) => s.toggle);
+  // 小对话框与助手页共用同一份课表数据与权限
+  const schedule = useActiveSchedule();
+  const schedules = useStore((s) => s.schedules);
 
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -264,7 +297,6 @@ function WhalePetLayer() {
   );
   const [bubbleBelow, setBubbleBelow] = useState(false);
   const [nearRight, setNearRight] = useState(true);
-  const [sticker, setSticker] = useState<WhaleStickerId | null>(null);
 
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMsgs, setChatMsgs] = useState<PetMsg[]>([]);
@@ -275,7 +307,6 @@ function WhalePetLayer() {
 
   const chatOpenRef = useRef(false);
   const bubbleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const stickerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const frameTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sleepTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -321,12 +352,6 @@ function WhalePetLayer() {
       bubbleTimer.current = setTimeout(next, ms);
     };
     bubbleTimer.current = setTimeout(next, ms);
-  };
-
-  const showSticker = (id: WhaleStickerId, ms = 2600) => {
-    if (stickerTimer.current) clearTimeout(stickerTimer.current);
-    setSticker(id);
-    stickerTimer.current = setTimeout(() => setSticker(null), ms);
   };
 
   /** 被摸 / 被戳的 Q 弹：高度压下去，宽度横向摊开 */
@@ -424,7 +449,6 @@ function WhalePetLayer() {
     () => () => {
       stopWhaleVoice();
       if (bubbleTimer.current) clearTimeout(bubbleTimer.current);
-      if (stickerTimer.current) clearTimeout(stickerTimer.current);
       if (frameTimer.current) clearTimeout(frameTimer.current);
       if (idleTimer.current) clearTimeout(idleTimer.current);
       if (sleepTimer.current) clearTimeout(sleepTimer.current);
@@ -534,7 +558,6 @@ function WhalePetLayer() {
       case "eat":
         setFrame("eat");
         feedPet();
-        showSticker("cozy", 2800);
         settle(3200);
         break;
       case "study":
@@ -578,10 +601,8 @@ function WhalePetLayer() {
 
     if (c.fullness < 25 && roll < 0.55) {
       showBubble(pick(HUNGRY_LINES));
-      showSticker("plead");
     } else if (c.mood < 32 && roll < 0.55) {
       showBubble(pick(LONELY_LINES));
-      showSticker("sad");
     } else if (roll < 0.3) {
       walkSomewhere();
     } else if (roll < 0.48) {
@@ -592,7 +613,6 @@ function WhalePetLayer() {
           ? pick(CLOSE_LINES)
           : pick(AMBIENT_LINES),
       );
-      if (rand() < 0.4) showSticker(randomSticker());
     }
     armIdle();
   };
@@ -606,7 +626,6 @@ function WhalePetLayer() {
     const t = clampNumber((impact - 300) / 1200, 0, 1);
     squash(0.8 - 0.26 * t);
     if (impact > 1100) {
-      showSticker("shock", 1800);
       showBubble("呜哇——摔成鱼饼了！", 1800);
     }
   };
@@ -786,7 +805,6 @@ function WhalePetLayer() {
           ? pick(CLOSE_LINES)
           : pick(POKE_LINES);
     showBubble(line);
-    if (rand() < 0.35) showSticker(matchSticker(line) ?? randomSticker());
     say(line);
   };
 
@@ -856,7 +874,6 @@ function WhalePetLayer() {
     const c = useWhalePet.getState().care;
     const line = c.mood > 96 ? "嘿嘿…再摸下去我要化成一滩水了。" : pick(POKE_LINES);
     showBubble(line);
-    showSticker("shy");
     say(line);
     if (frameTimer.current) clearTimeout(frameTimer.current);
     frameTimer.current = setTimeout(() => setFrame("idle"), 1600);
@@ -867,6 +884,100 @@ function WhalePetLayer() {
     playAction("eat");
   };
 
+  /** 大爹专属操作：改口令 / 改背景 / 生图 / 联网，权限与助手页一致 */
+  const runWhaleActions = async (
+    actions: WhaleAction[],
+    userText: string,
+  ) => {
+    for (const action of actions) {
+      if (action.type === "set_summon_phrase") {
+        const phrase = String(action.phrase ?? "")
+          .replace(/[\s「」"“”'']/g, "")
+          .slice(0, 12);
+        if (phrase.length < 2) {
+          setChatMsgs((prev) =>
+            [
+              ...prev,
+              petMsg("assistant", "这个口令太短啦，换一个 2-12 个字的吧。"),
+            ].slice(-30),
+          );
+          continue;
+        }
+        setWhalePhrase(phrase);
+        const line = `（尾巴晃了晃）记住啦：以后喊「${phrase}」，我就游出来。`;
+        setChatMsgs((prev) =>
+          [...prev, petMsg("assistant", line)].slice(-30),
+        );
+        showBubble(line, 2600);
+      } else if (action.type === "set_background") {
+        const tint = resolveTint(action.tint);
+        setBackgroundTint(tint);
+        if (action.effect === "aurora" || action.effect === "plain") {
+          setBackgroundEffect(action.effect);
+        }
+        const line = `（把背景调成了「${BACKGROUND_PRESETS[tint].label}」）大爹看看，喜不喜欢？`;
+        setChatMsgs((prev) =>
+          [...prev, petMsg("assistant", line)].slice(-30),
+        );
+        showBubble(line, 2600);
+      } else if (action.type === "generate_image") {
+        const uri = buildImageUrl(String(action.prompt ?? ""), action.size);
+        setChatMsgs((prev) =>
+          [
+            ...prev,
+            {
+              ...petMsg("assistant", "画好啦，大爹收好。"),
+              imageUri: uri,
+              imageAspect: imageAspect(action.size),
+            },
+          ].slice(-30),
+        );
+      } else if (action.type === "web_search") {
+        const query = String(action.query ?? "").trim();
+        if (!query) continue;
+        try {
+          const hits = await searchWeb(query);
+          if (!hits.length) throw new Error("没有结果");
+          const answer = await answerFromSearch(userText, hits, apiKey);
+          setChatMsgs((prev) =>
+            [...prev, petMsg("assistant", answer)].slice(-30),
+          );
+          showBubble(answer, 3000);
+          say(answer);
+        } catch {
+          setChatMsgs((prev) =>
+            [
+              ...prev,
+              petMsg(
+                "assistant",
+                `呜，网线被海浪打断了……「${query}」没查到。`,
+              ),
+            ].slice(-30),
+          );
+        }
+      } else if (action.type === "dismiss_pet") {
+        setTimeout(() => dismiss(), 700);
+      }
+    }
+  };
+
+  /** 确认执行小对话框里挂起的课表操作 */
+  const applyPending = (id: string) => {
+    const msg = chatMsgs.find((m) => m.id === id);
+    if (!msg?.actions?.length) return;
+    const summary = applyScheduleActions(msg.actions, schedule).join("；");
+    setChatMsgs((prev) =>
+      [
+        ...prev.map((m) =>
+          m.id === id ? { ...m, actions: undefined } : m,
+        ),
+        petMsg("assistant", `课表改好啦：${summary}`),
+      ].slice(-30),
+    );
+    showBubble(summary, 2800);
+    say("改好啦，大爹。");
+  };
+
   /** 发一句话：动作口令 / 喂饭 / 摸头走本地，日常闲聊交给模型 */
   const sendChat = (text?: string) => {
     const content = (text ?? input).trim();
@@ -874,11 +985,10 @@ function WhalePetLayer() {
     setInput("");
     setChatMsgs((prev) => [...prev, petMsg("user", content)].slice(-30));
 
-    const reply = (line: string, stickerId?: WhaleStickerId) => {
+    const reply = (line: string) => {
       setTimeout(() => {
         setChatMsgs((prev) => [...prev, petMsg("assistant", line)].slice(-30));
         showBubble(line, 2400);
-        showSticker(stickerId ?? matchSticker(line) ?? randomSticker(), 2800);
         say(line);
       }, 220);
     };
@@ -890,24 +1000,32 @@ function WhalePetLayer() {
       }, 220);
     };
 
+    // 提到课表 / 节次 / 星期几的请求直接交给模型，避免被「吃 / 摸 / 动作」口令截胡
+    const looksLikeSchedule =
+      /课表|课程|改到|换到|加一门|新增|删掉|删除|新建|合并|第[一二三四五六七八九十0-9]+节|周[一二三四五六日天]/.test(
+        content,
+      );
+
     // 想让她回去：桌宠自己收起来
     if (/回去|退下|收起来|藏起来|走吧|变回去|别陪我/.test(content)) {
-      reply("呜…那我先回水里啦，大爹记得再叫我。", "sad");
+      reply("呜…那我先回水里啦，大爹记得再叫我。");
       setTimeout(() => dismiss(), 900);
       return;
     }
-    if (/饿|喂|吃|饭|团子|零食/.test(content)) {
+    if (!looksLikeSchedule && /饿|喂|吃|饭|团子|零食/.test(content)) {
       pushReply("白饭！嗷呜——好吃，谢谢大爹。");
       playAction("eat");
       return;
     }
-    if (/摸|抱|亲|贴|rua|头/i.test(content)) {
+    if (!looksLikeSchedule && /摸|抱|亲|贴|rua|头/i.test(content)) {
       pushReply("唔…摸头的话，我就原谅你啦。");
       patHead();
       return;
     }
 
-    const local = LOCAL_ACTIONS.find((a) => a.re.test(content));
+    const local = looksLikeSchedule
+      ? undefined
+      : LOCAL_ACTIONS.find((a) => a.re.test(content));
     if (local) {
       pushReply(local.reply);
       setTimeout(() => playAction(local.action), 240);
@@ -915,10 +1033,7 @@ function WhalePetLayer() {
     }
 
     if (!apiKey) {
-      reply(
-        "大爹没喂我 Key，我只能自己玩玩…去设置里填一下，我就能陪你聊天啦。",
-        "plead",
-      );
+      reply("大爹没喂我 Key，我只能自己玩玩…去设置里填一下，我就能陪你聊天啦。");
       return;
     }
 
@@ -927,16 +1042,34 @@ function WhalePetLayer() {
       ...chatMsgs,
       { role: "user" as const, text: content },
     ].map((m) => ({ role: m.role, content: m.text }));
-    askWhalePet(history, apiKey, careHint(useWhalePet.getState().care))
-      .then((res) => {
+    // 带上当前课表上下文：小对话框也能像助手页一样增删改课表
+    const ctx = {
+      schedule,
+      weekIndex: getDateInfo(schedule.startDate).weekIndex,
+      schedules: schedules.map((s) => ({ id: s.id, name: s.name })),
+      persona: "whale" as const,
+    };
+    askWhalePet(history, apiKey, {
+      status: careHint(useWhalePet.getState().care),
+      ctx,
+    })
+      .then(async (res) => {
+        const scheduleActions = res.actions.filter(isScheduleAction);
+        const whaleActions = res.actions.filter(isWhaleAction);
         setChatMsgs((prev) =>
-          [...prev, petMsg("assistant", res.reply)].slice(-30),
+          [
+            ...prev,
+            {
+              ...petMsg("assistant", res.reply),
+              actions: scheduleActions.length ? scheduleActions : undefined,
+            },
+          ].slice(-30),
         );
         showBubble(res.reply, 2800);
-        showSticker(matchSticker(res.reply) ?? randomSticker(), 2800);
         say(res.reply);
         // 回复已经念过一遍，动作只播画面，不再重复念台词
         if (res.action) playAction(res.action, true);
+        if (whaleActions.length) await runWhaleActions(whaleActions, content);
       })
       .catch((e) => {
         setChatMsgs((prev) =>
@@ -1049,26 +1182,6 @@ function WhalePetLayer() {
                 {bubble}
               </Text>
             </Animated.View>
-          ) : null}
-
-          {/* 情绪表情包：贴在气泡的对面一侧 */}
-          {sticker ? (
-            <Animated.Image
-              key={sticker}
-              source={WHALE_STICKERS[sticker]}
-              resizeMode="contain"
-              entering={FadeInDown.springify().damping(18)}
-              exiting={FadeOut.duration(140)}
-              pointerEvents="none"
-              style={{
-                position: "absolute",
-                bottom: H * 0.46,
-                ...(nearRight ? { left: -54 } : { right: -54 }),
-                width: 58,
-                height: 58,
-                zIndex: 3,
-              }}
-            />
           ) : null}
 
           <Pressable
@@ -1247,6 +1360,11 @@ function WhalePetLayer() {
                   alignItems: m.role === "user" ? "flex-end" : "flex-start",
                 }}
               >
+                {m.imageUri ? (
+                  <View style={{ marginBottom: 6 }}>
+                    <ChatImage uri={m.imageUri} aspectRatio={m.imageAspect} />
+                  </View>
+                ) : null}
                 <View
                   style={{
                     maxWidth: "92%",
@@ -1274,6 +1392,23 @@ function WhalePetLayer() {
                   >
                     {m.text}
                   </Text>
+                  {m.actions?.length ? (
+                    <Pressable
+                      onPress={() => applyPending(m.id)}
+                      style={{
+                        marginTop: 6,
+                        alignSelf: "flex-start",
+                        borderRadius: 999,
+                        paddingHorizontal: 9,
+                        paddingVertical: 4,
+                        backgroundColor: "rgba(52,211,153,0.9)",
+                      }}
+                    >
+                      <Text style={{ fontSize: 10, color: "#062B23" }}>
+                        确认修改课表 · {m.actions.length} 项
+                      </Text>
+                    </Pressable>
+                  ) : null}
                 </View>
               </View>
             ))}

@@ -2,7 +2,7 @@
   "expo": {
     "name": "dark-study",
     "slug": "dark-study",
-    "version": "1.6.0",
+    "version": "1.6.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "dark-study",
@@ -11,7 +11,7 @@
     },
     "android": {
       "package": "com.darkstudy.app",
-      "versionCode": 12,
+      "versionCode": 13,
       "permissions": ["REQUEST_INSTALL_PACKAGES"],
       "adaptiveIcon": {
         "backgroundColor": "#08060D",
