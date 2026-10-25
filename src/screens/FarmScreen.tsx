@@ -4,7 +4,6 @@
 
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -66,39 +65,39 @@ import { useSettings } from "@/store/useSettings";
 /* -------------------------------------------------------------------------- */
 
 const VIEW_W = 200;
-/** 场景纵向扩展到 210：背景向下多留 40 单位草坪，人物可以站得更开 */
-const VIEW_H = 210;
+/** 场景纵向扩展到 330：天空向上延展（贴图自身含完整天空），地面多留草坪，农场在可视区居中 */
+const VIEW_H = 330;
 
-/* 九块田地：坐标对齐背景里烘焙好的土壤格 */
-const PLOT_X = 64;
-const PLOT_Y = 105;
-const PLOT_W = 20;
+/* 十六块田地（4x4）：坐标对齐背景里烘焙好的土壤格 */
+const PLOT_X = 63;
+const PLOT_Y = 155;
+const PLOT_W = 18;
 const PLOT_H = 13.5;
 const PLOT_GAP_X = 2;
 const PLOT_GAP_Y = 2;
-const PLOT_COUNT = 9;
+const PLOT_COUNT = 16;
 
-const PLAYER_START = { x: 46, y: 104 };
+const PLAYER_START = { x: 46, y: 154 };
 /** 顾：田地右侧的草坪 */
-const GU_AT = { x: 146, y: 104 };
+const GU_AT = { x: 146, y: 154 };
 /** door：屋前小路左侧 */
-const DOOR_AT = { x: 22, y: 101 };
+const DOOR_AT = { x: 22, y: 151 };
 /** 小鸡坤坤：鸡窝前 */
-const CHICKEN_AT = { x: 156, y: 146 };
-/** 三个儿子：院子里分散站位，不再挤在池塘边 */
-const XIAOBA_AT = { x: 9, y: 114 };
-const YUJIE_AT = { x: 96, y: 162 };
-const WEIGANG_AT = { x: 168, y: 180 };
+const CHICKEN_AT = { x: 156, y: 196 };
+/** 三个儿子：院子里分散站位，不挤在一起 */
+const XIAOBA_AT = { x: 10, y: 164 };
+const YUJIE_AT = { x: 80, y: 222 };
+const WEIGANG_AT = { x: 152, y: 262 };
 
 /** 房子所占区域：轻点即进屋睡觉 */
-const HOUSE_RECT = { x: 3, y: 42, w: 78, h: 56 };
+const HOUSE_RECT = { x: 3, y: 92, w: 78, h: 56 };
 
 const SAVE_KEY = "dark-study-farm";
 
 function plotPos(i: number) {
   return {
-    x: PLOT_X + (i % 3) * (PLOT_W + PLOT_GAP_X),
-    y: PLOT_Y + Math.floor(i / 3) * (PLOT_H + PLOT_GAP_Y),
+    x: PLOT_X + (i % 4) * (PLOT_W + PLOT_GAP_X),
+    y: PLOT_Y + Math.floor(i / 4) * (PLOT_H + PLOT_GAP_Y),
   };
 }
 
@@ -171,24 +170,8 @@ const emptyPlot = (at: number): PlotState => ({
 /** 四季名（季节随天数轮换，只影响文案） */
 const SEASONS = ["春", "夏", "秋", "冬"];
 
-/** 白天/黑夜两张背景贴图上下边缘的精确色值，用来把场景外的天空填成同一片天色 */
-const SKY_FILL = { day: "#6CBAF0", night: "#080C1E" };
-
-/** 夜空延展区里的固定星光（只在黑夜显示） */
-const SKY_STARS = [
-  { id: 0, left: "8%", top: "18%", size: 2, o: 0.5 },
-  { id: 1, left: "19%", top: "46%", size: 1.5, o: 0.34 },
-  { id: 2, left: "27%", top: "12%", size: 2.5, o: 0.6 },
-  { id: 3, left: "38%", top: "62%", size: 1.5, o: 0.28 },
-  { id: 4, left: "46%", top: "28%", size: 2, o: 0.45 },
-  { id: 5, left: "57%", top: "70%", size: 1.5, o: 0.3 },
-  { id: 6, left: "64%", top: "16%", size: 2, o: 0.52 },
-  { id: 7, left: "73%", top: "44%", size: 1.5, o: 0.32 },
-  { id: 8, left: "81%", top: "24%", size: 2.5, o: 0.58 },
-  { id: 9, left: "90%", top: "58%", size: 1.5, o: 0.3 },
-  { id: 10, left: "13%", top: "78%", size: 2, o: 0.4 },
-  { id: 11, left: "52%", top: "6%", size: 1.5, o: 0.36 },
-];
+/** 贴图自身含完整天空；这个底色只在极少数超高屏幕上露出一小条，取贴图顶行色避免出现接缝 */
+const SKY_BG = { day: "#5EB0ED", night: "#080C1E" };
 
 const PIXEL_FONT = Platform.select({
   ios: "Courier",
@@ -546,7 +529,7 @@ const MOTES = (() => {
   return Array.from({ length: 7 }, (_, i) => ({
     id: i,
     x: 8 + rnd() * 184,
-    y: 92 + rnd() * 68,
+    y: 150 + rnd() * 140,
     dur: 2800 + rnd() * 2400,
     delay: rnd() * 2000,
     size: rnd() > 0.6 ? 2 : 1,
@@ -604,77 +587,6 @@ function Mote({
         style,
       ]}
     />
-  );
-}
-
-/** 天空里慢慢飘过的云（只有白天出现） */
-function Cloud({
-  left,
-  top,
-  size,
-  delay,
-}: {
-  left: number;
-  top: number;
-  size: number;
-  delay: number;
-}) {
-  const v = useSharedValue(0);
-
-  useEffect(() => {
-    v.value = withDelay(
-      delay,
-      withRepeat(
-        withTiming(1, { duration: 34_000, easing: Easing.linear }),
-        -1,
-        false,
-      ),
-    );
-  }, [v, delay]);
-
-  const style = useAnimatedStyle(() => ({
-    transform: [{ translateX: (v.value - 0.5) * size * 1.2 }],
-  }));
-
-  return (
-    <Animated.View
-      pointerEvents="none"
-      style={[
-        {
-          position: "absolute",
-          left,
-          top,
-          width: size,
-          height: size * 0.24,
-          borderRadius: size,
-          backgroundColor: "rgba(255,255,255,0.9)",
-        },
-        style,
-      ]}
-    >
-      <View
-        style={{
-          position: "absolute",
-          left: size * 0.16,
-          top: -size * 0.11,
-          width: size * 0.42,
-          height: size * 0.24,
-          borderRadius: size,
-          backgroundColor: "rgba(255,255,255,0.9)",
-        }}
-      />
-      <View
-        style={{
-          position: "absolute",
-          left: size * 0.52,
-          top: -size * 0.07,
-          width: size * 0.3,
-          height: size * 0.2,
-          borderRadius: size,
-          backgroundColor: "rgba(255,255,255,0.9)",
-        }}
-      />
-    </Animated.View>
   );
 }
 
@@ -834,7 +746,7 @@ export function FarmScreen() {
   const moveTo = useCallback(
     (x: number, y: number) => {
       const targetX = Math.min(Math.max(x, 2), VIEW_W - 14);
-      const targetY = Math.min(Math.max(y, 88), VIEW_H - 20);
+      const targetY = Math.min(Math.max(y, 138), VIEW_H - 20);
       const dist = Math.hypot(targetX - px.value, targetY - py.value);
       face.value = targetX < px.value ? -1 : 1;
       const duration = Math.min(820, 180 + dist * 9);
@@ -911,10 +823,9 @@ export function FarmScreen() {
             star: Math.max(0, Number(data.seeds.star) || 0),
           });
         }
-        if (Array.isArray(data.plots) && data.plots.length === PLOT_COUNT) {
+        if (Array.isArray(data.plots) && data.plots.length > 0) {
           const vNowNow = realNow + shift;
-          setPlots(
-            data.plots.map((p) => {
+          const parsed = data.plots.slice(0, PLOT_COUNT).map((p) => {
               const kind =
                 p?.crop === "radish" ||
                 p?.crop === "berry" ||
@@ -943,8 +854,10 @@ export function FarmScreen() {
                 lastSync: vNowNow,
                 wetUntil: p.watered ? vNowNow + WET_MS / 2 : 0,
               };
-            }),
-          );
+          });
+          // 9 格老存档自动补齐到 16 格，原有作物数据不丢
+          while (parsed.length < PLOT_COUNT) parsed.push(emptyPlot(vNowNow));
+          setPlots(parsed);
         }
       })
       .catch(() => {})
@@ -1274,39 +1187,17 @@ export function FarmScreen() {
       </View>
 
       {/* ---------- 场景 ---------- */}
-      <View style={{ flex: 1, overflow: "hidden", justifyContent: "flex-end" }}>
-        {/* 天空延展：渐变衔接贴图自带的天空，太阳 / 月亮只由贴图提供，避免出现两个 */}
-        <LinearGradient
-          colors={
-            night ? ["#04060E", SKY_FILL.night] : ["#5EA8E4", SKY_FILL.day]
-          }
-          style={{ flex: 1, overflow: "hidden" }}
-        >
-          {night ? (
-            SKY_STARS.map((s) => (
-              <View
-                key={s.id}
-                style={{
-                  position: "absolute",
-                  left: s.left,
-                  top: s.top,
-                  width: s.size,
-                  height: s.size,
-                  borderRadius: s.size,
-                  backgroundColor: "#FFFFFF",
-                  opacity: s.o,
-                }}
-              />
-            ))
-          ) : (
-            <>
-              <Cloud left={width * 0.04} top={18} size={104} delay={0} />
-              <Cloud left={width * 0.52} top={64} size={78} delay={5200} />
-            </>
-          )}
-        </LinearGradient>
+      {/* 贴图自身含完整天空（含太阳/月亮/星空），天空延展也画进了贴图，这里不再有代码画的天空 */}
+      <View
+        style={{
+          flex: 1,
+          overflow: "hidden",
+          justifyContent: "flex-end",
+          backgroundColor: night ? SKY_BG.night : SKY_BG.day,
+        }}
+      >
 
-        {/* 场景贴底：贴图自身含天空，多出来的高度只用于很窄的渐变延展 */}
+        {/* 场景贴底：贴图自己带完整天空，高于容器时从顶部裁掉多余的天空 */}
         <View style={{ width, height: sceneH, overflow: "hidden", flexShrink: 0 }}>
           <Animated.View style={[StyleSheet.absoluteFill, dayLayerStyle]}>
             <Image
