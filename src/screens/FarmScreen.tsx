@@ -54,6 +54,7 @@ import {
   YUJIE_ROWS,
   cropRects,
   type CropKind,
+  type PropKind,
 } from "@/components/farm/sprites";
 import { BugGame } from "@/components/farm/BugGame";
 import { HouseInterior } from "@/components/farm/HouseInterior";
@@ -87,10 +88,31 @@ const CHICKEN_AT = { x: 156, y: 196 };
 /** 三个儿子：院子里分散站位，不挤在一起 */
 const XIAOBA_AT = { x: 10, y: 164 };
 const YUJIE_AT = { x: 80, y: 222 };
-const WEIGANG_AT = { x: 152, y: 262 };
+const WEIGANG_AT = { x: 174, y: 234 };
 
 /** 房子所占区域：轻点即进屋睡觉 */
 const HOUSE_RECT = { x: 3, y: 92, w: 78, h: 56 };
+
+/** 水池：画进背景贴图里的大水池，轻点去打水；坐标必须与贴图一致 */
+const POND = { x: 100, y: 262, w: 68, h: 36 };
+/** 一壶水能浇几块地 */
+const WATER_CAP = 3;
+
+/** 空地上的树、花、灌木（纯装饰，点击穿透） */
+const DECOR: { kind: PropKind; x: number; y: number }[] = [
+  { kind: "pine", x: 12, y: 232 },
+  { kind: "pine", x: 176, y: 268 },
+  { kind: "pine", x: 70, y: 290 },
+  { kind: "sunflower", x: 74, y: 248 },
+  { kind: "sunflower", x: 154, y: 238 },
+  { kind: "sunflower", x: 22, y: 276 },
+  { kind: "flowers", x: 96, y: 244 },
+  { kind: "flowers", x: 158, y: 302 },
+  { kind: "flowers", x: 6, y: 258 },
+  { kind: "flowers", x: 120, y: 306 },
+  { kind: "bush", x: 84, y: 230 },
+  { kind: "bush", x: 146, y: 226 },
+];
 
 const SAVE_KEY = "dark-study-farm";
 
@@ -104,14 +126,15 @@ function plotPos(i: number) {
 const MINUTE = 60_000;
 const DAY = 24 * MINUTE * 60;
 
-/** 作物：种子价 / 售价 / 从种下到成熟所需的真实时间 */
+/** 作物：种子价 / 售价 / 从种下到成熟所需的真实时间
+ *  利润刻意压薄：按时长算三档收益接近，避免金币像水一样涨 */
 const CROP_META: Record<
   CropKind,
   { price: number; sell: number; growMs: number }
 > = {
-  radish: { price: 20, sell: 55, growMs: 3 * MINUTE },
-  berry: { price: 45, sell: 120, growMs: 7 * MINUTE },
-  star: { price: 90, sell: 260, growMs: 14 * MINUTE },
+  radish: { price: 14, sell: 20, growMs: 8 * MINUTE },
+  berry: { price: 34, sell: 48, growMs: 18 * MINUTE },
+  star: { price: 78, sell: 112, growMs: 34 * MINUTE },
 };
 
 /** 浇一次水保持湿润的时长：湿润期按真实时间 1:1 生长，干土只有 35% 速度 */
@@ -142,6 +165,8 @@ interface SaveData {
   seeds: Record<CropKind, number>;
   plots: PlotState[];
   harvested: number;
+  /** 水壶剩余次数（老存档没有这个字段，读档时补 0） */
+  water?: number;
 }
 
 /** 兼容老存档的宽结构 */
@@ -157,6 +182,7 @@ interface RawSave {
     watered?: boolean;
   })[];
   harvested?: number;
+  water?: number;
   day?: number;
 }
 
@@ -596,11 +622,14 @@ function NameTag({
   accent,
   scale,
   hit,
+  center = 8,
 }: {
   label: string;
   accent: string;
   scale: number;
   hit: boolean;
+  /** 名牌对准精灵中心的横向单位（默认按 16 宽精灵） */
+  center?: number;
 }) {
   return (
     <View
@@ -608,7 +637,7 @@ function NameTag({
       style={{
         position: "absolute",
         top: -19,
-        left: 8 * scale - 17,
+        left: center * scale - 17,
         width: 34,
         height: 14,
         borderRadius: 7,
@@ -675,6 +704,10 @@ export function FarmScreen() {
   );
   const [harvested, setHarvested] = useState(0);
   const [selected, setSelected] = useState<CropKind>("radish");
+  /** 水壶里还能浇几次；必须先去水池打水 */
+  const [water, setWater] = useState(0);
+  /** 小铺一次买几包 */
+  const [qty, setQty] = useState(1);
 
   const [houseOpen, setHouseOpen] = useState(false);
   const [gameOpen, setGameOpen] = useState(false);
@@ -746,7 +779,19 @@ export function FarmScreen() {
   const moveTo = useCallback(
     (x: number, y: number) => {
       const targetX = Math.min(Math.max(x, 2), VIEW_W - 14);
-      const targetY = Math.min(Math.max(y, 138), VIEW_H - 20);
+      let targetY = Math.min(Math.max(y, 138), VIEW_H - 20);
+      // 水池里不能站人：贴着岸边停下
+      if (
+        targetX > POND.x - 4 &&
+        targetX < POND.x + POND.w + 4 &&
+        targetY > POND.y - 4 &&
+        targetY < POND.y + POND.h + 4
+      ) {
+        targetY =
+          targetY < POND.y + POND.h / 2
+            ? POND.y - 5
+            : POND.y + POND.h + 4;
+      }
       const dist = Math.hypot(targetX - px.value, targetY - py.value);
       face.value = targetX < px.value ? -1 : 1;
       const duration = Math.min(820, 180 + dist * 9);
@@ -813,6 +858,9 @@ export function FarmScreen() {
         }
 
         if (typeof data.coins === "number") setCoins(Math.max(0, data.coins));
+        if (typeof data.water === "number") {
+          setWater(Math.min(WATER_CAP, Math.max(0, data.water)));
+        }
         if (typeof data.harvested === "number") {
           setHarvested(Math.max(0, data.harvested));
         }
@@ -879,9 +927,10 @@ export function FarmScreen() {
       seeds,
       plots,
       harvested,
+      water,
     };
     AsyncStorage.setItem(SAVE_KEY, JSON.stringify(payload)).catch(() => {});
-  }, [loaded, epoch, timeShift, coins, seeds, plots, harvested]);
+  }, [loaded, epoch, timeShift, coins, seeds, plots, harvested, water]);
 
   /* ---------------- 操作 ---------------- */
   const actOnPlot = (index: number) => {
@@ -929,6 +978,12 @@ export function FarmScreen() {
       return;
     }
 
+    if (water <= 0) {
+      showToast("水壶空了，先去水池打水");
+      return;
+    }
+
+    setWater((w) => Math.max(0, w - 1));
     setPlots((ps) =>
       ps.map((p, i) =>
         i === index
@@ -936,7 +991,18 @@ export function FarmScreen() {
           : p,
       ),
     );
-    showToast("浇水了，接下来半小时长得很快");
+    showToast(`浇水了，接下来长得很快 · 水壶还剩 ${water - 1} 次`);
+  };
+
+  /** 去水池打水：走到岸边，把水壶灌满 */
+  const fetchWater = () => {
+    moveTo(POND.x + POND.w / 2, POND.y + POND.h + 6);
+    if (water >= WATER_CAP) {
+      showToast(`水壶是满的（${water}/${WATER_CAP}）`);
+      return;
+    }
+    setWater(WATER_CAP);
+    showToast(`打满水壶，能浇 ${WATER_CAP} 块地`);
   };
 
   /** 点击房子：先走到门口，再进屋 */
@@ -961,16 +1027,11 @@ export function FarmScreen() {
     showToast(`第 ${nextDay} 天 · 早上 7:00，作物悄悄长高了`);
   };
 
-  /** 抓虫小游戏结算：游戏时长也算进农场时间，作物自然长得更快 */
+  /** 抓虫小游戏结算：游戏时长也算进农场时间，作物自然长得更快（不再直接发金币，钱靠种地） */
   const finishBugGame = (score: number, jumpMs: number) => {
     setTimeShift((s) => s + jumpMs);
-    if (score > 0) setCoins((c) => c + Math.floor(score / 2));
     const mins = Math.max(1, Math.round(jumpMs / MINUTE));
-    showToast(
-      `抓了 ${score} 只虫，农场时间前进了 ${mins} 分钟${
-        score > 0 ? `，金币 +${Math.floor(score / 2)}` : ""
-      }`,
-    );
+    showToast(`抓了 ${score} 只虫，农场时间前进了 ${mins} 分钟，作物长大了一截`);
   };
 
   const openBugGame = () => {
@@ -980,14 +1041,14 @@ export function FarmScreen() {
 
 
   const buy = (kind: CropKind) => {
-    const price = CROP_META[kind].price;
+    const price = CROP_META[kind].price * qty;
     if (coins < price) {
       showToast("金币不够，先去收点作物吧");
       return;
     }
     setCoins((c) => c - price);
-    setSeeds((s) => ({ ...s, [kind]: s[kind] + 1 }));
-    showToast(`买到了${CROP_ART[kind].label}种子`);
+    setSeeds((s) => ({ ...s, [kind]: s[kind] + qty }));
+    showToast(`买到了 ${qty} 包${CROP_ART[kind].label}种子`);
   };
 
   const openTalk = (who: Speaker) => {
@@ -1183,6 +1244,40 @@ export function FarmScreen() {
               {coins}
             </Text>
           </View>
+
+          <Pressable
+            onPress={fetchWater}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              borderRadius: 999,
+              paddingHorizontal: 10,
+              paddingVertical: 6,
+              backgroundColor: water > 0
+                ? "rgba(94,200,242,0.14)"
+                : "rgba(246,238,220,0.06)",
+              borderWidth: 1,
+              borderColor: water > 0
+                ? "rgba(94,200,242,0.42)"
+                : "rgba(246,238,220,0.14)",
+            }}
+          >
+            <Ionicons
+              name="water"
+              size={12}
+              color={water > 0 ? "#5EC8F2" : "rgba(246,238,220,0.45)"}
+            />
+            <Text
+              style={{
+                color: water > 0 ? "#9BD9FF" : "rgba(246,238,220,0.45)",
+                fontSize: 12,
+                fontWeight: "800",
+                marginLeft: 4,
+              }}
+            >
+              {`${water}/${WATER_CAP}`}
+            </Text>
+          </Pressable>
         </View>
       </View>
 
@@ -1359,6 +1454,77 @@ export function FarmScreen() {
             );
           })}
 
+          {/* 水池：轻点打水 */}
+          <Pressable
+            onPress={fetchWater}
+            accessibilityRole="button"
+            accessibilityLabel="在水池打水"
+            style={{
+              position: "absolute",
+              left: POND.x * scale,
+              top: POND.y * scale,
+              width: POND.w * scale,
+              height: POND.h * scale,
+              borderRadius: (POND.w * scale) / 2,
+              zIndex: 4,
+            }}
+          />
+          <View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              left: (POND.x + POND.w / 2 - 20) * scale,
+              top: (POND.y - 6) * scale,
+              zIndex: 4,
+            }}
+          >
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                borderRadius: 999,
+                paddingHorizontal: 7,
+                paddingVertical: 3,
+                backgroundColor: "rgba(14,26,18,0.66)",
+                borderWidth: 1,
+                borderColor: "rgba(94,200,242,0.28)",
+              }}
+            >
+              <Ionicons name="water" size={9} color="#9BD9FF" />
+              <Text
+                style={{
+                  marginLeft: 4,
+                  color: "rgba(246,238,220,0.86)",
+                  fontSize: 8.5,
+                  fontWeight: "700",
+                  fontFamily: PIXEL_FONT,
+                }}
+              >
+                打水
+              </Text>
+            </View>
+          </View>
+
+          {/* 空地装饰：树、花、灌木 */}
+          {DECOR.map((d, i) => (
+            <View
+              key={`deco-${i}`}
+              pointerEvents="none"
+              style={{
+                position: "absolute",
+                left: d.x * scale,
+                top: d.y * scale,
+                zIndex: 2,
+              }}
+            >
+              <PixelSprite
+                rows={PROP_ART[d.kind].rows}
+                palette={PROP_ART[d.kind].palette}
+                pixel={scale}
+              />
+            </View>
+          ))}
+
           {/* 顾 */}
           <View
             style={{
@@ -1462,12 +1628,13 @@ export function FarmScreen() {
               playerStyle,
             ]}
           >
+            <NameTag label="你" accent="#F5C466" scale={scale} hit center={7} />
             <View
               style={{
                 position: "absolute",
                 left: 2 * scale,
-                top: 17 * scale,
-                width: 8 * scale,
+                top: 19 * scale,
+                width: 10 * scale,
                 height: 2 * scale,
                 borderRadius: 99,
                 backgroundColor: "rgba(0,0,0,0.18)",
@@ -1530,7 +1697,7 @@ export function FarmScreen() {
             textAlign: "center",
           }}
         >
-          轻点土地耕作　·　轻点房子进屋睡觉　·　轻点小人聊天
+          轻点土地耕作　·　轻点水池打水　·　轻点房子睡觉　·　轻点小人聊天
         </Text>
 
         <View style={{ flexDirection: "row", gap: 8 }}>
@@ -1709,6 +1876,67 @@ export function FarmScreen() {
                 </Pressable>
               </View>
 
+              {/* 买几包 */}
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 6,
+                  marginBottom: 4,
+                }}
+              >
+                <Text
+                  style={{
+                    color: "rgba(246,238,220,0.5)",
+                    fontSize: 10,
+                    marginRight: 2,
+                  }}
+                >
+                  数量
+                </Text>
+                {[1, 5, 10].map((n) => {
+                  const on = qty === n;
+                  return (
+                    <Pressable
+                      key={n}
+                      onPress={() => setQty(n)}
+                      style={{
+                        paddingHorizontal: 10,
+                        paddingVertical: 5,
+                        borderRadius: 999,
+                        borderWidth: 1,
+                        borderColor: on
+                          ? "rgba(143,209,79,0.6)"
+                          : "rgba(246,238,220,0.12)",
+                        backgroundColor: on
+                          ? "rgba(143,209,79,0.16)"
+                          : "rgba(246,238,220,0.04)",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 10.5,
+                          fontWeight: "700",
+                          color: on ? "#8FD14F" : "rgba(246,238,220,0.55)",
+                        }}
+                      >
+                        {`×${n}`}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+                <Text
+                  style={{
+                    flex: 1,
+                    textAlign: "right",
+                    color: "rgba(246,238,220,0.4)",
+                    fontSize: 10,
+                  }}
+                >
+                  {`持有 ${coins} 金币`}
+                </Text>
+              </View>
+
               {(Object.keys(CROP_ART) as CropKind[]).map((kind) => (
                 <View
                   key={kind}
@@ -1744,17 +1972,19 @@ export function FarmScreen() {
                         marginTop: 2,
                       }}
                     >
-                      {`价格 ${CROP_META[kind].price} · 成熟后卖 ${CROP_META[kind].sell}`}
+                      {`${CROP_META[kind].price} 金币/包 · 成熟卖 ${
+                        CROP_META[kind].sell
+                      } · ${Math.round(CROP_META[kind].growMs / MINUTE)} 分钟`}
                     </Text>
                   </View>
                   <Pressable
                     onPress={() => buy(kind)}
                     style={{
                       borderRadius: 999,
-                      paddingHorizontal: 14,
+                      paddingHorizontal: 12,
                       paddingVertical: 7,
                       backgroundColor:
-                        coins >= CROP_META[kind].price
+                        coins >= CROP_META[kind].price * qty
                           ? "#8FD14F"
                           : "rgba(246,238,220,0.12)",
                     }}
@@ -1764,12 +1994,12 @@ export function FarmScreen() {
                         fontSize: 11.5,
                         fontWeight: "800",
                         color:
-                          coins >= CROP_META[kind].price
+                          coins >= CROP_META[kind].price * qty
                             ? "#152A12"
                             : "rgba(246,238,220,0.4)",
                       }}
                     >
-                      买入
+                      {`买入 ×${qty} · ${CROP_META[kind].price * qty}`}
                     </Text>
                   </Pressable>
                 </View>

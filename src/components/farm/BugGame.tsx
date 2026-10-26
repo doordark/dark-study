@@ -344,18 +344,6 @@ export function BugGame({ visible, onClose, onFinish }: BugGameProps) {
                 >
                   {`农场时间前进 ${Math.max(1, Math.round(jumpMs / MINUTE))} 分钟，作物趁这段时间长了一截`}
                 </Text>
-                {score > 0 ? (
-                  <Text
-                    style={{
-                      marginTop: 4,
-                      color: "#F5C466",
-                      fontSize: 10,
-                      fontWeight: "700",
-                    }}
-                  >
-                    {`金币 +${Math.floor(score / 2)}`}
-                  </Text>
-                ) : null}
               </View>
               <View style={{ flexDirection: "row", gap: 8 }}>
                 <Pressable
