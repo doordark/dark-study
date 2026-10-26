@@ -561,6 +561,23 @@ export function AssistantScreen() {
                         </Text>
                       </View>
                     ) : null}
+                    {whale ? (
+                      <Pressable
+                        onPress={toggleVoice}
+                        hitSlop={10}
+                        accessibilityRole="button"
+                        accessibilityLabel={voiceOn ? "关闭鱼语" : "开启鱼语"}
+                        className={`ml-1.5 h-7 w-7 items-center justify-center rounded-full ${
+                          voiceOn ? "bg-sky-400/20" : "bg-white/25 dark:bg-white/[0.07]"
+                        }`}
+                      >
+                        <Ionicons
+                          name={voiceOn ? "volume-high" : "volume-mute"}
+                          size={15}
+                          color={voiceOn ? "#0EA5E9" : "#94A3B8"}
+                        />
+                      </Pressable>
+                    ) : null}
                   </View>
                 </View>
                 <View style={{ position: "relative", zIndex: 20 }}>
@@ -606,35 +623,6 @@ export function AssistantScreen() {
           {/* 消息区：鲸鱼模式下垫一层会漂的可爱贴图 */}
           <View className="flex-1">
             {whale ? <WhaleDeco /> : null}
-            {/* 声音开关：放在聊天框最上方，一眼能看到鱼语是开还是关 */}
-            {whale ? (
-              <View className="z-10 flex-row justify-end px-5 pb-1">
-                <Pressable
-                  onPress={toggleVoice}
-                  hitSlop={6}
-                  className={`flex-row items-center rounded-full border px-2.5 py-1 ${
-                    voiceOn
-                      ? "border-sky-400/40 bg-sky-400/20"
-                      : "border-slate-400/25 bg-white/30 dark:bg-white/[0.06]"
-                  }`}
-                >
-                  <Ionicons
-                    name={voiceOn ? "volume-high" : "volume-mute"}
-                    size={12}
-                    color={voiceOn ? "#0EA5E9" : "#94A3B8"}
-                  />
-                  <Text
-                    className={`ml-1 text-[10px] font-bold ${
-                      voiceOn
-                        ? "text-sky-600 dark:text-sky-300"
-                        : "text-slate-500 dark:text-slate-400"
-                    }`}
-                  >
-                    {voiceOn ? "鱼语开启" : "已静音"}
-                  </Text>
-                </Pressable>
-              </View>
-            ) : null}
             <ScrollView
               ref={scrollRef}
               className="flex-1 px-5"
@@ -651,10 +639,14 @@ export function AssistantScreen() {
                     intensity={38}
                     borderOpacity={0.2}
                   >
-                    <View className="items-center px-5 py-8">
-                      <View className="h-[68px] w-[68px] items-center justify-center overflow-hidden rounded-[22px] bg-sky-400/25">
+                    <View className="items-center px-5 pb-6 pt-5">
+                      <View
+                        className={`items-center justify-center overflow-hidden rounded-[28px] bg-sky-400/25 ${
+                          whale ? "h-[96px] w-[96px]" : "h-[68px] w-[68px]"
+                        }`}
+                      >
                         {whale ? (
-                          <WhaleAvatar size={62} />
+                          <WhaleAvatar size={88} />
                         ) : (
                           <Ionicons
                             name="chatbubble-ellipses"
@@ -668,19 +660,20 @@ export function AssistantScreen() {
                       </Text>
                       {whale ? (
                         <Text className="mt-1 text-center text-[10.5px] text-slate-500 dark:text-slate-400">
-                          大爹，今天想让我做点什么？改课表也行，摸鱼也行。
+                          大爹，今天想让我做点什么？下面直接说就行。
                         </Text>
                       ) : null}
-                      <View className="mt-3 w-full gap-y-2">
-                        {(whale ? WHALE_SUGGESTIONS : SUGGESTIONS).map((s) => (
-                          <SuggestionButton
-                            key={s}
-                            label={s}
-                            onPress={() => send(s)}
-                            cute={whale}
-                          />
-                        ))}
-                      </View>
+                      {whale ? null : (
+                        <View className="mt-3 w-full gap-y-2">
+                          {SUGGESTIONS.map((s) => (
+                            <SuggestionButton
+                              key={s}
+                              label={s}
+                              onPress={() => send(s)}
+                            />
+                          ))}
+                        </View>
+                      )}
                     </View>
                   </GlassContainer>
                 </Animated.View>
