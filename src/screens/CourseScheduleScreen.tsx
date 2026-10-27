@@ -31,10 +31,12 @@ import {
   GlassTargetProvider,
 } from "@/components/GlassContainer";
 import { NightSky } from "@/components/NightSky";
+import { WhaleAvatar } from "@/components/WhaleAvatar";
 import { WeekGrid } from "@/components/WeekGrid";
 import { GravityBadge, GravityCard } from "@/components/ZeroG";
 import { WEEKDAY_LABELS } from "@/constants/palette";
 import { useActiveSchedule, useStore } from "@/store/useStore";
+import { useWhalePet } from "@/store/useWhalePet";
 import type { Course } from "@/types";
 import {
   findConflicts,
@@ -247,6 +249,9 @@ export function CourseScheduleScreen({
     setEditing(undefined);
   };
 
+  // 大肥鱼召唤出来后，中间主按钮的图标换成她的头像
+  const petVisible = useWhalePet((s) => s.visible);
+
   const actions: ActionItem[] = [
     {
       key: "add",
@@ -257,15 +262,16 @@ export function CourseScheduleScreen({
     {
       key: "import",
       icon: "sparkles",
-      label: "AI 识图",
+      label: "导入",
       onPress: onImport,
     },
     {
       key: "assistant",
       icon: "chatbubble-ellipses",
-      label: "导入",
+      label: "助手",
       primary: true,
       onPress: onAssistant,
+      iconNode: petVisible ? <WhaleAvatar size={44} /> : undefined,
     },
     { key: "grades", icon: "school", label: "成绩", onPress: onGrades },
     { key: "settings", icon: "options", label: "设置", onPress: onSettings },

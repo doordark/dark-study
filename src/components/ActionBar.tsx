@@ -22,6 +22,8 @@ export interface ActionItem {
   primary?: boolean;
   /** 当前选中态 */
   active?: boolean;
+  /** 自定义图标内容（主按钮可换成头像之类），优先于 icon */
+  iconNode?: React.ReactNode;
 }
 
 const SPRING = { damping: 15, stiffness: 150, mass: 0.6 };
@@ -71,7 +73,9 @@ function TabButton({ item }: { item: ActionItem }) {
                 // 会被光栅化成实心块（闪烁方框），光效交给渐变 + iOS 阴影
               }}
             >
-              <Ionicons name={item.icon} size={22} color="#FFFFFF" />
+              {item.iconNode ?? (
+                <Ionicons name={item.icon} size={22} color="#FFFFFF" />
+              )}
             </LinearGradient>
           ) : (
             /* 普通 tab：选中态有玻璃光晕 */
