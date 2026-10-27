@@ -44,17 +44,26 @@ export const useWhaleMemory = create<WhaleMemoryState>()(
             typeof next === "function" ? next(s.messages) : next,
           ),
         })),
-      archive: () =>
+      archive: () => {
+        // 退场动画还没收完就又把她叫回来了：这段对话还在继续，别归档把它抹掉
+        if (get().active) return;
         set((s) =>
           // 收回人格时把这段对话存成记忆（重进时原样接回来，不会重复堆叠）
           s.messages.length
             ? { memory: cap(s.messages), messages: [] }
             : { messages: [] },
-        ),
+        );
+      },
       restore: () => {
         const { messages, memory } = get();
-        if (messages.length || !memory.length) return;
-        set({ messages: cap(memory) });
+        if (!memory.length) return;
+        // 把记住的那段对话接回最前面：不管召唤时列表里已经有几句，
+        // 都能看到上次聊的内容，而不是被一句开场白顶掉
+        const seen = new Set(messages.map((m) => m.id));
+        set({
+          messages: cap([...memory.filter((m) => !seen.has(m.id)), ...messages]),
+          memory: [],
+        });
       },
       removeMessages: (ids) => {
         if (!ids.length) return;

@@ -36,6 +36,7 @@ import { WeekGrid } from "@/components/WeekGrid";
 import { GravityBadge, GravityCard } from "@/components/ZeroG";
 import { WEEKDAY_LABELS } from "@/constants/palette";
 import { useActiveSchedule, useStore } from "@/store/useStore";
+import { useWhaleMemory } from "@/store/useWhaleMemory";
 import { useWhalePet } from "@/store/useWhalePet";
 import type { Course } from "@/types";
 import { selectHaptic, thumpHaptic } from "@/utils/haptics";
@@ -253,8 +254,10 @@ export function CourseScheduleScreen({
     setEditing(undefined);
   };
 
-  // 大肥鱼召唤出来后，中间主按钮的图标换成她的头像
+  // 大肥鱼在场（人格形态或在屏幕边上趴着），中间主按钮的图标换成她的头像
+  const whaleActive = useWhaleMemory((s) => s.active);
   const petVisible = useWhalePet((s) => s.visible);
+  const whaleMode = whaleActive || petVisible;
 
   const actions: ActionItem[] = [
     {
@@ -275,7 +278,7 @@ export function CourseScheduleScreen({
       label: "助手",
       primary: true,
       onPress: onAssistant,
-      iconNode: petVisible ? <WhaleAvatar size={44} /> : undefined,
+      iconNode: whaleMode ? <WhaleAvatar size={44} /> : undefined,
     },
     { key: "grades", icon: "school", label: "成绩", onPress: onGrades },
     { key: "settings", icon: "options", label: "设置", onPress: onSettings },
