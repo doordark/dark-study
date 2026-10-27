@@ -38,6 +38,7 @@ import { WEEKDAY_LABELS } from "@/constants/palette";
 import { useActiveSchedule, useStore } from "@/store/useStore";
 import { useWhalePet } from "@/store/useWhalePet";
 import type { Course } from "@/types";
+import { selectHaptic, thumpHaptic } from "@/utils/haptics";
 import {
   findConflicts,
   getDateInfo,
@@ -104,6 +105,7 @@ export function CourseScheduleScreen({
   const gravityTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleWeekTitleLongPress = () => {
+    thumpHaptic();
     setGravityToken((t) => t + 1);
     setGravityOff(true);
     if (gravityTimer.current) clearTimeout(gravityTimer.current);
@@ -121,6 +123,7 @@ export function CourseScheduleScreen({
     tapsRef.current.push(t);
     const count = tapsRef.current.length;
     setSecretCharge(Math.min(count, 7));
+    selectHaptic();
     if (chargeTimer.current) clearTimeout(chargeTimer.current);
     chargeTimer.current = setTimeout(() => {
       tapsRef.current = [];
@@ -129,6 +132,7 @@ export function CourseScheduleScreen({
     if (count >= 7) {
       tapsRef.current = [];
       setSecretCharge(0);
+      thumpHaptic();
       setNightOpen(true);
     }
   };

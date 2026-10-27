@@ -126,7 +126,9 @@ export type WhaleAction =
   /** 把大肥鱼叫出来当桌宠，挂在屏幕边上陪着 */
   | { type: "summon_pet" }
   /** 把桌宠收回水里 */
-  | { type: "dismiss_pet" };
+  | { type: "dismiss_pet" }
+  /** 忘掉和大爹聊过的内容 */
+  | { type: "forget_memory" };
 
 /** 桌宠能做的动作（由对话驱动，全部在客户端本地播放） */
 export type PetActionKind =

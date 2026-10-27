@@ -23,6 +23,7 @@ import Animated, {
   useAnimatedStyle,
   useFrameCallback,
   useSharedValue,
+  withDelay,
   withRepeat,
   withSequence,
   withSpring,
@@ -48,6 +49,7 @@ import { useSettings } from "@/store/useSettings";
 import { useWhalePet } from "@/store/useWhalePet";
 import type { WhaleCare } from "@/store/useWhalePet";
 import { useWhaleVoice } from "@/store/useWhaleVoice";
+import { bumpHaptic, successHaptic, tapHaptic, warnHaptic } from "@/utils/haptics";
 import type {
   AssistantAction,
   PetActionKind,
@@ -388,7 +390,7 @@ function WhalePetLayer() {
     armIdle();
   };
 
-  // 登场：从右下角弹出来，开场招呼只显示一小会儿
+  // 登场：从屏幕正中蹦出来，弹一下落到中间偏下的位置
   useEffect(() => {
     const lo = insets.top + 48;
     const hi = Math.max(lo, height - H - insets.bottom - FLOOR_RESERVE);
@@ -396,9 +398,25 @@ function WhalePetLayer() {
     maxX.value = Math.max(EDGE, width - SIZE - EDGE);
     minY.value = lo;
     maxY.value = hi;
-    boxX.value = maxX.value;
-    boxY.value = Math.min(Math.max(height * 0.62, lo), hi);
-    scale.value = withSpring(1, { damping: 14, stiffness: 190 });
+    const restY = Math.min(Math.max(height * 0.56, lo), hi);
+    boxX.value = Math.max(EDGE, (width - SIZE) / 2);
+    boxY.value = restY + 30;
+    // 先缩成一小团，再弹出来（轻微超出再落回），跟着向上跳一下
+    scale.value = withSequence(
+      withTiming(0.12, { duration: 0 }),
+      withSpring(1.08, { damping: 8, stiffness: 230 }),
+      withSpring(1, { damping: 14, stiffness: 200 }),
+    );
+    boxY.value = withDelay(
+      70,
+      withSequence(
+        withTiming(restY - 52, {
+          duration: 190,
+          easing: Easing.out(Easing.cubic),
+        }),
+        withSpring(restY, { damping: 8, stiffness: 220 }),
+      ),
+    );
     bubbleTimer.current = setTimeout(() => setBubble(null), 4600);
     armIdle();
     return () => {
@@ -849,6 +867,7 @@ function WhalePetLayer() {
   };
 
   const onPetPress = () => {
+    tapHaptic();
     if (chatOpen) {
       poke();
       return;
@@ -965,7 +984,13 @@ function WhalePetLayer() {
   const applyPending = (id: string) => {
     const msg = chatMsgs.find((m) => m.id === id);
     if (!msg?.actions?.length) return;
-    const summary = applyScheduleActions(msg.actions, schedule).join("；");
+    const results = applyScheduleActions(msg.actions, schedule);
+    if (results.some((r) => r.includes("失败") || r.includes("未找到"))) {
+      warnHaptic();
+    } else {
+      successHaptic();
+    }
+    const summary = results.join("；");
     setChatMsgs((prev) =>
       [
         ...prev.map((m) =>
@@ -1087,6 +1112,7 @@ function WhalePetLayer() {
 
   const dismiss = () => {
     if (leaveTimer.current) return;
+    bumpHaptic();
     stopWhaleVoice();
     closeChat();
     stopAction();

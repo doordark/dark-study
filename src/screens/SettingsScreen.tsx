@@ -33,6 +33,7 @@ import {
 } from "@/services/updater";
 import { useSettings } from "@/store/useSettings";
 import { useUpdateTask } from "@/store/useUpdateTask";
+import { useWhaleMemory } from "@/store/useWhaleMemory";
 import { useActiveSchedule, useStore } from "@/store/useStore";
 import type { Schedule } from "@/types";
 import {
@@ -310,6 +311,9 @@ export function SettingsScreen() {
   const mergeSchedule = useStore((s) => s.mergeSchedule);
   const grades = useStore((s) => s.grades);
   const resetToSample = useStore((s) => s.resetToSample);
+  // 只有处于大肥鱼人格时才提供「删除记忆」
+  const whaleActive = useWhaleMemory((s) => s.active);
+  const clearWhaleMemory = useWhaleMemory((s) => s.clearMemory);
 
   const [editing, setEditing] = useState(apiKey);
   const [saved, setSaved] = useState(false);
@@ -762,6 +766,30 @@ export function SettingsScreen() {
                     重置为示例数据
                   </Text>
                 </Pressable>
+
+                {whaleActive ? (
+                  <Pressable
+                    onPress={() =>
+                      Alert.alert(
+                        "删除大肥鱼记忆",
+                        "会清空与大肥鱼的全部聊天记录与记忆，无法恢复。",
+                        [
+                          { text: "取消", style: "cancel" },
+                          {
+                            text: "删除",
+                            style: "destructive",
+                            onPress: clearWhaleMemory,
+                          },
+                        ],
+                      )
+                    }
+                    className="mt-2 items-center rounded-2xl border border-sky-400/40 bg-sky-400/15 py-3"
+                  >
+                    <Text className="text-[12.5px] font-semibold text-sky-500 dark:text-sky-300">
+                      删除大肥鱼记忆
+                    </Text>
+                  </Pressable>
+                ) : null}
               </View>
             </GlassContainer>
           </Animated.View>

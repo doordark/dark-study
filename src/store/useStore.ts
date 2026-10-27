@@ -205,6 +205,8 @@ interface AppState {
   addGrade: (grade: Omit<GradeRecord, "id">) => string;
   updateGrade: (id: string, patch: Partial<GradeRecord>) => void;
   removeGrade: (id: string) => void;
+  /** 批量删除成绩（勾选删除 / 清空学期） */
+  removeGrades: (ids: string[]) => void;
   /** 新建学年并切换为当前，返回学年 id */
   addGradeYear: (name: string) => string;
   /** 重命名学年 */
@@ -433,6 +435,12 @@ export const useStore = create<AppState>()(
 
       removeGrade: (id) =>
         set((s) => ({ grades: s.grades.filter((g) => g.id !== id) })),
+
+      removeGrades: (ids) =>
+        set((s) => {
+          const drop = new Set(ids);
+          return { grades: s.grades.filter((g) => !drop.has(g.id)) };
+        }),
 
       addGradeYear: (name) => {
         const id = `year-${uid()}`;

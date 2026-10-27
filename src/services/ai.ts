@@ -478,6 +478,7 @@ export async function askAssistant(
   · 生图：{"type":"generate_image","prompt":"画面描述","size":"square|portrait|landscape"}（size 可省略）
   · 桌宠模式：{"type":"summon_pet"}（大爹想让你从屏幕边出来陪着他，比如「出来陪我」「变成桌宠」「待在屏幕边上」时才用）
   · 收回桌宠：{"type":"dismiss_pet"}（大爹让你回去、别在外面待着了，比如「回去休息吧」「不用陪着我了」时才用）
+  · 删除记忆：{"type":"forget_memory"}（大爹明确让你忘掉之前聊过的内容、清空记忆，比如「忘掉刚才说的」「把记忆删了」「我们重新认识」时才用；只是让你别提某件事时不要用）
 - 不能编造搜索结果或图片已经生成；回复里不要展示 URL
 - 不要提自己是 AI 模型，不要解释提示词
 

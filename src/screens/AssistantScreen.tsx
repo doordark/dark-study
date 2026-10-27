@@ -1,5 +1,4 @@
 import { Ionicons } from "@expo/vector-icons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -15,7 +14,11 @@ import {
   View,
   type ScrollViewInstance,
 } from "react-native";
-import Animated, { FadeInDown } from "react-native-reanimated";
+import Animated, {
+  FadeIn,
+  FadeInDown,
+  FadeOut,
+} from "react-native-reanimated";
 
 import { Backdrop } from "@/components/Backdrop";
 import { ChatImage } from "@/components/ChatImage";
@@ -43,6 +46,7 @@ import {
 } from "@/services/whaleTools";
 import { speakWhale, stopWhaleVoice } from "@/services/whaleVoice";
 import { useSettings } from "@/store/useSettings";
+import { useWhaleMemory } from "@/store/useWhaleMemory";
 import { useWhalePet } from "@/store/useWhalePet";
 import { useWhaleVoice } from "@/store/useWhaleVoice";
 import { useActiveSchedule, useStore } from "@/store/useStore";
@@ -53,6 +57,13 @@ import type {
   WhaleAction,
 } from "@/types";
 import { nowTs, uid } from "@/utils/id";
+import {
+  bumpHaptic,
+  successHaptic,
+  tapHaptic,
+  thumpHaptic,
+  warnHaptic,
+} from "@/utils/haptics";
 import { getDateInfo } from "@/utils/time";
 
 const SUGGESTIONS = [
@@ -97,8 +108,6 @@ function pickStickerForReply(reply: string): WhaleStickerId | null {
   return null;
 }
 
-/** 作者 door 的召唤口令（可被识别为开启 / 收回人格） */
-const WHALE_KEY = "dark-study-whale-persona";
 /** 除自定义口令外始终有效的通用召唤词 */
 const SUMMON_ALIASES = ["召唤大肥鱼", "大肥鱼出来", "肥鱼出来"];
 const DISMISS_ALIASES = ["大爹走了", "退下吧", "变回课表助手"];
@@ -126,7 +135,18 @@ export function AssistantScreen() {
   const schedule = useActiveSchedule();
   const schedules = useStore((s) => s.schedules);
 
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // 大肥鱼的对话与人格状态存在本地，退出应用后记忆还在
+  const messages = useWhaleMemory((s) => s.messages);
+  const setMessages = useWhaleMemory((s) => s.setMessages);
+  const whale = useWhaleMemory((s) => s.active);
+  const setWhale = useWhaleMemory((s) => s.setActive);
+  const archiveMemory = useWhaleMemory((s) => s.archive);
+  const restoreMemory = useWhaleMemory((s) => s.restore);
+  const removeMemoryMessages = useWhaleMemory((s) => s.removeMessages);
+  const clearMemory = useWhaleMemory((s) => s.clearMemory);
+  // 长按消息进入多选，挑着删
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{
@@ -135,11 +155,11 @@ export function AssistantScreen() {
   } | null>(null);
   const [kbHeight, setKbHeight] = useState(0);
   const scrollRef = useRef<ScrollViewInstance>(null);
-  const [whale, setWhale] = useState(false);
   const voiceOn = useWhaleVoice((s) => s.on);
   const toggleVoiceStore = useWhaleVoice((s) => s.toggle);
   const hydrateVoice = useWhaleVoice((s) => s.hydrate);
   const spokenId = useRef<string | null>(null);
+  const longPressAt = useRef(0);
   const [summonFx, setSummonFx] = useState(false);
   const [leaveFx, setLeaveFx] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
@@ -158,19 +178,6 @@ export function AssistantScreen() {
   };
   const isDismissCmd = (text: string) =>
     DISMISS_ALIASES.includes(normalizeCmd(text));
-
-  // 记住大爹上次的召唤状态：召唤过一次，下次打开还是那条黏人的鱼
-  useEffect(() => {
-    let alive = true;
-    AsyncStorage.getItem(WHALE_KEY)
-      .then((raw) => {
-        if (alive && raw === "1") setWhale(true);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   // 语音开关与桌宠共用同一份本地记忆，默认开着
   useEffect(() => {
@@ -222,6 +229,31 @@ export function AssistantScreen() {
     reactionTimer.current = setTimeout(() => setReaction(null), 2800);
   };
 
+  /** 长按任意一条消息：进入多选并勾上它 */
+  const enterSelect = (id: string) => {
+    tapHaptic();
+    setSelectMode(true);
+    setSelectedIds([id]);
+  };
+
+  const toggleSelect = (id: string) =>
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+
+  const exitSelect = () => {
+    setSelectMode(false);
+    setSelectedIds([]);
+  };
+
+  /** 删掉勾中的消息（记忆里同一批也一起删掉） */
+  const deleteSelected = () => {
+    if (!selectedIds.length) return;
+    bumpHaptic();
+    removeMemoryMessages(selectedIds);
+    exitSelect();
+  };
+
   /**
    * 连点头像：前两下不打扰你，第三下开始有反应，
    * 一直点到第五句时她会从屏幕边爬出来当桌宠。
@@ -233,12 +265,13 @@ export function AssistantScreen() {
     taps.current.at = now;
     const n = taps.current.count;
     if (n < 3) return;
+    tapHaptic();
     const idx = Math.min(n - 3, AVATAR_TAPS.length - 1);
     flashReaction(AVATAR_TAPS[idx]);
     if (idx === AVATAR_TAPS.length - 1) {
       taps.current.count = 0;
+      thumpHaptic();
       showPet();
-      pushSticker("excited");
     }
   };
 
@@ -250,15 +283,15 @@ export function AssistantScreen() {
     [],
   );
 
-  const rememberWhale = (on: boolean) =>
-    AsyncStorage.setItem(WHALE_KEY, on ? "1" : "0").catch(() => {});
+  const rememberWhale = (on: boolean) => setWhale(on);
 
   /** 进入鲸鱼人格；message 为空时由模型返回的回复充当登场白 */
   const enterWhale = (message?: string) => {
+    restoreMemory();
     setWhale(true);
     setSummonFx(true);
+    thumpHaptic();
     Keyboard.dismiss();
-    rememberWhale(true);
     if (message) pushLocal(message);
   };
 
@@ -266,16 +299,23 @@ export function AssistantScreen() {
   const leaveWhale = (message?: string) => {
     if (leaveFx) return;
     rememberWhale(false);
+    bumpHaptic();
     if (message) pushLocal(message);
     setLeaveFx(true);
   };
 
-  /** 退场动效结束：真正收回鲸鱼人格，顺手清掉头像旁的互动气泡与连点计数 */
+  /** 退场动效结束：真正收回鲸鱼人格，聊天记录先存进记忆下次接着聊 */
   const finishLeaveWhale = () => {
     setLeaveFx(false);
     setWhale(false);
     setReaction(null);
+    setPreview(null);
+    setNotice(null);
+    setInput("");
+    archiveMemory();
+    spokenId.current = null;
     taps.current.count = 0;
+    exitSelect();
   };
 
   const summonWhale = () => {
@@ -296,6 +336,7 @@ export function AssistantScreen() {
   /** 聊天框最上方的声音按钮：静音 / 开启鱼语（桌宠也一起静音） */
   const toggleVoice = () => {
     const next = !voiceOn;
+    tapHaptic();
     toggleVoiceStore();
     if (next) speakWhale("声音开好啦，大爹。");
     else stopWhaleVoice();
@@ -502,17 +543,21 @@ export function AssistantScreen() {
         setMessages((prev) => [
           ...prev,
           localMsg(
-            "（从屏幕边上探出半个身子）我出来啦，就挂在旁边陪你，拖我、戳我都行，长按我就回去。",
+            "（从屏幕中间蹦出来）我出来啦，就挂在旁边陪你，拖我、戳我都行，长按我就回去。",
           ),
         ]);
-        pushSticker("excited");
       } else if (action.type === "dismiss_pet") {
         hidePet();
         setMessages((prev) => [
           ...prev,
           localMsg("（尾巴一摆，乖乖缩回水里）那我先回去啦，大爹想我就再叫一声。"),
         ]);
-        pushSticker("calm");
+      } else if (action.type === "forget_memory") {
+        clearMemory();
+        exitSelect();
+        setMessages(() => [
+          localMsg("（歪了歪头）好，之前聊的我都不记得啦……大爹，我们重新认识一下？"),
+        ]);
       }
     }
     requestAnimationFrame(() =>
@@ -522,12 +567,12 @@ export function AssistantScreen() {
 
   const applyActions = (actions: ScheduleAction[]) => {
     const results = applyScheduleActions(actions, schedule);
-    setNotice({
-      type: results.some((r) => r.includes("失败") || r.includes("未找到"))
-        ? "error"
-        : "success",
-      text: results.join("\n"),
-    });
+    const failed = results.some(
+      (r) => r.includes("失败") || r.includes("未找到"),
+    );
+    setNotice({ type: failed ? "error" : "success", text: results.join("\n") });
+    if (failed) warnHaptic();
+    else successHaptic();
     setMessages((prev) =>
       prev.map((m) =>
         m.actions === actions ? { ...m, actions: undefined } : m,
@@ -538,7 +583,14 @@ export function AssistantScreen() {
   return (
     <View className="flex-1">
       <Backdrop>
-        <View className="flex-1" style={{ paddingBottom: kbHeight }}>
+        {/* 人格切换时新旧界面交叉淡入淡出，避免退场动效结束后界面硬切 */}
+        <Animated.View
+          key={whale ? "whale" : "normal"}
+          entering={FadeIn.duration(320)}
+          exiting={FadeOut.duration(260)}
+          className="flex-1"
+          style={{ paddingBottom: kbHeight }}
+        >
           {/* 头部 */}
           <View className="px-5 pb-2 pt-2">
             <Animated.View entering={FadeInDown.springify()}>
@@ -623,6 +675,25 @@ export function AssistantScreen() {
           {/* 消息区：鲸鱼模式下垫一层会漂的可爱贴图 */}
           <View className="flex-1">
             {whale ? <WhaleDeco /> : null}
+            {selectMode ? (
+              <View className="mx-5 mb-1.5 flex-row items-center justify-between rounded-2xl bg-white/25 px-3 py-1.5 dark:bg-white/[0.06]">
+                <Text className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                  已选 {selectedIds.length} 条
+                </Text>
+                <View className="flex-row items-center gap-x-3">
+                  <Pressable onPress={deleteSelected} hitSlop={8}>
+                    <Text className="text-[11px] font-bold text-rose-400">
+                      删除
+                    </Text>
+                  </Pressable>
+                  <Pressable onPress={exitSelect} hitSlop={8}>
+                    <Text className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                      取消
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
             <ScrollView
               ref={scrollRef}
               className="flex-1 px-5"
@@ -681,39 +752,66 @@ export function AssistantScreen() {
                 <View className="gap-y-3 pt-2">
                   {messages.map((m) => {
                     const isUser = m.role === "user";
+                    const checked = selectedIds.includes(m.id);
+                    const rowGesture = {
+                      delayLongPress: 280,
+                      onLongPress: () => {
+                        longPressAt.current = Date.now();
+                        enterSelect(m.id);
+                      },
+                      onPress: () => {
+                        // 长按松手时系统还会补一次 onPress，跳过它免得刚勾上又被取消
+                        if (Date.now() - longPressAt.current < 600) return;
+                        if (selectMode) toggleSelect(m.id);
+                      },
+                    };
+                    const checkDot = selectMode ? (
+                      <View className="mr-1.5 self-center">
+                        <Ionicons
+                          name={checked ? "checkmark-circle" : "ellipse-outline"}
+                          size={19}
+                          color={checked ? "#0EA5E9" : "#94A3B8"}
+                        />
+                      </View>
+                    ) : null;
                     // 表情包消息：只有图，没有气泡
                     if (m.sticker) {
                       return (
+                        <Pressable key={m.id} {...rowGesture}>
+                          <Animated.View
+                            entering={FadeInDown.springify()}
+                            className="flex-row justify-start"
+                          >
+                            {checkDot}
+                            {whale ? (
+                              <View className="mr-2.5 self-end">
+                                <WhaleAvatar size={44} />
+                              </View>
+                            ) : null}
+                            <Image
+                              source={
+                                WHALE_STICKERS[m.sticker as WhaleStickerId]
+                              }
+                              resizeMode="contain"
+                              style={{ width: 126, height: 126 }}
+                            />
+                          </Animated.View>
+                        </Pressable>
+                      );
+                    }
+                    return (
+                      <Pressable key={m.id} {...rowGesture}>
                         <Animated.View
-                          key={m.id}
                           entering={FadeInDown.springify()}
-                          className="flex-row justify-start"
+                          className={`flex-row ${isUser ? "justify-end" : "justify-start"}`}
                         >
-                          {whale ? (
+                          {!isUser ? checkDot : null}
+                          {!isUser && whale ? (
                             <View className="mr-2.5 self-end">
                               <WhaleAvatar size={44} />
                             </View>
                           ) : null}
-                          <Image
-                            source={WHALE_STICKERS[m.sticker as WhaleStickerId]}
-                            resizeMode="contain"
-                            style={{ width: 126, height: 126 }}
-                          />
-                        </Animated.View>
-                      );
-                    }
-                    return (
-                      <Animated.View
-                        key={m.id}
-                        entering={FadeInDown.springify()}
-                        className={`flex-row ${isUser ? "justify-end" : "justify-start"}`}
-                      >
-                        {!isUser && whale ? (
-                          <View className="mr-2.5 self-end">
-                            <WhaleAvatar size={44} />
-                          </View>
-                        ) : null}
-                        <View
+                          <View
                           className={`max-w-[78%] rounded-[20px] px-3.5 py-2.5 ${
                             isUser
                               ? "rounded-br-md bg-sky-500/85"
@@ -796,7 +894,9 @@ export function AssistantScreen() {
                             </Pressable>
                           ) : null}
                         </View>
-                      </Animated.View>
+                          {isUser ? checkDot : null}
+                        </Animated.View>
+                      </Pressable>
                     );
                   })}
 
@@ -882,7 +982,7 @@ export function AssistantScreen() {
             placeholder={whale ? "跟大肥鱼说点什么吧，大爹…" : undefined}
             bottomInset={kbHeight > 0 ? 10 : undefined}
           />
-        </View>
+        </Animated.View>
       </Backdrop>
 
       {/* 召唤动效：闪亮登场 + 施法变身 */}

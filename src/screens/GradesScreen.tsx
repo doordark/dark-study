@@ -79,6 +79,7 @@ export function GradesScreen() {
   const addGrade = useStore((s) => s.addGrade);
   const updateGrade = useStore((s) => s.updateGrade);
   const removeGrade = useStore((s) => s.removeGrade);
+  const removeGrades = useStore((s) => s.removeGrades);
   const addGradeRule = useStore((s) => s.addGradeRule);
   const updateGradeRule = useStore((s) => s.updateGradeRule);
   const removeGradeRule = useStore((s) => s.removeGradeRule);
@@ -96,6 +97,8 @@ export function GradesScreen() {
   const [importSheet, setImportSheet] = useState(false);
   /** 勾选编辑模式：默认不显示勾选框，进入后才显示 */
   const [selectMode, setSelectMode] = useState(false);
+  /** 勾选模式下选中的成绩 id：用于批量删除 / 调整计入规则 */
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   /** 长按进入勾选模式后，松手不再触发普通点击 */
   const longPressed = React.useRef(false);
 
@@ -139,12 +142,14 @@ export function GradesScreen() {
     setYearScope(id);
     setSemTab("all");
     setSelectMode(false);
+    setSelectedIds([]);
     if (id !== "all") setActiveGradeYear(id);
   };
 
   const switchSem = (next: SemTab) => {
     setSemTab(next);
     setSelectMode(false);
+    setSelectedIds([]);
     if (next !== "all") setActiveGradeSemester(next);
   };
 
@@ -188,21 +193,94 @@ export function GradesScreen() {
     if (yearScope === editingYear.id) setYearScope("all");
   };
 
-  const toggleCourse = (grade: GradeRecord) => {
-    if (!activeRule) return;
-    if (activeRule.excludedTypes.includes(grade.type)) {
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const allSelected =
+    scopedGrades.length > 0 && selectedIds.length === scopedGrades.length;
+  const selectedGrades = scopedGrades.filter((g) => selectedSet.has(g.id));
+  const selectedAllExcluded =
+    activeRule != null &&
+    selectedGrades.length > 0 &&
+    selectedGrades.every((g) => activeRule.excludedCourseIds.includes(g.id));
+
+  const toggleSelectMode = () => {
+    setSelectedIds([]);
+    setSelectMode((v) => !v);
+  };
+
+  const toggleSelect = (id: string) =>
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+
+  const toggleSelectAll = () =>
+    setSelectedIds(allSelected ? [] : scopedGrades.map((g) => g.id));
+
+  /** 勾选课程批量排除 / 恢复计入当前计算规则 */
+  const toggleSelectedInclusion = () => {
+    if (!activeRule || !selectedGrades.length) return;
+    const adjustable = selectedGrades.filter(
+      (g) => !activeRule.excludedTypes.includes(g.type),
+    );
+    if (!adjustable.length) {
       Alert.alert(
-        "该类型已排除",
-        `「${typeName(grade.type)}」已在计算规则中排除，可在「编辑规则」里恢复`,
+        "这些课程已按类型排除",
+        "可在「编辑规则」里调整不计入的课程类型",
       );
       return;
     }
-    const excluded = activeRule.excludedCourseIds.includes(grade.id);
+    const adjustableIds = new Set(adjustable.map((g) => g.id));
+    const allOff = adjustable.every((g) =>
+      activeRule.excludedCourseIds.includes(g.id),
+    );
     updateGradeRule(activeRule.id, {
-      excludedCourseIds: excluded
-        ? activeRule.excludedCourseIds.filter((id) => id !== grade.id)
-        : [...activeRule.excludedCourseIds, grade.id],
+      excludedCourseIds: allOff
+        ? activeRule.excludedCourseIds.filter((id) => !adjustableIds.has(id))
+        : [...new Set([...activeRule.excludedCourseIds, ...adjustableIds])],
     });
+  };
+
+  /** 删除勾选的成绩（二次确认） */
+  const deleteSelected = () => {
+    if (!selectedIds.length) return;
+    Alert.alert(
+      "删除所选成绩",
+      `将删除 ${selectedIds.length} 门成绩，删除后不可恢复。`,
+      [
+        { text: "取消", style: "cancel" },
+        {
+          text: "删除",
+          style: "destructive",
+          onPress: () => {
+            removeGrades(selectedIds);
+            setSelectedIds([]);
+            setSelectMode(false);
+          },
+        },
+      ],
+    );
+  };
+
+  /** 一键清空当前学年下的这个学期（二次确认） */
+  const clearSemester = () => {
+    if (!currentYear || semScope === "all") return;
+    const ids = scopedGrades.map((g) => g.id);
+    if (!ids.length) return;
+    Alert.alert(
+      "清空本学期成绩",
+      `将删除「${currentYear.name} · ${semesterLabel(semScope)}」的全部 ${ids.length} 门成绩，此操作不可恢复。`,
+      [
+        { text: "取消", style: "cancel" },
+        {
+          text: "清空",
+          style: "destructive",
+          onPress: () => {
+            removeGrades(ids);
+            setSelectedIds([]);
+            setSelectMode(false);
+          },
+        },
+      ],
+    );
   };
 
   const saveRule = (data: {
@@ -697,7 +775,7 @@ export function GradesScreen() {
                       {scopedGrades.length} 门
                     </Text>
                     <Pressable
-                      onPress={() => setSelectMode((v) => !v)}
+                      onPress={toggleSelectMode}
                       className={`rounded-full px-2.5 py-1 ${
                         selectMode
                           ? "bg-sky-400/80"
@@ -717,9 +795,16 @@ export function GradesScreen() {
                   </View>
                 </View>
                 {selectMode ? (
-                  <Text className="mt-1.5 text-[9.5px] text-slate-400 dark:text-slate-500">
-                    点击课程可勾选 / 取消计入「{ruleName}」
-                  </Text>
+                  <View className="mt-1.5 flex-row items-center">
+                    <Text className="flex-1 text-[9.5px] text-slate-400 dark:text-slate-500">
+                      已选 {selectedIds.length} 门 · 可批量删除或调整计入规则
+                    </Text>
+                    <Pressable onPress={toggleSelectAll} hitSlop={8}>
+                      <Text className="text-[9.5px] font-semibold text-sky-500 dark:text-sky-300">
+                        {allSelected ? "取消全选" : "全选"}
+                      </Text>
+                    </Pressable>
+                  </View>
                 ) : null}
 
                 {scopedGrades.length === 0 ? (
@@ -732,8 +817,6 @@ export function GradesScreen() {
                 ) : (
                   <View className="mt-1">
                     {scopedGrades.map((g) => {
-                      const excludedByType =
-                        activeRule?.excludedTypes.includes(g.type) ?? false;
                       const included =
                         activeRule != null
                           ? isGradeIncluded(activeRule, g)
@@ -757,14 +840,20 @@ export function GradesScreen() {
                         >
                           {selectMode ? (
                             <Pressable
-                              onPress={() => toggleCourse(g)}
+                              onPress={() => toggleSelect(g.id)}
                               hitSlop={8}
-                              className={`mr-2.5 ${excludedByType ? "opacity-35" : ""}`}
+                              className="mr-2.5"
                             >
                               <Ionicons
-                                name={included ? "checkbox" : "square-outline"}
+                                name={
+                                  selectedSet.has(g.id)
+                                    ? "checkbox"
+                                    : "square-outline"
+                                }
                                 size={18}
-                                color={included ? "#38BDF8" : "#94A3B8"}
+                                color={
+                                  selectedSet.has(g.id) ? "#38BDF8" : "#94A3B8"
+                                }
                               />
                             </Pressable>
                           ) : null}
@@ -774,12 +863,15 @@ export function GradesScreen() {
                             }}
                             onPress={() => {
                               if (longPressed.current) return;
-                              if (selectMode) toggleCourse(g);
+                              if (selectMode) toggleSelect(g.id);
                               else openEdit(g);
                             }}
                             onLongPress={() => {
                               longPressed.current = true;
                               setSelectMode(true);
+                              setSelectedIds((prev) =>
+                                prev.includes(g.id) ? prev : [...prev, g.id],
+                              );
                             }}
                             delayLongPress={320}
                             className="flex-1 flex-row items-center"
@@ -813,6 +905,56 @@ export function GradesScreen() {
                     })}
                   </View>
                 )}
+
+                {selectMode ? (
+                  <View className="mt-3.5 flex-row gap-2.5">
+                    {semScope !== "all" ? (
+                      <Pressable
+                        onPress={clearSemester}
+                        hitSlop={12}
+                        className="flex-1 items-center rounded-2xl border border-red-400/40 bg-red-50/80 py-2.5 dark:border-red-500/20 dark:bg-red-950/25"
+                      >
+                        <Text className="text-[11px] font-semibold text-red-600 dark:text-red-300">
+                          清空本学期
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                    <Pressable
+                      onPress={toggleSelectedInclusion}
+                      hitSlop={12}
+                      disabled={!selectedIds.length}
+                      className={`flex-1 items-center rounded-2xl border border-white/30 py-2.5 ${
+                        !selectedIds.length
+                          ? "bg-white/10 dark:bg-white/[0.04]"
+                          : "bg-white/25 dark:bg-white/[0.07]"
+                      }`}
+                    >
+                      <Text
+                        className={`text-[11px] font-semibold ${
+                          !selectedIds.length
+                            ? "text-slate-400 dark:text-slate-500"
+                            : selectedAllExcluded
+                              ? "text-violet-500 dark:text-violet-300"
+                              : "text-sky-600 dark:text-sky-300"
+                        }`}
+                      >
+                        {selectedAllExcluded ? "恢复计入" : "不计入成绩"}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={deleteSelected}
+                      hitSlop={12}
+                      disabled={!selectedIds.length}
+                      className={`flex-1 items-center rounded-2xl bg-red-500/85 py-2.5 ${
+                        !selectedIds.length ? "opacity-45" : ""
+                      }`}
+                    >
+                      <Text className="text-[11px] font-bold text-white">
+                        删除选中
+                      </Text>
+                    </Pressable>
+                  </View>
+                ) : null}
               </View>
             </GlassContainer>
           </Animated.View>

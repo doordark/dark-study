@@ -21,6 +21,12 @@ import Animated, {
 import Svg, { Circle, Ellipse, Path } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import {
+  successHaptic,
+  tapHaptic,
+  thumpHaptic,
+} from "@/utils/haptics";
+
 /** 彩蛋观感：固定的种子让每次进入星空时星位一致，不会随机跳动 */
 const VISIT_KEY = "dark-study-night-visits";
 const TOTAL_STARS = 7;
@@ -908,11 +914,13 @@ export function NightSky({
           w={w}
           h={h}
           collected={picked[i]}
-          onCollect={() =>
+          onCollect={() => {
+            tapHaptic();
+            if (lit + 1 >= TOTAL_STARS) successHaptic();
             setPicked((prev) =>
               prev[i] ? prev : prev.map((v, idx) => (idx === i ? true : v)),
-            )
-          }
+            );
+          }}
         />
       ))}
 
@@ -944,9 +952,11 @@ export function NightSky({
               owlTaps.current = n;
               // 前几次都只是对话，最后一次呼唤它才肯带路
               if (n >= OWL_TAPS_NEEDED) {
+                thumpHaptic();
                 enterFarm();
                 return;
               }
+              tapHaptic();
               setOwlHint(OWL_LINES[n - 1] ?? "");
               if (hintTimer.current) clearTimeout(hintTimer.current);
               hintTimer.current = setTimeout(() => setOwlHint(""), 3000);
@@ -1053,7 +1063,10 @@ export function NightSky({
                   : `拾起散落的星 · ${lit} / ${TOTAL_STARS}`}
             </Text>
             <Pressable
-              onPress={close}
+              onPress={() => {
+                tapHaptic();
+                close();
+              }}
               style={{
                 borderRadius: 999,
                 backgroundColor: "rgba(56,189,248,0.9)",
