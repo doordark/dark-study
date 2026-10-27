@@ -1,4 +1,4 @@
-import React from "react";
+import React, { memo, useMemo } from "react";
 import Svg, { Rect } from "react-native-svg";
 
 /** 像素画：把字符网格按调色板画成 1x1 小方块（行内同色自动合并，减少节点） */
@@ -37,8 +37,12 @@ function pixelRects(
   return out;
 }
 
-/** 独立像素角色 */
-export function PixelSprite({
+/**
+ * 独立像素角色
+ * 用 memo 包一层：农场每秒刷新时钟会重渲染整棵树，静态贴图（行/调色板都是常量）
+ * 直接跳过重渲染，避免每秒重建几百个 SVG 节点
+ */
+export const PixelSprite = memo(function PixelSprite({
   rows,
   palette,
   pixel,
@@ -49,12 +53,16 @@ export function PixelSprite({
 }) {
   const h = rows.length;
   const w = Math.max(...rows.map((r) => r.length));
+  const rects = useMemo(
+    () => pixelRects(rows, palette, 0, 0, "s"),
+    [rows, palette],
+  );
   return (
     <Svg width={w * pixel} height={h * pixel} viewBox={`0 0 ${w} ${h}`}>
-      {pixelRects(rows, palette, 0, 0, "s")}
+      {rects}
     </Svg>
   );
-}
+});
 
 /* -------------------------------------------------------------------------- */
 /*  角色                                                                       */

@@ -168,6 +168,9 @@ export function AssistantScreen() {
   const taps = useRef({ count: 0, at: 0 });
   const reactionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stickerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 退场动画期间延后的「切人格 / 追加告别 / 归档记忆」定时器 */
+  const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showPet = useWhalePet((s) => s.show);
   const hidePet = useWhalePet((s) => s.hide);
 
@@ -279,6 +282,8 @@ export function AssistantScreen() {
     () => () => {
       if (reactionTimer.current) clearTimeout(reactionTimer.current);
       if (stickerTimer.current) clearTimeout(stickerTimer.current);
+      if (leaveTimer.current) clearTimeout(leaveTimer.current);
+      if (settleTimer.current) clearTimeout(settleTimer.current);
     },
     [],
   );
@@ -298,24 +303,32 @@ export function AssistantScreen() {
   /** 收回人格：先播退场动效，动画结束后再切回普通助手界面 */
   const leaveWhale = (message?: string) => {
     if (leaveFx) return;
-    rememberWhale(false);
     bumpHaptic();
-    if (message) pushLocal(message);
+    // 先只挂动效遮罩；切人格、追加告别消息都挪到遮罩最深的时候再做，
+    // 否则一堆重渲染和动画首帧撞在一起，退场会明显卡一下
     setLeaveFx(true);
+    if (leaveTimer.current) clearTimeout(leaveTimer.current);
+    leaveTimer.current = setTimeout(() => {
+      rememberWhale(false);
+      if (message) pushLocal(message);
+    }, 360);
   };
 
   /** 退场动效结束：真正收回鲸鱼人格，聊天记录先存进记忆下次接着聊 */
   const finishLeaveWhale = () => {
     setLeaveFx(false);
-    setWhale(false);
-    setReaction(null);
-    setPreview(null);
-    setNotice(null);
-    setInput("");
-    archiveMemory();
-    spokenId.current = null;
-    taps.current.count = 0;
-    exitSelect();
+    // 遮罩撤掉的那一帧先别做任何重活，把收尾推到下一帧之后
+    requestAnimationFrame(() => {
+      setReaction(null);
+      setPreview(null);
+      setNotice(null);
+      setInput("");
+      spokenId.current = null;
+      taps.current.count = 0;
+      exitSelect();
+      // 归档要序列化整段对话，再往后挪一点，别卡在动画收尾上
+      settleTimer.current = setTimeout(() => archiveMemory(), 320);
+    });
   };
 
   const summonWhale = () => {

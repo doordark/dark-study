@@ -746,9 +746,10 @@ export function FarmScreen() {
     (p, i) => p.crop && grown[i] < CROP_META[p.crop].growMs,
   ).length;
 
-  // 每秒走一次表：作物进度、天色、时钟都靠它刷新
+  // 每 3 秒走一次表：作物进度、天色、时钟都靠它刷新
+  // （原来 1 秒一次，整棵树每秒重渲染会让贴图与动画掉帧）
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000);
+    const t = setInterval(() => setNow(Date.now()), 3000);
     return () => clearInterval(t);
   }, []);
 
@@ -1299,6 +1300,7 @@ export function FarmScreen() {
               source={require("../../assets/images/farm-day.png")}
               style={{ width, height: sceneH }}
               resizeMode="stretch"
+              fadeDuration={0}
             />
           </Animated.View>
           <Animated.View style={[StyleSheet.absoluteFill, nightLayerStyle]}>
@@ -1306,6 +1308,7 @@ export function FarmScreen() {
               source={require("../../assets/images/farm-night.png")}
               style={{ width, height: sceneH }}
               resizeMode="stretch"
+              fadeDuration={0}
             />
           </Animated.View>
           <Svg
