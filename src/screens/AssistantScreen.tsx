@@ -690,8 +690,8 @@ export function AssistantScreen() {
                           className="flex-row justify-start"
                         >
                           {whale ? (
-                            <View className="mr-2 self-end">
-                              <WhaleAvatar size={32} />
+                            <View className="mr-2.5 self-end">
+                              <WhaleAvatar size={44} />
                             </View>
                           ) : null}
                           <Image
@@ -709,12 +709,12 @@ export function AssistantScreen() {
                         className={`flex-row ${isUser ? "justify-end" : "justify-start"}`}
                       >
                         {!isUser && whale ? (
-                          <View className="mr-2 self-end">
-                            <WhaleAvatar size={32} />
+                          <View className="mr-2.5 self-end">
+                            <WhaleAvatar size={44} />
                           </View>
                         ) : null}
                         <View
-                          className={`max-w-[82%] rounded-[20px] px-3.5 py-2.5 ${
+                          className={`max-w-[78%] rounded-[20px] px-3.5 py-2.5 ${
                             isUser
                               ? "rounded-br-md bg-sky-500/85"
                               : whale
