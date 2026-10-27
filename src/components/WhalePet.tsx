@@ -1116,16 +1116,26 @@ function WhalePetLayer() {
     stopWhaleVoice();
     closeChat();
     stopAction();
-    showBubble("那我先回水里啦，大爹记得再叫我…", 1000);
-    setFrame("sleep");
-    scale.value = withTiming(0.35, {
-      duration: 620,
+    clearBubble();
+    setBubble(null);
+    // 飞行中被收回：先把物理停掉，别让帧回调继续算
+    phase.value = 0;
+    cancelAnimation(boxX);
+    cancelAnimation(boxY);
+    // 缩成一点、往下沉：动画结束时她已经完全看不见了，
+    // 再把整棵子树卸载，卸载那一帧的开销就不会被看到（不会再「卡一下」）
+    scale.value = withTiming(0, {
+      duration: 460,
       easing: Easing.in(Easing.cubic),
+    });
+    lift.value = withTiming(-26, {
+      duration: 460,
+      easing: Easing.in(Easing.quad),
     });
     leaveTimer.current = setTimeout(() => {
       leaveTimer.current = null;
       hide();
-    }, 700);
+    }, 500);
   };
 
   const panelTop =

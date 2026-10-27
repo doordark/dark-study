@@ -717,6 +717,14 @@ export function FarmScreen() {
   const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // 转场（约 320ms 淡入）期间先只挂场景主图与作物，装饰、光点、小角色
+  // 等画面稳住后再挂：把一次性的挂载开销拆成两段，进农场不再整屏卡一下
+  const [decorReady, setDecorReady] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setDecorReady(true), 340);
+    return () => clearTimeout(t);
+  }, []);
+
   const [shopOpen, setShopOpen] = useState(false);
   const [speaker, setSpeaker] = useState<Speaker | null>(null);
   const [threads, setThreads] = useState<Record<Speaker, FarmChatMsg[]>>({
@@ -1394,17 +1402,19 @@ export function FarmScreen() {
           </Svg>
 
           {/* 空气里缓慢浮动的光点 */}
-          {MOTES.map((m) => (
-            <Mote
-              key={m.id}
-              x={m.x}
-              y={m.y}
-              dur={m.dur}
-              delay={m.delay}
-              size={m.size}
-              scale={scale}
-            />
-          ))}
+          {decorReady
+            ? MOTES.map((m) => (
+                <Mote
+                  key={m.id}
+                  x={m.x}
+                  y={m.y}
+                  dur={m.dur}
+                  delay={m.delay}
+                  size={m.size}
+                  scale={scale}
+                />
+              ))
+            : null}
 
           {/* 点击地面走动 */}
           <Pressable
@@ -1509,24 +1519,26 @@ export function FarmScreen() {
           </View>
 
           {/* 空地装饰：树、花、灌木 */}
-          {DECOR.map((d, i) => (
-            <View
-              key={`deco-${i}`}
-              pointerEvents="none"
-              style={{
-                position: "absolute",
-                left: d.x * scale,
-                top: d.y * scale,
-                zIndex: 2,
-              }}
-            >
-              <PixelSprite
-                rows={PROP_ART[d.kind].rows}
-                palette={PROP_ART[d.kind].palette}
-                pixel={scale}
-              />
-            </View>
-          ))}
+          {decorReady
+            ? DECOR.map((d, i) => (
+                <View
+                  key={`deco-${i}`}
+                  pointerEvents="none"
+                  style={{
+                    position: "absolute",
+                    left: d.x * scale,
+                    top: d.y * scale,
+                    zIndex: 2,
+                  }}
+                >
+                  <PixelSprite
+                    rows={PROP_ART[d.kind].rows}
+                    palette={PROP_ART[d.kind].palette}
+                    pixel={scale}
+                  />
+                </View>
+              ))
+            : null}
 
           {/* 顾 */}
           <View
@@ -1598,30 +1610,32 @@ export function FarmScreen() {
           </View>
 
           {/* 三个儿子：小八 / 玉洁 / 唯纲 */}
-          {SONS.map((son) => (
-            <View
-              key={son.who}
-              style={{
-                position: "absolute",
-                left: son.at.x * scale,
-                top: son.at.y * scale,
-                zIndex: 5,
-              }}
-            >
-              <NameTag
-                label={son.label}
-                accent={son.accent}
-                scale={scale * 0.8}
-                hit={threads[son.who].length > 0}
-              />
-              <IdleSprite
-                rows={son.rows}
-                palette={son.palette}
-                pixel={scale * 0.8}
-                onPress={() => openTalk(son.who)}
-              />
-            </View>
-          ))}
+          {decorReady
+            ? SONS.map((son) => (
+                <View
+                  key={son.who}
+                  style={{
+                    position: "absolute",
+                    left: son.at.x * scale,
+                    top: son.at.y * scale,
+                    zIndex: 5,
+                  }}
+                >
+                  <NameTag
+                    label={son.label}
+                    accent={son.accent}
+                    scale={scale * 0.8}
+                    hit={threads[son.who].length > 0}
+                  />
+                  <IdleSprite
+                    rows={son.rows}
+                    palette={son.palette}
+                    pixel={scale * 0.8}
+                    onPress={() => openTalk(son.who)}
+                  />
+                </View>
+              ))
+            : null}
 
           {/* 玩家 */}
           <Animated.View

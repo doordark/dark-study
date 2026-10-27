@@ -6,7 +6,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, Text, View, useWindowDimensions } from "react-native";
+import { Image, Pressable, Text, View, useWindowDimensions } from "react-native";
 import Animated, {
   Easing,
   runOnJS,
@@ -726,6 +726,15 @@ export function NightSky({
   const owlTaps = useRef(0);
   const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // 看星星的时候顺手把农场贴图解好码：进农场直接命中已解码的位图，
+  // 转场那一下不用再临时解码两张 1080 宽的图，就不会卡一下
+  const [farmWarm, setFarmWarm] = useState(false);
+  useEffect(() => {
+    if (!onEnterFarm) return;
+    const t = setTimeout(() => setFarmWarm(true), 420);
+    return () => clearTimeout(t);
+  }, [onEnterFarm]);
+
   useEffect(
     () => () => {
       if (hintTimer.current) clearTimeout(hintTimer.current);
@@ -834,6 +843,34 @@ export function NightSky({
       ]}
     >
       <StatusBar style="light" />
+
+      {/* 农场贴图预热：铺满屏幕但完全透明，只为提前解码，不参与交互 */}
+      {farmWarm ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            width: w,
+            height: h,
+            opacity: 0,
+          }}
+        >
+          <Image
+            source={require("../../assets/images/farm-day.png")}
+            style={{ width: w, height: h }}
+            resizeMode="stretch"
+            fadeDuration={0}
+          />
+          <Image
+            source={require("../../assets/images/farm-night.png")}
+            style={{ width: w, height: h }}
+            resizeMode="stretch"
+            fadeDuration={0}
+          />
+        </View>
+      ) : null}
 
       <LinearGradient
         colors={["#03060F", "#071022", "#0E1A33"]}
