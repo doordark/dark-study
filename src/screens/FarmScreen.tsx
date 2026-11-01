@@ -6,7 +6,7 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Keyboard,
   Modal,
@@ -53,6 +53,7 @@ import {
   YUJIE_PALETTE,
   YUJIE_ROWS,
   cropRects,
+  pixelRects,
   type CropKind,
   type PropKind,
 } from "@/components/farm/sprites";
@@ -113,6 +114,36 @@ const DECOR: { kind: PropKind; x: number; y: number }[] = [
   { kind: "bush", x: 84, y: 230 },
   { kind: "bush", x: 146, y: 226 },
 ];
+
+/** 空地装饰层：12 个静态精灵合并进同一张 SVG。
+ *  每个独立 PixelSprite 都是一块原生 SVG 视图，进农场时同时创建十几块视图
+ *  光建视图就要掉几帧；合并后只剩一块视图，绘制节点也更集中。 */
+const DecorLayer = memo(function DecorLayer({ scale }: { scale: number }) {
+  const rects = useMemo(
+    () =>
+      DECOR.map((d, i) =>
+        pixelRects(
+          PROP_ART[d.kind].rows,
+          PROP_ART[d.kind].palette,
+          d.x,
+          d.y,
+          `deco-${i}`,
+        ),
+      ).flat(),
+    [],
+  );
+  return (
+    <Svg
+      pointerEvents="none"
+      width={VIEW_W * scale}
+      height={VIEW_H * scale}
+      viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
+      style={{ position: "absolute", left: 0, top: 0 }}
+    >
+      {rects}
+    </Svg>
+  );
+});
 
 const SAVE_KEY = "dark-study-farm";
 
@@ -717,12 +748,17 @@ export function FarmScreen() {
   const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 转场（约 320ms 淡入）期间先只挂场景主图与作物，装饰、光点、小角色
-  // 等画面稳住后再挂：把一次性的挂载开销拆成两段，进农场不再整屏卡一下
+  // 转场（约 320ms 淡入）期间先只挂场景主图与作物，装饰和光点等画面稳住再挂，
+  // 会呼吸的小角色放在最后一批：把一次性的挂载开销拆成几段，进农场不再整屏卡
   const [decorReady, setDecorReady] = useState(false);
+  const [folkReady, setFolkReady] = useState(false);
   useEffect(() => {
-    const t = setTimeout(() => setDecorReady(true), 340);
-    return () => clearTimeout(t);
+    const a = setTimeout(() => setDecorReady(true), 340);
+    const b = setTimeout(() => setFolkReady(true), 660);
+    return () => {
+      clearTimeout(a);
+      clearTimeout(b);
+    };
   }, []);
 
   const [shopOpen, setShopOpen] = useState(false);
@@ -761,11 +797,26 @@ export function FarmScreen() {
     return () => clearInterval(t);
   }, []);
 
-  // 昼夜切换用一层透明渐变，不要硬切
+  // 昼夜切换用一层透明渐变，不要硬切。
+  // 但「第一次落位」必须硬切：挂载时 timeShift 还是 0（存档还没读回来），
+  // 算出来的 night 不可信——虚拟时间可能已经被睡觉/小游戏推过昼夜分界。
+  // 如果先按错的天色画一遍再淡过去，进农场就会看到一次莫名其妙的
+  // 「黑夜贴图 → 白天贴图」交叉淡化，很突兀。所以贴图等读档完再挂，
+  // 挂之前先把 nightV 直接摆到正确位置，之后的天色变化才走 700ms 渐变。
   const nightV = useSharedValue(night ? 1 : 0);
+  const nightSettled = useRef(false);
+  /** 读档完成、天色已硬切到位之后才挂场景贴图 */
+  const [texReady, setTexReady] = useState(false);
   useEffect(() => {
-    nightV.value = withTiming(night ? 1 : 0, { duration: 700 });
-  }, [night, nightV]);
+    if (!loaded) return;
+    if (nightSettled.current) {
+      nightV.value = withTiming(night ? 1 : 0, { duration: 700 });
+      return;
+    }
+    nightSettled.current = true;
+    nightV.value = night ? 1 : 0;
+    setTexReady(true);
+  }, [night, loaded, nightV]);
   const dayLayerStyle = useAnimatedStyle(() => ({
     opacity: 1 - nightV.value,
   }));
@@ -1297,28 +1348,33 @@ export function FarmScreen() {
           flex: 1,
           overflow: "hidden",
           justifyContent: "flex-end",
-          backgroundColor: night ? SKY_BG.night : SKY_BG.day,
+          // 贴图还没挂之前先铺夜色：上一屏是深色夜空，这样过渡过去不会闪一块亮蓝
+          backgroundColor: !texReady || night ? SKY_BG.night : SKY_BG.day,
         }}
       >
 
         {/* 场景贴底：贴图自己带完整天空，高于容器时从顶部裁掉多余的天空 */}
         <View style={{ width, height: sceneH, overflow: "hidden", flexShrink: 0 }}>
-          <Animated.View style={[StyleSheet.absoluteFill, dayLayerStyle]}>
-            <Image
-              source={require("../../assets/images/farm-day.png")}
-              style={{ width, height: sceneH }}
-              resizeMode="stretch"
-              fadeDuration={0}
-            />
-          </Animated.View>
-          <Animated.View style={[StyleSheet.absoluteFill, nightLayerStyle]}>
-            <Image
-              source={require("../../assets/images/farm-night.png")}
-              style={{ width, height: sceneH }}
-              resizeMode="stretch"
-              fadeDuration={0}
-            />
-          </Animated.View>
+          {texReady ? (
+            <>
+              <Animated.View style={[StyleSheet.absoluteFill, dayLayerStyle]}>
+                <Image
+                  source={require("../../assets/images/farm-day.png")}
+                  style={{ width, height: sceneH }}
+                  resizeMode="stretch"
+                  fadeDuration={0}
+                />
+              </Animated.View>
+              <Animated.View style={[StyleSheet.absoluteFill, nightLayerStyle]}>
+                <Image
+                  source={require("../../assets/images/farm-night.png")}
+                  style={{ width, height: sceneH }}
+                  resizeMode="stretch"
+                  fadeDuration={0}
+                />
+              </Animated.View>
+            </>
+          ) : null}
           <Svg
             width={width}
             height={sceneH}
@@ -1518,27 +1574,8 @@ export function FarmScreen() {
             </View>
           </View>
 
-          {/* 空地装饰：树、花、灌木 */}
-          {decorReady
-            ? DECOR.map((d, i) => (
-                <View
-                  key={`deco-${i}`}
-                  pointerEvents="none"
-                  style={{
-                    position: "absolute",
-                    left: d.x * scale,
-                    top: d.y * scale,
-                    zIndex: 2,
-                  }}
-                >
-                  <PixelSprite
-                    rows={PROP_ART[d.kind].rows}
-                    palette={PROP_ART[d.kind].palette}
-                    pixel={scale}
-                  />
-                </View>
-              ))
-            : null}
+          {/* 空地装饰：树、花、灌木（合并成一张 SVG） */}
+          {decorReady ? <DecorLayer scale={scale} /> : null}
 
           {/* 顾 */}
           <View
@@ -1610,7 +1647,7 @@ export function FarmScreen() {
           </View>
 
           {/* 三个儿子：小八 / 玉洁 / 唯纲 */}
-          {decorReady
+          {folkReady
             ? SONS.map((son) => (
                 <View
                   key={son.who}

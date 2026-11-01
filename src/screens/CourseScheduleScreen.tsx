@@ -190,11 +190,21 @@ export function CourseScheduleScreen({
   const liftDistance = Math.round(Math.min(winH * 0.07, 64));
   const dayTx = useSharedValue(0);
   const prevWeekdayRef = React.useRef(weekday);
+  // 跨周滑动时方向没法靠比较星期推出来（周日 → 周一会被当成后退），手势开始前记下来
+  const slideDirRef = React.useRef<number | null>(null);
+
+  const goToDay = React.useCallback((day: number, week: number | undefined, dir: number) => {
+    slideDirRef.current = dir;
+    if (week !== undefined) setWeekIndex(week);
+    setWeekday(day);
+  }, []);
 
   // 星期变化（滑动/点选）后新内容从对应侧滑入：缓动进入，不做回弹
   React.useEffect(() => {
     if (prevWeekdayRef.current === weekday) return;
-    const dir = weekday > prevWeekdayRef.current ? 1 : -1;
+    const hinted = slideDirRef.current;
+    slideDirRef.current = null;
+    const dir = hinted ?? (weekday > prevWeekdayRef.current ? 1 : -1);
     prevWeekdayRef.current = weekday;
     dayTx.value = dir * winW;
     dayTx.value = withTiming(0, {
@@ -212,21 +222,32 @@ export function CourseScheduleScreen({
         .failOffsetY([-12, 12])
         .onUpdate((e) => {
           let t = e.translationX;
-          // 边界阻尼：周一继续右滑 / 周日继续左滑产生阻力
-          if ((weekday === 1 && t > 0) || (weekday === 7 && t < 0)) t *= 0.25;
+          // 边界阻尼：前面确实没有周了（第一周周一往前 / 最后一周周日往后）才产生阻力
+          const atStart = weekday === 1 && weekIndex <= 1;
+          const atEnd = weekday === 7 && weekIndex >= totalWeeks;
+          if ((atStart && t > 0) || (atEnd && t < 0)) t *= 0.25;
           dayTx.value = t;
         })
         .onEnd((e) => {
           const dir = e.translationX < 0 ? 1 : -1;
           const next = weekday + dir;
-          const go =
-            (Math.abs(e.translationX) > 60 || Math.abs(e.velocityX) > 500) &&
-            next >= 1 &&
-            next <= 7;
+          // 周日再往后一天 → 下一周的周一；周一再往前一天 → 上一周的周日
+          let target = 0;
+          let targetWeek: number | undefined;
+          if (next >= 1 && next <= 7) {
+            target = next;
+          } else if (next === 8 && weekIndex < totalWeeks) {
+            target = 1;
+            targetWeek = weekIndex + 1;
+          } else if (next === 0 && weekIndex > 1) {
+            target = 7;
+            targetWeek = weekIndex - 1;
+          }
+          const go = (Math.abs(e.translationX) > 60 || Math.abs(e.velocityX) > 500) && target > 0;
           if (go) {
             // 旧内容滑出后切换星期，effect 再把新内容滑入
             dayTx.value = withTiming(-dir * winW, { duration: 180 }, (fin) => {
-              if (fin) runOnJS(setWeekday)(next);
+              if (fin) runOnJS(goToDay)(target, targetWeek, dir);
             });
           } else {
             dayTx.value = withSpring(0, {
@@ -236,7 +257,7 @@ export function CourseScheduleScreen({
             });
           }
         }),
-    [weekday, winW, dayTx],
+    [weekday, weekIndex, totalWeeks, winW, dayTx, goToDay],
   );
 
   const daySlideStyle = useAnimatedStyle(() => ({

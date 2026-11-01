@@ -844,7 +844,9 @@ export function NightSky({
     >
       <StatusBar style="light" />
 
-      {/* 农场贴图预热：铺满屏幕但完全透明，只为提前解码，不参与交互 */}
+      {/* 农场贴图预热：铺满屏幕但完全透明，只为提前解码，不参与交互。
+          尺寸必须和农场场景一致（场景高 = 屏宽 × 330/200），否则 Fresco 会按
+          另一个尺寸重新解码，预热就白做了 */}
       {farmWarm ? (
         <View
           pointerEvents="none"
@@ -853,19 +855,19 @@ export function NightSky({
             left: 0,
             top: 0,
             width: w,
-            height: h,
+            height: (w * 330) / 200,
             opacity: 0,
           }}
         >
           <Image
             source={require("../../assets/images/farm-day.png")}
-            style={{ width: w, height: h }}
+            style={{ width: w, height: (w * 330) / 200 }}
             resizeMode="stretch"
             fadeDuration={0}
           />
           <Image
             source={require("../../assets/images/farm-night.png")}
-            style={{ width: w, height: h }}
+            style={{ width: w, height: (w * 330) / 200 }}
             resizeMode="stretch"
             fadeDuration={0}
           />

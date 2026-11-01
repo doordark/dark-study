@@ -49,6 +49,12 @@ const APPEARANCES = [
   { key: "dark", label: "深色", icon: "moon" },
 ] as const;
 
+/** 卡片材质：扁平实心 / 玻璃磨砂 */
+const MATERIALS = [
+  { key: "flat", label: "扁平", icon: "square-outline" },
+  { key: "glass", label: "玻璃", icon: "water-outline" },
+] as const;
+
 function DateRow({
   label,
   hint,
@@ -297,6 +303,8 @@ export function SettingsScreen() {
   const apiKey = useSettings((s) => s.apiKey);
   const setApiKey = useSettings((s) => s.setApiKey);
   const appearance = useSettings((s) => s.appearance);
+  const material = useSettings((s) => s.material);
+  const setMaterial = useSettings((s) => s.setMaterial);
   const backgroundImage = useSettings((s) => s.backgroundImage);
   const setBackgroundImage = useSettings((s) => s.setBackgroundImage);
   const setAppearance = useSettings((s) => s.setAppearance);
@@ -479,6 +487,51 @@ export function SettingsScreen() {
                         }`}
                       >
                         {a.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            </GlassContainer>
+          </Animated.View>
+
+          {/* 材质 */}
+          <Animated.View
+            entering={FadeInDown.delay(90).springify()}
+            className="mt-3.5"
+          >
+            <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
+              <View className="px-4 py-4">
+                <Text className="mb-1 text-[14px] font-bold text-slate-800 dark:text-white">
+                  材质
+                </Text>
+                <Text className="mb-3 text-[11px] leading-4 text-slate-500 dark:text-slate-400">
+                  玻璃：卡片背后带模糊与斜向反光，观感更通透。Android 11 及以下没有硬件模糊，会自动退回磨砂半透明
+                </Text>
+                <View className="flex-row gap-x-2.5">
+                  {MATERIALS.map((m) => (
+                    <Pressable
+                      key={m.key}
+                      onPress={() => setMaterial(m.key)}
+                      className={`flex-1 items-center rounded-2xl border py-3 ${
+                        material === m.key
+                          ? "border-sky-400/70 bg-sky-400/25"
+                          : "border-white/15 bg-white/[0.06]"
+                      }`}
+                    >
+                      <Ionicons
+                        name={m.icon}
+                        size={18}
+                        color={material === m.key ? "#38BDF8" : "#94A3B8"}
+                      />
+                      <Text
+                        className={`mt-1 text-[11px] font-semibold ${
+                          material === m.key
+                            ? "text-sky-300"
+                            : "text-slate-500 dark:text-slate-400"
+                        }`}
+                      >
+                        {m.label}
                       </Text>
                     </Pressable>
                   ))}

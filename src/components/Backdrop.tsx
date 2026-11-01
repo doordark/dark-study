@@ -1,5 +1,6 @@
+import { BlurTargetView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
-import React from "react";
+import React, { type ComponentRef } from "react";
 import { ImageBackground, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColorScheme } from "nativewind";
@@ -24,7 +25,10 @@ export function Backdrop({ children }: { children?: React.ReactNode }) {
   const backgroundImage = useSettings((s) => s.backgroundImage);
   const tint = useSettings((s) => s.backgroundTint);
   const effect = useSettings((s) => s.backgroundEffect);
+  const glass = useSettings((s) => s.material === "glass");
   const insets = useSafeAreaInsets();
+  // 玻璃材质下，这层背景会被本页所有玻璃卡片当作模糊源
+  const glassTarget = React.useRef<ComponentRef<typeof View> | null>(null);
 
   const preset = BACKGROUND_PRESETS[resolveTint(tint)];
   const mode = resolveEffect(effect);
@@ -96,18 +100,34 @@ export function Backdrop({ children }: { children?: React.ReactNode }) {
           />
         </>
       ) : null}
-
-      {/* 内容层：避开状态栏（顶部安全区），渐变仍铺满全屏 */}
-      <View style={{ flex: 1, paddingTop: insets.top }}>{children}</View>
     </>
   );
 
   // 页面级模糊源：本页面的玻璃组件模糊本页面的背景。
   // 不在导航器外层共享模糊源——BlurTargetView 会代理子视图树，
   // 在 Android 上会破坏 react-native-screens 转场导致崩溃。
+  // 玻璃材质下只把「背景层」包进 BlurTargetView（它是纯静态图层），
+  // 内容层仍是它的兄弟节点，不参与代理，避免转场出问题。
   return (
-    <GlassTargetProvider>
-      <View className="flex-1">{body}</View>
+    <GlassTargetProvider target={glass ? glassTarget : undefined}>
+      <View className="flex-1">
+        {glass ? (
+          <BlurTargetView
+            ref={glassTarget}
+            pointerEvents="none"
+            style={StyleSheet.absoluteFill}
+          >
+            {body}
+          </BlurTargetView>
+        ) : (
+          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+            {body}
+          </View>
+        )}
+
+        {/* 内容层：避开状态栏（顶部安全区），渐变仍铺满全屏 */}
+        <View style={{ flex: 1, paddingTop: insets.top }}>{children}</View>
+      </View>
     </GlassTargetProvider>
   );
 }

@@ -1,8 +1,9 @@
 import React, { memo, useMemo } from "react";
 import Svg, { Rect } from "react-native-svg";
 
-/** 像素画：把字符网格按调色板画成 1x1 小方块（行内同色自动合并，减少节点） */
-function pixelRects(
+/** 像素画：把字符网格按调色板画成 1x1 小方块（行内同色自动合并，减少节点）
+ *  额外导出：农场把静态装饰合并进同一张 SVG 时直接复用它 */
+export function pixelRects(
   rows: string[],
   palette: Record<string, string>,
   ox: number,

@@ -13,6 +13,8 @@ interface SettingsState {
   apiKey: string;
   /** 主题：跟随系统 / 浅色 / 深色 */
   appearance: "system" | "light" | "dark";
+  /** 卡片材质：扁平实心 / 玻璃（毛玻璃模糊） */
+  material: "flat" | "glass";
   /** 自定义背景图 uri，null = 使用默认渐变 */
   backgroundImage: string | null;
   /** 默认背景的色调（大肥鱼可代改） */
@@ -23,6 +25,7 @@ interface SettingsState {
   whalePhrase: string;
   setApiKey: (key: string) => void;
   setAppearance: (a: SettingsState["appearance"]) => void;
+  setMaterial: (m: SettingsState["material"]) => void;
   setBackgroundImage: (uri: string | null) => void;
   setBackgroundTint: (t: BackgroundTint) => void;
   setBackgroundEffect: (e: BackgroundEffect) => void;
@@ -36,12 +39,14 @@ export const useSettings = create<SettingsState>()(
       // 永远不要把真实 Key 写进代码或提交到仓库
       apiKey: "",
       appearance: "system",
+      material: "flat",
       backgroundImage: null,
       backgroundTint: "sky",
       backgroundEffect: "aurora",
       whalePhrase: "大爹来了",
       setApiKey: (apiKey) => set({ apiKey: apiKey.trim() }),
       setAppearance: (appearance) => set({ appearance }),
+      setMaterial: (material) => set({ material }),
       setBackgroundImage: (backgroundImage) => set({ backgroundImage }),
       setBackgroundTint: (backgroundTint) =>
         set({ backgroundTint: resolveTint(backgroundTint) }),
