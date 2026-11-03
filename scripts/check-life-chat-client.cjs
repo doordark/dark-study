@@ -40,11 +40,12 @@ async function main() {
   const controller = new AbortController();
   const pending = chat(messages, "fake-test-key", { signal: controller.signal, timeoutMs: 1000 });
   controller.abort();
-  await assert.rejects(pending, /请求超时/);
+  // 用户主动取消与超时分开提示，避免把取消误报成网络问题
+  await assert.rejects(pending, /请求已取消/);
   const before = calls;
   await assert.rejects(chat(messages, "fake-test-key", { timeoutMs: 5 }), /请求超时/);
   assert.equal(calls, before + 1, "timeout does not automatically retry");
-  await assert.rejects(chat(messages, "fake-test-key", { signal: controller.signal }), /请求超时/);
+  await assert.rejects(chat(messages, "fake-test-key", { signal: controller.signal }), /请求已取消/);
   console.log("Chat client mock checks passed: 220-token bound, compatibility, cancellation, timeout and no retry. No real API requests.");
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; }).finally(() => { global.fetch = savedFetch; });

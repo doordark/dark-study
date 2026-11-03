@@ -17,8 +17,11 @@ async function main() {
   assert.equal(await chat(messages, "test-only-placeholder"), "A quiet moment.");
   global.fetch = async () => ({ ok: true, json: async () => ({ choices: [] }) });
   await assert.rejects(chat(messages, "test-only-placeholder"), /非预期/);
-  global.fetch = async () => ({ ok: false, status: 503, text: async () => "unavailable" });
-  await assert.rejects(chat(messages, "test-only-placeholder"), /503/);
+  let unavailableCalls = 0;
+  global.fetch = async () => { unavailableCalls++; return { ok: false, status: 503, text: async () => "unavailable" }; };
+  // 503/5xx 会做退避重试，最终给用户可读提示，不再暴露原始 JSON
+  await assert.rejects(chat(messages, "test-only-placeholder"), /繁忙/);
+  assert.equal(unavailableCalls, 3, "server busy is retried up to three attempts");
   let capturedSignal;
   global.fetch = (_, opts) => new Promise((resolve, reject) => {
     capturedSignal = opts.signal;

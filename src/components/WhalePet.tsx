@@ -21,6 +21,7 @@ import Animated, {
   runOnJS,
   useAnimatedStyle,
   useFrameCallback,
+  useReducedMotion,
   useSharedValue,
   withDelay,
   withRepeat,
@@ -33,6 +34,7 @@ import { useColorScheme } from "nativewind";
 
 import { ChatImage } from "@/components/ChatImage";
 import { PetAnimation, type PetAnimationKind } from "@/components/PetAnimation";
+import { useAnimationActive } from "@/hooks/useAnimationActive";
 import { ChatInputBar } from "@/components/ChatInputBar";
 import { BACKGROUND_PRESETS, resolveTint } from "@/constants/backgrounds";
 import { askWhalePet } from "@/services/ai";
@@ -235,6 +237,8 @@ export function WhalePet() {
 }
 
 function WhalePetLayer() {
+  const animationActive = useAnimationActive();
+  const reducedMotion = useReducedMotion();
   const hide = useWhalePet((s) => s.hide);
   const care = useWhalePet((s) => s.care);
   const feedPet = useWhalePet((s) => s.feed);
@@ -429,6 +433,7 @@ function WhalePetLayer() {
 
   // 待机呼吸：鲸鱼浮在空气里轻轻起伏
   useEffect(() => {
+    if (!animationActive || reducedMotion) { bob.value = 0; return; }
     breathEnergy.value = withTiming(frame === "sleep" ? 0.45 : 1, { duration: 400 });
     bob.value = withRepeat(
       withTiming(1, {
@@ -442,7 +447,7 @@ function WhalePetLayer() {
       cancelAnimation(bob);
       bob.value = 0;
     };
-  }, [bob, breathEnergy, frame]);
+  }, [bob, breathEnergy, frame, animationActive, reducedMotion]);
 
   // 养护心跳：每分钟按真实时间结算一次（应用开着也不会忘记饿）
   useEffect(() => {
@@ -679,7 +684,7 @@ function WhalePetLayer() {
     }
   };
 
-  useFrameCallback((info) => {
+  const physicsClock = useFrameCallback((info) => {
     if (phase.value !== 2) return;
     const dt = Math.min(
       Math.max((info.timeSincePreviousFrame ?? 16) / 1000, 0.001),
@@ -738,6 +743,11 @@ function WhalePetLayer() {
       runOnJS(onLandRest)();
     }
   }, true);
+
+  useEffect(() => {
+    physicsClock.setActive(animationActive);
+    return () => physicsClock.setActive(false);
+  }, [physicsClock, animationActive]);
 
   const pan = Gesture.Pan()
     .enabled(!chatOpen)
@@ -1284,7 +1294,7 @@ function WhalePetLayer() {
                 }}
               />
               <Animated.View style={[{ width: SIZE, height: H }, facingStyle]}>
-                <PetAnimation kind={frame} width={SIZE} height={H} />
+                <PetAnimation kind={frame} width={SIZE} height={H} active={animationActive} />
               </Animated.View>
             </Animated.View>
           </Pressable>
@@ -1345,7 +1355,7 @@ function WhalePetLayer() {
               onPress={() => {
                 const next = !voiceOn;
                 toggleVoice();
-                if (next) speakWhale("声音开好啦，大爹。");
+                if (next) speakWhale(`声音开好啦，${useWhalePersona.getState().persona.userName}。`);
                 else stopWhaleVoice();
               }}
               hitSlop={8}

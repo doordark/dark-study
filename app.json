@@ -2,7 +2,7 @@
   "expo": {
     "name": "dark-study",
     "slug": "dark-study",
-    "version": "1.7.5",
+    "version": "1.7.7",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "dark-study",
@@ -11,7 +11,8 @@
     },
     "android": {
       "package": "com.darkstudy.app",
-      "versionCode": 23,
+      "versionCode": 24,
+      "blockedPermissions": ["android.permission.RECORD_AUDIO"],
       "permissions": ["REQUEST_INSTALL_PACKAGES"],
       "adaptiveIcon": {
         "backgroundColor": "#08060D",
@@ -45,7 +46,18 @@
           "ocrUseBundled": true
         }
       ],
-      "./plugins/withReleaseSigning"
+      "./plugins/withReleaseSigning",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false,
+          "recordAudioAndroid": false,
+          "enableBackgroundRecording": false,
+          "enableBackgroundPlayback": false
+        }
+      ],
+      "expo-secure-store",
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true,

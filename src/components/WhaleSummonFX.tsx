@@ -13,13 +13,13 @@ import Animated, {
   type SharedValue,
 } from "react-native-reanimated";
 
-const ACTIONS = require("../../assets/whale/pet-actions-sheet.png");
-const TURN = require("../../assets/whale/pet-spin-sheet.png");
+const ACTIONS = require("../../assets/whale/pet-actions-v2.png");
+const TURN = require("../../assets/whale/pet-spin-v2.png");
 const W = 192;
 const H = 256;
-const WAVE = [0, 1, 2, 3, 2, 3, 2, 1, 0];
-const ARRIVE = [4, 5, 6, 7, 0];
-const DEPART = [0, 1, 2, 3, 4];
+const WAVE = [8, 9, 10, 11, 12, 13, 14, 15];
+const ARRIVE = [8, 9, 10, 11, 12, 13, 14, 15, 0];
+const DEPART = [0, 1, 2, 3, 4, 5, 6, 7, 8];
 type Mode = "summon" | "leave";
 type Timeline = { p: SharedValue<number>; mode: Mode };
 
@@ -37,9 +37,9 @@ function poseAt(value: number, frames: number[]) {
 function Character({ p, mode, reduced }: Timeline & { reduced: boolean }) {
   const leaving = mode === "leave";
   const waveStyle = useAnimatedStyle(() => {
-    const t = phase(p.value, leaving ? 0.06 : 0.42, leaving ? 0.42 : 0.87);
-    const frame = reduced ? 0 : poseAt(t, WAVE);
-    return { transform: [{ translateX: -(frame % 4) * W }] };
+    const elapsed = Math.max(0, p.value - (leaving ? 0.06 : 0.42)) * (leaving ? 2100 : 2600);
+    const frame = reduced ? 8 : WAVE[Math.min(7, Math.floor(elapsed / 70))];
+    return { transform: [{ translateX: -(frame % 8) * W }, { translateY: -Math.floor(frame / 8) * H }] };
   });
   const turnStyle = useAnimatedStyle(() => {
     const t = phase(p.value, leaving ? 0.42 : 0.12, leaving ? 0.69 : 0.42);
@@ -58,8 +58,6 @@ function Character({ p, mode, reduced }: Timeline & { reduced: boolean }) {
     opacity: reduced ? 0 : leaving
       ? phase(p.value, 0.40, 0.44)
       : 1 - phase(p.value, 0.40, 0.44),
-    // The turn sheet fills more of each cell than the action sheet.
-    transform: [{ scale: 0.86 }, { translateY: 8 }],
   }));
   const body = useAnimatedStyle(() => {
     const t = p.value;
@@ -81,11 +79,11 @@ function Character({ p, mode, reduced }: Timeline & { reduced: boolean }) {
     <Animated.View style={[styles.character, body]}>
       <Animated.View style={[styles.cell, turnLayer]}>
         <Animated.Image source={TURN} fadeDuration={0} resizeMode="stretch"
-          style={[styles.sheet, { height: H * 2 }, turnStyle]} />
+          style={[styles.sheet, { height: H * 4 }, turnStyle]} />
       </Animated.View>
       <Animated.View style={[styles.cell, waveLayer]}>
         <Animated.Image source={ACTIONS} fadeDuration={0} resizeMode="stretch"
-          style={[styles.sheet, { height: H * 4 }, waveStyle]} />
+          style={[styles.sheet, { width: W * 8, height: H * 5 }, waveStyle]} />
       </Animated.View>
     </Animated.View>
   </View>;

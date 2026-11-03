@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
+import { router, useIsFocused } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -158,6 +158,7 @@ export function AssistantScreen() {
   const [kbHeight, setKbHeight] = useState(0);
   const scrollRef = useRef<ScrollViewInstance>(null);
   const voiceOn = useWhaleVoice((s) => s.on);
+  const voiceScreenFocused = useIsFocused();
   const toggleVoiceStore = useWhaleVoice((s) => s.toggle);
   const hydrateVoice = useWhaleVoice((s) => s.hydrate);
   const spokenId = useRef<string | null>(null);
@@ -195,12 +196,15 @@ export function AssistantScreen() {
     const last = messages[messages.length - 1];
     if (last.role !== "assistant" || last.id === spokenId.current) return;
     spokenId.current = last.id;
-    if (!whale || !voiceOn) return;
+    if (!whale || !voiceOn || !voiceScreenFocused) return;
     speakWhale(last.content);
-  }, [messages, whale, voiceOn]);
+  }, [messages, whale, voiceOn, voiceScreenFocused]);
 
   // 离开页面时让她闭嘴
-  useEffect(() => () => stopWhaleVoice(), []);
+  useEffect(() => {
+    if (!voiceScreenFocused) stopWhaleVoice();
+    return () => stopWhaleVoice();
+  }, [voiceScreenFocused]);
 
   const localMsg = (content: string): ChatMessage => ({
     id: uid(),
@@ -353,7 +357,7 @@ export function AssistantScreen() {
     const next = !voiceOn;
     tapHaptic();
     toggleVoiceStore();
-    if (next) speakWhale("声音开好啦，大爹。");
+    if (next) speakWhale(`声音开好啦，${useWhalePersona.getState().persona.userName}。`);
     else stopWhaleVoice();
   };
 

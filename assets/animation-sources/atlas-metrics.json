@@ -1,0 +1,65 @@
+[
+  {
+    "path": "assets/images/farm-people-walk-v2.png",
+    "width": 1024,
+    "height": 1120,
+    "columns": 8,
+    "rows": 7,
+    "bytes": 1217955,
+    "rgbaMiB": 4.375
+  },
+  {
+    "path": "assets/images/farm-people-idle-v2.png",
+    "width": 768,
+    "height": 1120,
+    "columns": 6,
+    "rows": 7,
+    "bytes": 920496,
+    "rgbaMiB": 3.281
+  },
+  {
+    "path": "assets/images/farm-people-talk-v2.png",
+    "width": 768,
+    "height": 1120,
+    "columns": 6,
+    "rows": 7,
+    "bytes": 1020376,
+    "rgbaMiB": 3.281
+  },
+  {
+    "path": "assets/whale/pet-idle-v2.png",
+    "width": 768,
+    "height": 768,
+    "columns": 4,
+    "rows": 3,
+    "bytes": 846740,
+    "rgbaMiB": 2.25
+  },
+  {
+    "path": "assets/whale/pet-dance-v2.png",
+    "width": 768,
+    "height": 1024,
+    "columns": 4,
+    "rows": 4,
+    "bytes": 1091060,
+    "rgbaMiB": 3.0
+  },
+  {
+    "path": "assets/whale/pet-spin-v2.png",
+    "width": 768,
+    "height": 1024,
+    "columns": 4,
+    "rows": 4,
+    "bytes": 1023500,
+    "rgbaMiB": 3.0
+  },
+  {
+    "path": "assets/whale/pet-actions-v2.png",
+    "width": 1536,
+    "height": 1280,
+    "columns": 8,
+    "rows": 5,
+    "bytes": 2660004,
+    "rgbaMiB": 7.5
+  }
+]

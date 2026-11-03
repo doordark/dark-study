@@ -5,7 +5,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import { StatusBar } from "expo-status-bar";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { BackHandler, Image, Pressable, Text, View, useWindowDimensions } from "react-native";
 import Animated, {
   Easing,
@@ -25,12 +25,15 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AtlasSprite } from "@/components/AtlasSprite";
 import { NightSkyMessage } from "@/components/NightSkyMessage";
+import { useAnimationActive } from "@/hooks/useAnimationActive";
 
 import {
   successHaptic,
   tapHaptic,
   thumpHaptic,
 } from "@/utils/haptics";
+
+const NightMotion = createContext(true);
 
 /** 彩蛋观感：固定的种子让每次进入星空时星位一致，不会随机跳动 */
 const VISIT_KEY = "dark-study-night-visits";
@@ -75,7 +78,7 @@ const SPOTS = [
   { x: 0.73, y: 0.58, s: 24 },
 ] as const;
 
-const NIGHT_SPRITES = require("../../assets/images/night-sprites.png");
+const NIGHT_SPRITES = require("../../assets/images/night-sprites-v2.png");
 
 /* -------------------------------------------------------------------------- */
 /*  背景微光星点：各自呼吸闪烁                                                 */
@@ -95,8 +98,10 @@ const Twinkle = memo(function Twinkle({
   dur: number;
 }) {
   const v = useSharedValue(0.15);
+  const motion = useContext(NightMotion);
 
   useEffect(() => {
+    if (!motion) { v.value = 0.35; return; }
     v.value = withDelay(
       delay,
       withRepeat(
@@ -108,7 +113,7 @@ const Twinkle = memo(function Twinkle({
       ),
     );
     return () => cancelAnimation(v);
-  }, [delay, dur, v]);
+  }, [delay, dur, v, motion]);
 
   const style = useAnimatedStyle(() => ({ opacity: v.value }));
 
@@ -148,9 +153,10 @@ function ShootingStar({
 }) {
   const t = useSharedValue(0);
   const reduceMotion = useReducedMotion();
+  const motion = useContext(NightMotion);
 
   useEffect(() => {
-    if (reduceMotion) return;
+    if (reduceMotion || !motion) { t.value = 0; return; }
     t.value = withDelay(
       delay,
       withRepeat(
@@ -163,7 +169,7 @@ function ShootingStar({
       ),
     );
     return () => cancelAnimation(t);
-  }, [delay, t, reduceMotion]);
+  }, [delay, t, reduceMotion, motion]);
 
   const style = useAnimatedStyle(() => {
     const p = t.value;
@@ -239,8 +245,10 @@ function Moon({
 }) {
   const grow = useSharedValue(0.55);
   const halo = useSharedValue(0);
+  const motion = useContext(NightMotion);
 
   useEffect(() => {
+    if (!motion) { grow.value = 1; halo.value = 0.6; return; }
     grow.value = withSpring(1, { damping: 18, stiffness: 90 });
     halo.value = withRepeat(
       withSequence(
@@ -249,7 +257,8 @@ function Moon({
       ),
       -1,
     );
-  }, [grow, halo]);
+    return () => { cancelAnimation(grow); cancelAnimation(halo); };
+  }, [grow, halo, motion]);
 
   const growStyle = useAnimatedStyle(() => ({
     transform: [{ scale: grow.value }],
@@ -295,27 +304,9 @@ function Moon({
           backgroundColor: `rgba(253,230,138,${0.08 * bright})`,
         }}
       />
-      <Svg width={size} height={size} viewBox="0 0 100 100">
-        <Circle
-          cx="50"
-          cy="50"
-          r="34"
-          fill="#FDE68A"
-          opacity={0.75 + bright * 0.25}
-        />
-        <Circle
-          cx="50"
-          cy="50"
-          r="34"
-          fill="none"
-          stroke="rgba(255,255,255,0.5)"
-          strokeWidth="1"
-        />
-        <Circle cx="38" cy="41" r="7" fill="#FCD34D" opacity="0.75" />
-        <Circle cx="61" cy="59" r="9" fill="#FCD34D" opacity="0.65" />
-        <Circle cx="55" cy="33" r="4" fill="#FCD34D" opacity="0.7" />
-        <Circle cx="64" cy="45" r="3" fill="#FCD34D" opacity="0.55" />
-      </Svg>
+      <Animated.View style={{ opacity: 0.68 + bright * 0.32 }}>
+        <AtlasSprite source={NIGHT_SPRITES} columns={3} rows={2} column={2} row={0} width={size} />
+      </Animated.View>
     </Animated.View>
   );
 }
@@ -346,8 +337,10 @@ function CollectStar({
   const glow = useSharedValue(0.5);
   const ripple = useSharedValue(0);
   const reduceMotion = useReducedMotion();
+  const motion = useContext(NightMotion);
 
   useEffect(() => {
+    if (!motion || collected) return;
     glow.value = withRepeat(
       withSequence(
         withTiming(1, {
@@ -361,10 +354,12 @@ function CollectStar({
       ),
       -1,
     );
-  }, [glow, x]);
+    return () => cancelAnimation(glow);
+  }, [glow, x, motion, collected]);
 
   useEffect(() => {
     if (!collected) return;
+    if (!motion) { scale.value = 0.25; opacity.value = 0; ripple.value = 1; return; }
     cancelAnimation(glow);
     ripple.value = withTiming(1, { duration: reduceMotion ? 180 : 680, easing: Easing.out(Easing.cubic) });
     scale.value = withSequence(
@@ -372,7 +367,8 @@ function CollectStar({
       withTiming(0.25, { duration: 380, easing: Easing.out(Easing.cubic) }),
     );
     opacity.value = withDelay(100, withTiming(0, { duration: 380 }));
-  }, [collected, opacity, scale, glow, ripple, reduceMotion]);
+    return () => { cancelAnimation(ripple); cancelAnimation(scale); cancelAnimation(opacity); };
+  }, [collected, opacity, scale, glow, ripple, reduceMotion, motion]);
 
   const wrap = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
@@ -425,7 +421,7 @@ function CollectStar({
         disabled={collected}
         style={{ alignItems: "center", justifyContent: "center" }}
       >
-        <AtlasSprite source={NIGHT_SPRITES} columns={2} rows={2} column={0} row={0} width={s * 1.5} />
+        <AtlasSprite source={NIGHT_SPRITES} columns={3} rows={2} column={0} row={0} width={s * 1.5} />
       </Pressable>
       </Animated.View>
     </Animated.View>
@@ -446,13 +442,16 @@ function BurstDot({
   delay: number;
 }) {
   const t = useSharedValue(0);
+  const motion = useContext(NightMotion);
 
   useEffect(() => {
+    if (!motion) { t.value = 1; return; }
     t.value = withDelay(
       delay,
       withTiming(1, { duration: 820, easing: Easing.out(Easing.cubic) }),
     );
-  }, [delay, t]);
+    return () => cancelAnimation(t);
+  }, [delay, t, motion]);
 
   const style = useAnimatedStyle(() => ({
     opacity: 1 - t.value,
@@ -518,16 +517,19 @@ function Burst({ cx, cy }: { cx: number; cy: number }) {
 function OwlBody() {
   const bob = useSharedValue(0);
   const blink = useSharedValue(1);
+  const motion = useContext(NightMotion);
   useEffect(() => {
+    if (!motion) { bob.value = 0; blink.value = 1; return; }
     bob.value = withRepeat(withTiming(-3, { duration: 1900, easing: Easing.inOut(Easing.sin) }), -1, true);
     blink.value = withRepeat(withSequence(withDelay(2800, withTiming(0, { duration: 70 })), withDelay(100, withTiming(1, { duration: 100 }))), -1, false);
-  }, [blink, bob]);
+    return () => { cancelAnimation(blink); cancelAnimation(bob); };
+  }, [blink, bob, motion]);
   const body = useAnimatedStyle(() => ({ transform: [{ translateY: bob.value }] }));
   const open = useAnimatedStyle(() => ({ opacity: blink.value }));
   const closed = useAnimatedStyle(() => ({ opacity: 1 - blink.value }));
   return <Animated.View style={[{ width: 80, height: 86 }, body]}>
-    <Animated.View style={[{ position: "absolute" }, open]}><AtlasSprite source={NIGHT_SPRITES} columns={2} rows={2} column={0} row={1} width={80} height={86} /></Animated.View>
-    <Animated.View style={[{ position: "absolute" }, closed]}><AtlasSprite source={NIGHT_SPRITES} columns={2} rows={2} column={1} row={1} width={80} height={86} /></Animated.View>
+    <Animated.View style={[{ position: "absolute" }, open]}><AtlasSprite source={NIGHT_SPRITES} columns={3} rows={2} column={0} row={1} width={80} height={86} /></Animated.View>
+    <Animated.View style={[{ position: "absolute" }, closed]}><AtlasSprite source={NIGHT_SPRITES} columns={3} rows={2} column={1} row={1} width={80} height={86} /></Animated.View>
   </Animated.View>;
 }
 
@@ -544,10 +546,13 @@ function Owl({
 }) {
   const pop = useSharedValue(0);
   const hop = useSharedValue(0);
+  const motion = useContext(NightMotion);
 
   useEffect(() => {
+    if (!motion) { pop.value = 1; hop.value = 0; return; }
     pop.value = withSpring(1, { damping: 12, stiffness: 150 });
-  }, [pop]);
+    return () => { cancelAnimation(pop); cancelAnimation(hop); };
+  }, [pop, hop, motion]);
 
   const popStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: hop.value }, { scale: pop.value }],
@@ -555,7 +560,7 @@ function Owl({
   }));
 
   const press = () => {
-    hop.value = withSequence(
+    if (motion) hop.value = withSequence(
       withTiming(-9, { duration: 110, easing: Easing.out(Easing.quad) }),
       withSpring(0, { damping: 13, stiffness: 190 }),
     );
@@ -646,6 +651,7 @@ export function NightSky({
   );
 
   const fade = useSharedValue(0);
+  const awake = useAnimationActive();
   const reduceMotion = useReducedMotion();
   const closingRef = useRef(false);
   const done = lit >= TOTAL_STARS;
@@ -663,12 +669,13 @@ export function NightSky({
   }));
 
   useEffect(() => {
+    if (!awake) return;
     fade.value = withTiming(1, {
       duration: reduceMotion ? 180 : 780,
       easing: Easing.out(Easing.cubic),
     });
     return () => cancelAnimation(fade);
-  }, [fade, reduceMotion]);
+  }, [fade, reduceMotion, awake]);
 
   // 记录来访次数，让这片夜空记得你
   useEffect(() => {
@@ -742,7 +749,7 @@ export function NightSky({
   const constellation = SPOTS.filter((_, i) => picked[i]);
 
   return (
-    <Animated.View
+    <NightMotion.Provider value={awake && !reduceMotion}><Animated.View
       accessibilityViewIsModal
       style={[
         {
@@ -797,7 +804,7 @@ export function NightSky({
       />
       <Animated.Image
         pointerEvents="none"
-        source={require("../../assets/images/night-forest.png")}
+        source={require("../../assets/images/night-forest-v2.png")}
         resizeMode="cover"
         fadeDuration={0}
         style={[{ position: "absolute", width: w, height: h, opacity: 0.68 }, sceneStyle]}
@@ -972,7 +979,7 @@ export function NightSky({
             </Text>
             <View className="flex-row items-center" style={{ gap: 5 }}>
               {Array.from({ length: TOTAL_STARS }).map((_, i) => (
-                <AtlasSprite key={i} source={NIGHT_SPRITES} columns={2} rows={2}
+                <AtlasSprite key={i} source={NIGHT_SPRITES} columns={3} rows={2}
                   column={picked[i] ? 0 : 1} row={0} width={14} />
               ))}
             </View>
@@ -1046,6 +1053,6 @@ export function NightSky({
           </View>
         </View>
       </Animated.View>
-    </Animated.View>
+    </Animated.View></NightMotion.Provider>
   );
 }

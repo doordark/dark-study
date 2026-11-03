@@ -6,6 +6,7 @@ import { Backdrop } from "@/components/Backdrop";
 import { GlassContainer } from "@/components/GlassContainer";
 import { PersonaSlider } from "@/components/PersonaSlider";
 import { WhaleAvatar } from "@/components/WhaleAvatar";
+import { WhaleVoiceSettings } from "@/components/WhaleVoiceSettings";
 import { useWhalePersona } from "@/store/useWhalePersona";
 import { useWhaleMemory } from "@/store/useWhaleMemory";
 import { DEFAULT_WHALE_PERSONA, normalizeWhalePersona, WHALE_PRESETS, WHALE_TRAITS, type WhalePersona } from "@/utils/whalePersona";
@@ -149,7 +150,7 @@ export function WhaleSettingsScreen() {
   const persona = useWhalePersona((s) => s.persona);
   const personaHydrated = useWhalePersona((s) => s.hydrated);
   const memoryHydrated = useWhaleMemory((s) => s.hydrated);
-  const [tab, setTab] = useState<"persona" | "memory">("persona");
+  const [tab, setTab] = useState<"persona" | "memory" | "voice">("persona");
   return <View className="flex-1"><Backdrop>
     <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
       <View className="flex-row items-center px-5 pb-3 pt-3">
@@ -157,12 +158,13 @@ export function WhaleSettingsScreen() {
         <View><Text className="text-[22px] font-extrabold text-slate-800 dark:text-white">人设与记忆</Text><Text className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">属于你的大肥鱼</Text></View>
       </View>
       <View className="mx-5 mb-4 flex-row rounded-2xl bg-white/20 p-1 dark:bg-white/[0.05]">
-        {([{ key: "persona", label: "捏捏性格" }, { key: "memory", label: "记忆小本本" }] as const).map((t) => <Pressable key={t.key} accessibilityRole="tab" accessibilityState={{ selected: tab === t.key }} aria-selected={tab === t.key} onPress={() => setTab(t.key)} className={`min-h-11 flex-1 items-center justify-center rounded-xl ${tab === t.key ? "bg-sky-400/25" : ""}`}><Text className={`text-[13px] font-bold ${tab === t.key ? "text-sky-600 dark:text-sky-300" : "text-slate-500 dark:text-slate-400"}`}>{t.label}</Text></Pressable>)}
+        {([{ key: "persona", label: "捏捏性格" }, { key: "memory", label: "记忆小本本" }, { key: "voice", label: "声音" }] as const).map((t) => <Pressable key={t.key} accessibilityRole="tab" accessibilityState={{ selected: tab === t.key }} aria-selected={tab === t.key} onPress={() => setTab(t.key)} className={`min-h-11 flex-1 items-center justify-center rounded-xl ${tab === t.key ? "bg-sky-400/25" : ""}`}><Text className={`text-[13px] font-bold ${tab === t.key ? "text-sky-600 dark:text-sky-300" : "text-slate-500 dark:text-slate-400"}`}>{t.label}</Text></Pressable>)}
       </View>
       <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 40 }}>
         {personaHydrated && memoryHydrated ? <>
           <View style={{ display: tab === "persona" ? "flex" : "none" }}><PersonaEditor persona={persona} /></View>
           <View style={{ display: tab === "memory" ? "flex" : "none" }}><MemoryEditor /></View>
+          {tab === "voice" ? <WhaleVoiceSettings /> : null}
         </> : <Text className="py-6 text-center text-slate-500">正在翻开小本本…</Text>}
       </ScrollView>
     </KeyboardAvoidingView>

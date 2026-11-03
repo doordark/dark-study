@@ -26,7 +26,8 @@ assert.equal(p.reserveLifeRequest(usage, settings, at + 1800000), null, "daily l
 assert.equal(p.reserveLifeRequest(usage, settings, nextDay).count, 1, "new real day resets count");
 assert.equal(p.reserveLifeRequest({ ...empty, lastAt: at + 600000 }, settings, at), null, "clock rollback does not bypass cooldown");
 assert.equal(p.reserveLifeRequest(empty, { ...settings, chatter: false }, at), null);
-assert.deepEqual(p.normalizeLifeSettings({ interval: 1, dailyLimit: 999, aiMinutes: -1, online: "true" }), p.DEFAULT_LIFE);
+const clamped = p.normalizeLifeSettings({ interval: 1, dailyLimit: 999, aiMinutes: -1, online: "true" });
+assert.equal(clamped.conversationCooldown, 20); assert.equal(clamped.dailyLimit, 50); assert.equal(clamped.aiMinutes, 1); assert.equal(clamped.online, false); assert.equal(clamped.mode, "custom");
 assert.deepEqual(p.normalizeLifeUsage({ date: p.lifeDate(at), count: -2, lastAt: NaN }, at), empty);
 const pair = ["door", "gu"];
 const reply = (lines) => JSON.stringify({ lines });

@@ -1,18 +1,20 @@
 import type { ImageSourcePropType } from "react-native";
 import { AnimatedAtlas } from "./AnimatedAtlas";
 export type PetAnimationKind = "idle" | "happy" | "wave" | "sleep" | "dance" | "spin" | "eat" | "study";
-const ACTIONS = require("../../assets/whale/pet-actions-sheet.png");
-const MOTION: Record<PetAnimationKind, { source: ImageSourcePropType; rows: number; frames: number[]; holds: number[] }> = {
-  idle: { source: require("../../assets/whale/pet-idle-sheet.png"), rows: 2, frames: [0,1,2,3,4,5,6,7], holds: [1600,260,260,90,110,90,260,300] },
-  happy: { source: ACTIONS, rows: 4, frames: [0,1,2,3], holds: [300,180,180,300] },
-  wave: { source: ACTIONS, rows: 4, frames: [1,2,3,2], holds: [160,160,160,160] },
-  eat: { source: ACTIONS, rows: 4, frames: [4,5,6,7], holds: [500,300,400,650] },
-  study: { source: ACTIONS, rows: 4, frames: [8,9,10,11], holds: [1100,500,1000,900] },
-  sleep: { source: ACTIONS, rows: 4, frames: [12,13,14,15], holds: [600,700,2600,1600] },
-  dance: { source: require("../../assets/whale/pet-dance-sheet.png"), rows: 2, frames: [0,1,2,3,4,5,6,7], holds: [140,140,140,140,140,140,140,140] },
-  spin: { source: require("../../assets/whale/pet-spin-sheet.png"), rows: 2, frames: [0,1,2,3,4,5,6,7], holds: [140,140,140,140,140,140,140,140] },
+const ACTIONS = require("../../assets/whale/pet-actions-v2.png");
+const row = (offset: number, count = 8) => Array.from({ length: count }, (_, i) => offset + i);
+type Motion = { source: ImageSourcePropType; columns: number; rows: number; frames: number[]; holds?: number[]; frameDuration: number; loop?: boolean; loopFrom?: number };
+export const PET_MOTION: Record<PetAnimationKind, Motion> = {
+  idle: { source: require("../../assets/whale/pet-idle-v2.png"), columns: 4, rows: 3, frames: row(0, 12), frameDuration: 80, holds: [900,400,400,400,70,70,90,70,90,400,400,400] },
+  happy: { source: ACTIONS, columns: 8, rows: 5, frames: row(0), frameDuration: 70, loop: false },
+  wave: { source: ACTIONS, columns: 8, rows: 5, frames: row(8), frameDuration: 70, loop: false },
+  eat: { source: ACTIONS, columns: 8, rows: 5, frames: row(16), frameDuration: 70, loop: false },
+  study: { source: ACTIONS, columns: 8, rows: 5, frames: row(24), frameDuration: 110, holds: [900,110,110,110,110,110,110,500] },
+  // Drowsiness/yawn is an intro; closed-eye breathing loops without waking every cycle.
+  sleep: { source: ACTIONS, columns: 8, rows: 5, frames: row(32), frameDuration: 110, holds: [400,110,110,160,500,500,500,500], loopFrom: 4 },
+  dance: { source: require("../../assets/whale/pet-dance-v2.png"), columns: 4, rows: 4, frames: row(0, 16), frameDuration: 65 },
+  spin: { source: require("../../assets/whale/pet-spin-v2.png"), columns: 4, rows: 4, frames: row(0, 16), frameDuration: 65 },
 };
-export function PetAnimation({ kind, width, height }: { kind: PetAnimationKind; width: number; height: number }) {
-  const motion = MOTION[kind];
-  return <AnimatedAtlas key={kind} {...motion} columns={4} width={width} height={height} />;
+export function PetAnimation({ kind, width, height, active = true }: { kind: PetAnimationKind; width: number; height: number; active?: boolean }) {
+  return <AnimatedAtlas key={kind} {...PET_MOTION[kind]} width={width} height={height} active={active} />;
 }
