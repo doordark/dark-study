@@ -35,9 +35,14 @@ export async function chat(
     temperature?: number;
     jsonMode?: boolean;
     timeoutMs?: number;
+    maxTokens?: number;
+    signal?: AbortSignal;
   } = {},
 ): Promise<string> {
   const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (opts.signal?.aborted) controller.abort();
+  opts.signal?.addEventListener("abort", abort, { once: true });
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 90_000);
 
   try {
@@ -53,6 +58,7 @@ export async function chat(
         temperature: opts.temperature ?? 0.4,
         // V4.1-Flash 默认开启思考模式；日常对话/结构化解析关掉更快，也能让 temperature 生效
         thinking: { type: "disabled" },
+        ...(opts.maxTokens !== undefined ? { max_tokens: Math.max(16, Math.min(1024, Math.floor(opts.maxTokens))) } : {}),
         ...(opts.jsonMode ? { response_format: { type: "json_object" } } : {}),
       }),
       signal: controller.signal,
@@ -78,6 +84,7 @@ export async function chat(
     throw e;
   } finally {
     clearTimeout(timer);
+    opts.signal?.removeEventListener("abort", abort);
   }
 }
 

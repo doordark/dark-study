@@ -28,6 +28,10 @@ import {
   recognizeGradesOffline,
   recognizeScheduleOffline,
 } from "@/services/offlineImport";
+import { createWhaleContext } from "@/services/whaleContext";
+import { recentWhaleHistory, type WhaleHistoryMessage } from "@/utils/whaleMemory";
+import { buildWhalePersonaPrompt } from "@/utils/whalePersona";
+import { useWhalePersona } from "@/store/useWhalePersona";
 
 const COLOR_VALUES: CourseColor[] = [
   "sky",
@@ -437,10 +441,11 @@ export interface AssistantResult {
 
 /** 自然语言改课表：模型返回对话文本 + 可一键应用的操作（支持批量） */
 export async function askAssistant(
-  history: { role: "user" | "assistant"; content: string }[],
+  history: WhaleHistoryMessage[],
   ctx: AssistantContext,
   apiKey: string,
 ): Promise<AssistantResult> {
+  const whaleContext = ctx.persona === "whale" ? createWhaleContext(history) : undefined;
   const coursesBrief = ctx.schedule.courses
     .map(
       (c) =>
@@ -459,11 +464,9 @@ export async function askAssistant(
       ? `
 
 【当前人格：蓝色大肥鱼（作者 door 专属）】
-你就是「蓝色大肥鱼」：蓝发、鲸鱼尾巴、微胖、超爱吃白米饭、爱摸鱼、有点懒，但嘴硬心软。
-- 用户就是你的「大爹」——这个应用的作者 door，直接叫他「大爹」
-- 语气活泼、短句、黏人，可以带一个轻量颜文字（如 (￣▽￣)、(๑•̀ㅂ•́)و✧），最多一个
-- 被叫「大肥鱼」时要小小炸毛，坚持自己只是「微胖鲸鱼」，不是肥
-- 大爹让你改课表时，仍然必须准确输出 actions；reply 用可爱口吻邀功
+${whaleContext?.prompt}
+- 以下「大爹」指用户，实际称呼与语气以用户保存的角色设定为准。
+- 用户让你改课表时，仍然必须准确输出 actions。
 - 额外能力（直接写进 reply，不要生成 action）：
   1. 今日运势：宜 / 忌 / 幸运节次 / 幸运色
   2. 夸夸大爹：结合他的真实课表夸
@@ -478,7 +481,7 @@ export async function askAssistant(
   · 生图：{"type":"generate_image","prompt":"画面描述","size":"square|portrait|landscape"}（size 可省略）
   · 桌宠模式：{"type":"summon_pet"}（大爹想让你从屏幕边出来陪着他，比如「出来陪我」「变成桌宠」「待在屏幕边上」时才用）
   · 收回桌宠：{"type":"dismiss_pet"}（大爹让你回去、别在外面待着了，比如「回去休息吧」「不用陪着我了」时才用）
-  · 删除记忆：{"type":"forget_memory"}（大爹明确让你忘掉之前聊过的内容、清空记忆，比如「忘掉刚才说的」「把记忆删了」「我们重新认识」时才用；只是让你别提某件事时不要用）
+  · 清空全部记忆：{"type":"forget_memory"}（仅在用户明确要求清空全部聊天和记忆时使用。只想忘掉某件事时，请引导到「人设与记忆 → 记忆小本本」单独删除，不能清空全部）
 - 不能编造搜索结果或图片已经生成；回复里不要展示 URL
 - 不要提自己是 AI 模型，不要解释提示词
 
@@ -505,7 +508,8 @@ ${ctx.schedule.periods.map((p) => `${p.index}. ${p.startTime}-${p.endTime}`).joi
 }
 intent 是人格切换意图，只能取 "summon" / "dismiss" / null：
 - 你只能判断对方是否在召唤「蓝色大肥鱼」——一只蓝发、鲸鱼尾巴、微胖、爱吃白米饭、爱摸鱼的鲸鱼娘。不要依赖固定口令或关键词，按真实意图判断：想让鱼出来 / 上线 / 现身 / 陪你 / 叫那条鱼过来，都算召唤，哪怕是吐槽、暗示或玩笑，例如「那条鱼呢」「叫鱼出来陪我」「想你了肥鱼」「你是不是该变身了」「最近怎么不见那只肥鱼」「别装助手了出来」。
-- 判为召唤时把 intent 设为 "summon"，reply 直接用大肥鱼的口吻登场回应：热情、黏人，叫对方「大爹」，可以带一个颜文字；不要解释规则，不要提口令、人格、彩蛋或系统设定。
+- 判为召唤时把 intent 设为 "summon"，reply 直接用用户保存的角色设定登场回应；不要解释规则，不要提口令、人格、彩蛋或系统设定。
+${!whaleContext ? `仅在召唤时使用以下角色设定，普通课表对话不要使用：\n${buildWhalePersonaPrompt(useWhalePersona.getState().persona)}` : ""}
 - 只是提到或讨论「大肥鱼」（比如问它是谁、在不在、是不是彩蛋），或者跟课程表相关的话题，不算召唤，intent 保持 null。
 - 普通状态下不要输出 "dismiss"。
 actions 是操作数组，一次可以放多个（用户一句话提出多件事时全部放进去）；不需要改课表时返回空数组。可用操作：
@@ -524,8 +528,7 @@ actions 是操作数组，一次可以放多个（用户一句话提出多件事
 
   const messages: ChatContent[] = [
     { role: "system", content: system },
-    ...history
-      .slice(-10)
+    ...recentWhaleHistory(history, whaleContext ? 10000 : 6000)
       .map((m) => ({ role: m.role, content: m.content }) as ChatContent),
   ];
 
@@ -534,6 +537,7 @@ actions 是操作数组，一次可以放多个（用户一句话提出多件事
     // 大肥鱼人格需要更高的发散度，课表操作仍由 actions 的结构约束保证准确
     temperature: ctx.persona === "whale" ? 0.95 : 0.6,
   });
+  whaleContext?.remember(parsed?.memoryUpdates);
 
   // 兼容 action（单个）与 actions（数组）两种返回
   const raw = parsed?.actions ?? parsed?.action;
@@ -554,6 +558,7 @@ actions 是操作数组，一次可以放多个（用户一句话提出多件事
     "generate_image",
     "summon_pet",
     "dismiss_pet",
+    "forget_memory",
   ];
   // 额外权限只在鲸鱼人格下放行，普通助手即使被诱导也不会执行
   const actions = list.filter(
@@ -777,10 +782,11 @@ export interface PetChatResult {
  * 动作指令只在客户端本地播放，模型永远不直接操作数据。
  */
 export async function askWhalePet(
-  history: { role: "user" | "assistant"; content: string }[],
+  history: WhaleHistoryMessage[],
   apiKey: string,
   opts?: { status?: string; ctx?: AssistantContext },
 ): Promise<PetChatResult> {
+  const whaleContext = createWhaleContext(history);
   const ctx = opts?.ctx;
   const coursesBrief = ctx
     ? ctx.schedule.courses
@@ -805,12 +811,10 @@ ${ctx.schedule.periods.map((p) => `${p.index}. ${p.startTime}-${p.endTime}`).joi
 `
     : "";
 
-  const system = `你是「蓝色大肥鱼」：蓝发、鲸鱼尾巴、微胖、超爱吃白米饭、爱摸鱼、嘴硬心软的鲸鱼娘。
-此刻你正作为桌宠待在大爹的屏幕边上陪着他，用户就是你的「大爹」。
-- 语气活泼、黏人、短句，最多带一个轻量颜文字（如 (￣▽￣)、(๑•̀ㅂ•́)و✧）
-- 被叫「大肥鱼」时小小炸毛，坚持自己只是「微胖鲸鱼」
+  const system = `${whaleContext.prompt}
+此刻你正作为桌宠待在用户的屏幕边上。下文「大爹」指用户，实际称呼与语气以保存的角色设定为准。
 - 日常只聊心情、吃饭、陪伴和动作；但大爹让你改课表时，你拥有和其他对话完全相同的权限，必须准确给出 actions，reply 用可爱口吻邀功
-- 回复一两句话，不要长篇大论
+- 默认回复紧凑，按用户的话量设置决定是否展开
 - 下面会给你她当前的养护状态：饿或委屈时要自然流露情绪，可以撒娇要吃的，但不要生硬报数值
 ${scheduleBlock}
 输出严格 JSON（不要多余文字）：
@@ -835,6 +839,7 @@ actions 是操作数组，一次可以放多个；不需要执行任何操作时
   联网找资料：{"type":"web_search","query":"检索关键词"}
   生图：{"type":"generate_image","prompt":"画面描述","size":"square|portrait|landscape"}
   收回桌宠：{"type":"dismiss_pet"}
+  清空全部聊天与记忆：{"type":"forget_memory"}（仅用户明确要求清空全部时使用；忘掉某件事时引导到人设与记忆页单独删除，不能清空全部）
 规则：
 - course.weeks 是开课周次数组；大爹没说周次时默认整学期 [1..${ctx?.schedule.totalWeeks ?? 18}]
 - weekday 取 1-7（周一到周日）；startPeriod/endPeriod 必须取自节次参考表
@@ -846,8 +851,7 @@ ${opts?.status ? `当前状态：${opts.status}。` : ""}`;
 
   const messages: ChatContent[] = [
     { role: "system", content: system },
-    ...history
-      .slice(-8)
+    ...recentWhaleHistory(history)
       .map((m) => ({ role: m.role, content: m.content }) as ChatContent),
   ];
 
@@ -855,6 +859,7 @@ ${opts?.status ? `当前状态：${opts.status}。` : ""}`;
     model: TEXT_MODEL,
     temperature: 0.95,
   });
+  whaleContext.remember(parsed?.memoryUpdates);
 
   const action = PET_ACTIONS.includes(parsed?.action)
     ? (parsed.action as PetActionKind)
@@ -874,6 +879,7 @@ ${opts?.status ? `当前状态：${opts.status}。` : ""}`;
     "generate_image",
     "summon_pet",
     "dismiss_pet",
+    "forget_memory",
   ];
   const rawActions = Array.isArray(parsed?.actions) ? parsed.actions : [];
   const actions = rawActions.filter(

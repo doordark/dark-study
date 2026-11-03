@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import { Modal, Pressable, Text, View, useWindowDimensions } from "react-native";
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 
-import { BUG_PALETTE, BUG_ROWS, PixelSprite, PROP_ART } from "./sprites";
+import { CropSprite, FarmToolSprite } from "./CropSprite";
+import { compostReward } from "@/utils/farmProgress";
 
 export interface BugGameProps {
   visible: boolean;
@@ -266,11 +267,7 @@ export function BugGame({ visible, onClose, onFinish }: BugGameProps) {
                     pointerEvents="none"
                     style={{ position: "absolute", left: spot.left, top: spot.top }}
                   >
-                    <PixelSprite
-                      rows={PROP_ART.cabbage.rows}
-                      palette={PROP_ART.cabbage.palette}
-                      pixel={2}
-                    />
+                    <CropSprite kind="radish" size={26} />
                   </View>
                 ))}
 
@@ -291,11 +288,7 @@ export function BugGame({ visible, onClose, onFinish }: BugGameProps) {
                       hitSlop={10}
                       style={{ padding: 6 }}
                     >
-                      <PixelSprite
-                        rows={BUG_ROWS}
-                        palette={BUG_PALETTE}
-                        pixel={3}
-                      />
+                      <FarmToolSprite kind="bug" size={36} />
                     </Pressable>
                   </Animated.View>
                 ))}
@@ -342,7 +335,7 @@ export function BugGame({ visible, onClose, onFinish }: BugGameProps) {
                     textAlign: "center",
                   }}
                 >
-                  {`农场时间前进 ${Math.max(1, Math.round(jumpMs / MINUTE))} 分钟，作物趁这段时间长了一截`}
+                  {`作物生长加速 ${Math.max(1, Math.round(jumpMs / MINUTE))} 分钟 · 肥料 +${compostReward(score)}`}
                 </Text>
               </View>
               <View style={{ flexDirection: "row", gap: 8 }}>

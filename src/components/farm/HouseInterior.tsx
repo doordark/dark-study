@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { CropSprite } from "./CropSprite";
 
 export interface HouseInteriorProps {
   visible: boolean;
@@ -192,6 +193,9 @@ export function HouseInterior({
               ))}
 
               {/* 窗：外面就是农场的天色 */}
+              <View pointerEvents="none" style={{ position: "absolute", left: roomW * 0.46, top: roomH * 0.12, padding: 4, backgroundColor: night ? "#49384A" : "#8B5A3D", borderWidth: 2, borderColor: night ? "#6A5263" : "#CE9868", borderRadius: 4 }}>
+                <View style={{ backgroundColor: night ? "#29352D" : "#F2E3B8" }}><CropSprite kind="star" size={roomW * 0.13} /></View>
+              </View>
               <View
                 style={{
                   position: "absolute",
@@ -450,7 +454,7 @@ export function HouseInterior({
             fontSize: 10,
           }}
         >
-          睡到第二天早上 7:00，作物会趁夜里长一截
+          休息一觉，作物加速生长；窗外天色跟随本地时间
         </Text>
 
         {sleeping ? (
@@ -484,7 +488,7 @@ export function HouseInterior({
                 fontSize: 11,
               }}
             >
-              睡到明天早上 7:00
+              休息一下，等作物长大
             </Text>
           </Animated.View>
         ) : null}

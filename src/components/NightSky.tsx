@@ -5,21 +5,26 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Image, Pressable, Text, View, useWindowDimensions } from "react-native";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BackHandler, Image, Pressable, Text, View, useWindowDimensions } from "react-native";
 import Animated, {
   Easing,
+  cancelAnimation,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
+  useReducedMotion,
   withDelay,
   withRepeat,
   withSequence,
   withSpring,
   withTiming,
 } from "react-native-reanimated";
-import Svg, { Circle, Ellipse, Path } from "react-native-svg";
+import Svg, { Circle, Path } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+import { AtlasSprite } from "@/components/AtlasSprite";
+import { NightSkyMessage } from "@/components/NightSkyMessage";
 
 import {
   successHaptic,
@@ -70,14 +75,13 @@ const SPOTS = [
   { x: 0.73, y: 0.58, s: 24 },
 ] as const;
 
-const STAR_PATH =
-  "M50 4 L62 36 L96 37 L69 58 L79 92 L50 72 L21 92 L31 58 L4 37 L38 36 Z";
+const NIGHT_SPRITES = require("../../assets/images/night-sprites.png");
 
 /* -------------------------------------------------------------------------- */
 /*  背景微光星点：各自呼吸闪烁                                                 */
 /* -------------------------------------------------------------------------- */
 
-function Twinkle({
+const Twinkle = memo(function Twinkle({
   x,
   y,
   r,
@@ -103,6 +107,7 @@ function Twinkle({
         -1,
       ),
     );
+    return () => cancelAnimation(v);
   }, [delay, dur, v]);
 
   const style = useAnimatedStyle(() => ({ opacity: v.value }));
@@ -124,7 +129,7 @@ function Twinkle({
       ]}
     />
   );
-}
+});
 
 /* -------------------------------------------------------------------------- */
 /*  流星：尾巴上挂着课表里的课程名，划过夜空                                   */
@@ -142,26 +147,33 @@ function ShootingStar({
   top: number;
 }) {
   const t = useSharedValue(0);
+  const reduceMotion = useReducedMotion();
 
   useEffect(() => {
+    if (reduceMotion) return;
     t.value = withDelay(
       delay,
       withRepeat(
-        withTiming(1, { duration: 3600, easing: Easing.linear }),
+        withSequence(
+          withTiming(1, { duration: 1450, easing: Easing.linear }),
+          withDelay(4200 + delay, withTiming(0, { duration: 0 })),
+        ),
         -1,
         false,
       ),
     );
-  }, [delay, t]);
+    return () => cancelAnimation(t);
+  }, [delay, t, reduceMotion]);
 
   const style = useAnimatedStyle(() => {
     const p = t.value;
-    const opacity = p < 0.08 ? p / 0.08 : p > 0.82 ? (1 - p) / 0.18 : 1;
+    const opacity = p < 0.12 ? p / 0.12 : p > 0.62 ? (1 - p) / 0.38 : 1;
     return {
       opacity,
       transform: [
-        { translateX: -150 + p * (w + 320) },
-        { translateY: top + p * 150 },
+        { translateX: -220 + p * (w + 460) },
+        { translateY: top + p * (w + 460) * 0.28 },
+        { rotate: "15.64deg" },
       ],
     };
   });
@@ -177,13 +189,13 @@ function ShootingStar({
       {label ? (
         <Text
           style={{
-            color: "rgba(224,242,254,0.50)",
+            color: "rgba(224,242,254,0.38)",
             fontSize: 9,
             letterSpacing: 1.5,
             marginRight: 7,
           }}
         >
-          {label}
+          {label.slice(0, 12)}
         </Text>
       ) : null}
       <LinearGradient
@@ -191,10 +203,9 @@ function ShootingStar({
         start={{ x: 0, y: 0.5 }}
         end={{ x: 1, y: 0.5 }}
         style={{
-          width: 118,
-          height: 1.4,
+          width: 148,
+          height: 2,
           borderRadius: 1,
-          transform: [{ rotate: "-6deg" }],
         }}
       />
       <View
@@ -206,6 +217,7 @@ function ShootingStar({
           marginLeft: -1,
         }}
       />
+      <View style={{ position: "absolute", right: -6, width: 16, height: 16, borderRadius: 8, backgroundColor: "rgba(186,230,253,0.18)" }} />
     </Animated.View>
   );
 }
@@ -332,6 +344,8 @@ function CollectStar({
   const scale = useSharedValue(1);
   const opacity = useSharedValue(1);
   const glow = useSharedValue(0.5);
+  const ripple = useSharedValue(0);
+  const reduceMotion = useReducedMotion();
 
   useEffect(() => {
     glow.value = withRepeat(
@@ -351,18 +365,24 @@ function CollectStar({
 
   useEffect(() => {
     if (!collected) return;
+    cancelAnimation(glow);
+    ripple.value = withTiming(1, { duration: reduceMotion ? 180 : 680, easing: Easing.out(Easing.cubic) });
     scale.value = withSequence(
-      withTiming(1.55, { duration: 120 }),
-      withTiming(0.3, { duration: 240, easing: Easing.out(Easing.cubic) }),
+      withTiming(1.4, { duration: 130 }),
+      withTiming(0.25, { duration: 380, easing: Easing.out(Easing.cubic) }),
     );
-    opacity.value = withTiming(0, { duration: 320 });
-  }, [collected, opacity, scale]);
+    opacity.value = withDelay(100, withTiming(0, { duration: 380 }));
+  }, [collected, opacity, scale, glow, ripple, reduceMotion]);
 
   const wrap = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
     opacity: opacity.value,
   }));
   const halo = useAnimatedStyle(() => ({ opacity: glow.value }));
+  const ring = useAnimatedStyle(() => ({
+    opacity: collected ? (1 - ripple.value) * 0.8 : 0,
+    transform: [{ scale: 0.4 + ripple.value * 2.3 }],
+  }));
 
   const box = s * 2.1;
 
@@ -378,9 +398,13 @@ function CollectStar({
           alignItems: "center",
           justifyContent: "center",
         },
-        wrap,
       ]}
     >
+      <Animated.View pointerEvents="none" style={[{ position: "absolute", width: box, height: box, borderRadius: box, borderWidth: 1, borderColor: "#D8E6FF" }, ring]} />
+      {collected && !reduceMotion ? <View pointerEvents="none" style={{ position: "absolute", left: box / 2, top: box / 2 }}>
+        {Array.from({ length: 6 }, (_, i) => <BurstDot key={i} dx={Math.cos(i * Math.PI / 3) * 38} dy={Math.sin(i * Math.PI / 3) * 38} delay={i * 12} />)}
+      </View> : null}
+      <Animated.View style={[{ alignItems: "center", justifyContent: "center" }, wrap]}>
       <Animated.View
         style={[
           {
@@ -394,20 +418,16 @@ function CollectStar({
         ]}
       />
       <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="拾起这颗星星"
         onPress={onCollect}
         hitSlop={18}
         disabled={collected}
         style={{ alignItems: "center", justifyContent: "center" }}
       >
-        <Svg width={s} height={s} viewBox="0 0 100 100">
-          <Path
-            d={STAR_PATH}
-            fill="#FCD34D"
-            stroke="rgba(255,255,255,0.6)"
-            strokeWidth="2"
-          />
-        </Svg>
+        <AtlasSprite source={NIGHT_SPRITES} columns={2} rows={2} column={0} row={0} width={s * 1.5} />
       </Pressable>
+      </Animated.View>
     </Animated.View>
   );
 }
@@ -498,109 +518,17 @@ function Burst({ cx, cy }: { cx: number; cy: number }) {
 function OwlBody() {
   const bob = useSharedValue(0);
   const blink = useSharedValue(1);
-
   useEffect(() => {
-    bob.value = withRepeat(
-      withTiming(-4, { duration: 1900, easing: Easing.inOut(Easing.sin) }),
-      -1,
-      true,
-    );
-    blink.value = withRepeat(
-      withSequence(
-        withDelay(2400, withTiming(0.08, { duration: 90 })),
-        withTiming(1, { duration: 110 }),
-      ),
-      -1,
-      false,
-    );
+    bob.value = withRepeat(withTiming(-3, { duration: 1900, easing: Easing.inOut(Easing.sin) }), -1, true);
+    blink.value = withRepeat(withSequence(withDelay(2800, withTiming(0, { duration: 70 })), withDelay(100, withTiming(1, { duration: 100 }))), -1, false);
   }, [blink, bob]);
-
-  const bobStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: bob.value }],
-  }));
-  const eyeStyle = useAnimatedStyle(() => ({
-    transform: [{ scaleY: blink.value }],
-  }));
-
-  return (
-    <Animated.View style={[{ width: 70, height: 80 }, bobStyle]}>
-      <Svg width={70} height={80} viewBox="0 0 70 80">
-        {/* 耳朵 */}
-        <Path d="M15 26 L12 8 L27 21 Z" fill="#FDE68A" />
-        <Path d="M55 26 L58 8 L43 21 Z" fill="#FDE68A" />
-        {/* 身体 */}
-        <Ellipse cx="35" cy="47" rx="23" ry="27" fill="#FDE68A" />
-        {/* 肚子 */}
-        <Ellipse cx="35" cy="53" rx="14" ry="19" fill="#FEF3C7" />
-        {/* 翅膀 */}
-        <Ellipse cx="13" cy="50" rx="7" ry="15" fill="#FCD34D" />
-        <Ellipse cx="57" cy="50" rx="7" ry="15" fill="#FCD34D" />
-        {/* 喙 */}
-        <Path d="M35 38 L40 45 L30 45 Z" fill="#F59E0B" />
-        {/* 爪子 */}
-        <Path
-          d="M28 72 L28 75 M42 72 L42 75"
-          stroke="#F59E0B"
-          strokeWidth="2.4"
-          strokeLinecap="round"
-        />
-      </Svg>
-
-      {/* 眼睛单独用 View 画，眨眼只压缩纵向 */}
-      <Animated.View
-        style={[
-          {
-            position: "absolute",
-            left: 20,
-            top: 30,
-            width: 14,
-            height: 14,
-            borderRadius: 7,
-            backgroundColor: "#1E293B",
-          },
-          eyeStyle,
-        ]}
-      >
-        <View
-          style={{
-            position: "absolute",
-            left: 3,
-            top: 3,
-            width: 4,
-            height: 4,
-            borderRadius: 2,
-            backgroundColor: "#F8FAFC",
-          }}
-        />
-      </Animated.View>
-      <Animated.View
-        style={[
-          {
-            position: "absolute",
-            left: 36,
-            top: 30,
-            width: 14,
-            height: 14,
-            borderRadius: 7,
-            backgroundColor: "#1E293B",
-          },
-          eyeStyle,
-        ]}
-      >
-        <View
-          style={{
-            position: "absolute",
-            left: 3,
-            top: 3,
-            width: 4,
-            height: 4,
-            borderRadius: 2,
-            backgroundColor: "#F8FAFC",
-          }}
-        />
-      </Animated.View>
-    </Animated.View>
-  );
+  const body = useAnimatedStyle(() => ({ transform: [{ translateY: bob.value }] }));
+  const open = useAnimatedStyle(() => ({ opacity: blink.value }));
+  const closed = useAnimatedStyle(() => ({ opacity: 1 - blink.value }));
+  return <Animated.View style={[{ width: 80, height: 86 }, body]}>
+    <Animated.View style={[{ position: "absolute" }, open]}><AtlasSprite source={NIGHT_SPRITES} columns={2} rows={2} column={0} row={1} width={80} height={86} /></Animated.View>
+    <Animated.View style={[{ position: "absolute" }, closed]}><AtlasSprite source={NIGHT_SPRITES} columns={2} rows={2} column={1} row={1} width={80} height={86} /></Animated.View>
+  </Animated.View>;
 }
 
 function Owl({
@@ -672,32 +600,6 @@ function Owl({
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/*  打字机效果                                                                 */
-/* -------------------------------------------------------------------------- */
-
-function useTyped(text: string, speed = 46) {
-  const [shown, setShown] = useState({ text, n: 0 });
-  // 文案变化时无需重置状态：旧记录不匹配即视为 0，交给新的计时器推进
-  const n = shown.text === text ? shown.n : 0;
-
-  useEffect(() => {
-    let i = 0;
-    const id = setInterval(() => {
-      i += 1;
-      setShown({ text, n: i });
-      if (i >= text.length) clearInterval(id);
-    }, speed);
-    return () => clearInterval(id);
-  }, [speed, text]);
-
-  return text.slice(0, n);
-}
-
-/* -------------------------------------------------------------------------- */
-/*  夜空彩蛋                                                                   */
-/* -------------------------------------------------------------------------- */
-
 export interface NightSkyProps {
   onClose: () => void;
   /** 夜空最深处的那条小径 */
@@ -721,6 +623,7 @@ export function NightSky({
   );
   const lit = picked.filter(Boolean).length;
   const [closing, setClosing] = useState(false);
+  const [panelHeight, setPanelHeight] = useState(300);
   const [seenFarm, setSeenFarm] = useState(false);
   const [owlHint, setOwlHint] = useState("");
   const owlTaps = useRef(0);
@@ -743,18 +646,29 @@ export function NightSky({
   );
 
   const fade = useSharedValue(0);
+  const reduceMotion = useReducedMotion();
+  const closingRef = useRef(false);
   const done = lit >= TOTAL_STARS;
+  useEffect(() => { if (done) successHaptic(); }, [done]);
   /** 去过星露坡的人，猫头鹰会先探出头来；没去过就得多攒一点星光 */
   const showOwl = done || seenFarm;
 
   const fadeStyle = useAnimatedStyle(() => ({ opacity: fade.value }));
+  const sceneStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: reduceMotion ? 1 : 1.045 - fade.value * 0.045 }],
+  }));
+  const panelStyle = useAnimatedStyle(() => ({
+    opacity: Math.max(0, (fade.value - 0.2) / 0.8),
+    transform: [{ translateY: reduceMotion ? 0 : (1 - fade.value) * 32 }],
+  }));
 
   useEffect(() => {
     fade.value = withTiming(1, {
-      duration: 460,
+      duration: reduceMotion ? 180 : 780,
       easing: Easing.out(Easing.cubic),
     });
-  }, [fade]);
+    return () => cancelAnimation(fade);
+  }, [fade, reduceMotion]);
 
   // 记录来访次数，让这片夜空记得你
   useEffect(() => {
@@ -778,33 +692,27 @@ export function NightSky({
     };
   }, []);
 
-  const hour = new Date().getHours();
-  const opening =
-    hour < 5
-      ? "这个点还没睡？星星替你记着。"
-      : hour < 11
-        ? "白天的星星没有消失，只是藏起来了。"
-        : hour < 18
-          ? "把课表翻到背面，是一片夜空。"
-          : "今晚的星星，比昨天多了一颗。";
-  const message = done ? "七颗星都归位了。现在，这片夜空只属于你。" : opening;
-  const typed = useTyped(message);
-  const typing = typed.length < message.length;
-
   const close = useCallback(() => {
-    if (closing) return;
+    if (closingRef.current) return;
+    closingRef.current = true;
     setClosing(true);
     fade.value = withTiming(
       0,
-      { duration: 240, easing: Easing.in(Easing.cubic) },
+      { duration: reduceMotion ? 150 : 420, easing: Easing.inOut(Easing.cubic) },
       (finished) => {
         if (finished) runOnJS(onClose)();
       },
     );
-  }, [closing, fade, onClose]);
+  }, [fade, onClose, reduceMotion]);
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => { close(); return true; });
+    return () => subscription.remove();
+  }, [close]);
 
   const enterFarm = useCallback(() => {
-    if (closing) return;
+    if (closingRef.current) return;
+    closingRef.current = true;
     setClosing(true);
     // 先推农场（自带淡入），夜空在下面同时溶解，形成一次交叉过渡而不是黑屏两段
     if (onEnterFarm) onEnterFarm();
@@ -815,21 +723,27 @@ export function NightSky({
         if (finished) runOnJS(onClose)();
       },
     );
-  }, [closing, fade, onClose, onEnterFarm]);
+  }, [fade, onClose, onEnterFarm]);
 
-  const labels = courseNames
+  const labels = (courseNames.some((name) => name.trim()) ? courseNames : ["", ""])
     .map((n) => n.trim())
-    .filter((n) => n.length > 0)
     .slice(0, 2);
 
-  const moonSize = 104;
+  const compact = h < 740;
+  const moonSize = compact ? 76 : 104;
   const moonTop = insets.top + 34;
   const moonRight = 26;
   const moonCx = w - moonRight - moonSize / 2;
   const moonCy = moonTop + moonSize / 2;
+  // Collectibles live between the header/moon and the bottom card, including short phones.
+  const skyTop = insets.top + (compact ? 148 : 188);
+  const skyBottom = Math.max(skyTop + 60, h - insets.bottom - panelHeight - (compact ? 12 : 24) - 42);
+  const starY = (y: number) => skyTop + ((y - 0.31) / 0.27) * (skyBottom - skyTop);
+  const constellation = SPOTS.filter((_, i) => picked[i]);
 
   return (
     <Animated.View
+      accessibilityViewIsModal
       style={[
         {
           position: "absolute",
@@ -838,6 +752,7 @@ export function NightSky({
           top: 0,
           bottom: 0,
           zIndex: 60,
+          overflow: "hidden",
         },
         fadeStyle,
       ]}
@@ -860,13 +775,13 @@ export function NightSky({
           }}
         >
           <Image
-            source={require("../../assets/images/farm-day.png")}
+            source={require("../../assets/images/farm-day-v2.png")}
             style={{ width: w, height: (w * 330) / 200 }}
             resizeMode="stretch"
             fadeDuration={0}
           />
           <Image
-            source={require("../../assets/images/farm-night.png")}
+            source={require("../../assets/images/farm-night-v2.png")}
             style={{ width: w, height: (w * 330) / 200 }}
             resizeMode="stretch"
             fadeDuration={0}
@@ -880,6 +795,15 @@ export function NightSky({
         end={{ x: 0.85, y: 1 }}
         style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0 }}
       />
+      <Animated.Image
+        pointerEvents="none"
+        source={require("../../assets/images/night-forest.png")}
+        resizeMode="cover"
+        fadeDuration={0}
+        style={[{ position: "absolute", width: w, height: h, opacity: 0.68 }, sceneStyle]}
+      />
+      <LinearGradient pointerEvents="none" colors={["rgba(3,6,15,0.1)", "transparent", "rgba(3,6,15,0.68)"]}
+        style={{ position: "absolute", width: w, height: h }} />
 
       {/* 地平线处的冷光 */}
       <View
@@ -944,18 +868,26 @@ export function NightSky({
         </Text>
       </View>
 
+      <Svg pointerEvents="none" width={w} height={h} style={{ position: "absolute" }}>
+        {constellation.length > 1 ? <Path
+          d={constellation.map((s, i) => `${i ? "L" : "M"}${s.x * w} ${starY(s.y)}`).join(" ")}
+          stroke="rgba(186,211,255,0.35)" strokeWidth="1" strokeDasharray="3 6" fill="none"
+        /> : null}
+        {constellation.map((s) => <Circle key={`${s.x}-${s.y}`} cx={s.x * w} cy={starY(s.y)} r="2.5" fill="#FDE9B2" />)}
+      </Svg>
       {SPOTS.map((s, i) => (
         <CollectStar
           key={i}
           x={s.x}
-          y={s.y}
+          y={starY(s.y) / h}
           s={s.s}
           w={w}
           h={h}
           collected={picked[i]}
           onCollect={() => {
+            if (closingRef.current) return;
             tapHaptic();
-            if (lit + 1 >= TOTAL_STARS) successHaptic();
+
             setPicked((prev) =>
               prev[i] ? prev : prev.map((v, idx) => (idx === i ? true : v)),
             );
@@ -1005,24 +937,28 @@ export function NightSky({
       ) : null}
 
       {/* 底部信息面板 */}
-      <View
-        style={{
+      <Animated.View
+        onLayout={(event) => setPanelHeight(event.nativeEvent.layout.height)}
+        style={[{
           position: "absolute",
-          left: 22,
-          right: 22,
-          bottom: insets.bottom + 24,
-        }}
+          left: w < 380 ? 14 : 22,
+          right: w < 380 ? 14 : 22,
+          bottom: insets.bottom + (compact ? 12 : 24),
+        }, panelStyle]}
       >
         <View
           style={{
             borderRadius: 26,
             borderWidth: 1,
-            borderColor: "rgba(255,255,255,0.10)",
-            backgroundColor: "rgba(255,255,255,0.06)",
-            paddingHorizontal: 20,
-            paddingVertical: 16,
+            borderColor: "rgba(194,204,255,0.18)",
+            backgroundColor: "rgba(12,17,36,0.94)",
+            paddingHorizontal: compact ? 16 : 20,
+            paddingVertical: compact ? 12 : 16,
           }}
         >
+          <LinearGradient pointerEvents="none" colors={["rgba(151,126,225,0.13)", "rgba(85,154,207,0.02)"]}
+            start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+            style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, borderRadius: 26 }} />
           <View className="flex-row items-center justify-between">
             <Text
               style={{
@@ -1032,35 +968,17 @@ export function NightSky({
                 letterSpacing: 3,
               }}
             >
-              NIGHT SHIFT
+              STARRY LETTER
             </Text>
             <View className="flex-row items-center" style={{ gap: 5 }}>
               {Array.from({ length: TOTAL_STARS }).map((_, i) => (
-                <View
-                  key={i}
-                  style={{
-                    width: 5,
-                    height: 5,
-                    borderRadius: 3,
-                    backgroundColor:
-                      i < lit ? "#FCD34D" : "rgba(255,255,255,0.16)",
-                  }}
-                />
+                <AtlasSprite key={i} source={NIGHT_SPRITES} columns={2} rows={2}
+                  column={picked[i] ? 0 : 1} row={0} width={14} />
               ))}
             </View>
           </View>
 
-          <Text
-            style={{
-              marginTop: 10,
-              color: "#E2E8F0",
-              fontSize: 13.5,
-              minHeight: 38,
-            }}
-          >
-            {typed}
-            <Text style={{ color: "#7DD3FC" }}>{typing ? "▍" : ""}</Text>
-          </Text>
+          <NightSkyMessage closing={closing} />
 
           {done ? (
             <View
@@ -1092,7 +1010,7 @@ export function NightSky({
             className="flex-row items-center justify-between"
             style={{ marginTop: 14 }}
           >
-            <Text style={{ color: "rgba(148,163,184,0.9)", fontSize: 11 }}>
+            <Text style={{ flex: 1, marginRight: 12, lineHeight: 17, color: "rgba(179,197,220,0.9)", fontSize: 11 }}>
               {done
                 ? showOwl
                   ? "夜空已亮 · 远处有个小家伙在看你"
@@ -1102,26 +1020,32 @@ export function NightSky({
                   : `拾起散落的星 · ${lit} / ${TOTAL_STARS}`}
             </Text>
             <Pressable
+              accessibilityRole="button"
+              disabled={closing}
               onPress={() => {
                 tapHaptic();
                 close();
               }}
               style={{
+                minHeight: 44,
+                justifyContent: "center",
                 borderRadius: 999,
-                backgroundColor: "rgba(56,189,248,0.9)",
+                backgroundColor: "rgba(186,211,255,0.14)",
+                borderWidth: 1,
+                borderColor: "rgba(186,211,255,0.22)",
                 paddingHorizontal: 16,
                 paddingVertical: 8,
               }}
             >
               <Text
-                style={{ color: "#04121F", fontSize: 12, fontWeight: "700" }}
+                style={{ color: "#DCE9FF", fontSize: 12, fontWeight: "700" }}
               >
                 回到现实
               </Text>
             </Pressable>
           </View>
         </View>
-      </View>
+      </Animated.View>
     </Animated.View>
   );
 }

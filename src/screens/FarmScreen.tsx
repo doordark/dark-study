@@ -4,10 +4,11 @@
 
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useRouter } from "expo-router";
+import { useIsFocused, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AppState,
   Keyboard,
   Modal,
   Image,
@@ -26,6 +27,7 @@ import Animated, {
   FadeIn,
   FadeInDown,
   FadeOut,
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withDelay,
@@ -37,14 +39,10 @@ import Svg, { G, Rect } from "react-native-svg";
 
 import {
   CROP_ART,
-  CROP_STAGE_ROWS,
   DOOR_PALETTE,
   DOOR_ROWS,
   GU_PALETTE,
   GU_ROWS,
-  HERO_PALETTE,
-  HERO_ROWS,
-  PixelSprite,
   PROP_ART,
   WEIGANG_PALETTE,
   WEIGANG_ROWS,
@@ -52,13 +50,22 @@ import {
   XIAOBA_ROWS,
   YUJIE_PALETTE,
   YUJIE_ROWS,
-  cropRects,
   pixelRects,
   type CropKind,
   type PropKind,
 } from "@/components/farm/sprites";
+import { farmTime } from "@/utils/farmTime";
+import { CROP_KINDS, CROP_META, cropRecord, restoreSeeds, restoreEconomy, migrateCoins, isCropKind, harvestResult, stockCount, stockValue, completeOrder, irrigationCost, wetDuration, craft, type Economy, type Recipe } from "@/utils/farmEconomy";
+import { FarmEconomyPanel } from "@/components/farm/FarmEconomyPanel";
+import { realDate } from "@/utils/farmProgress";
 import { BugGame } from "@/components/farm/BugGame";
 import { HouseInterior } from "@/components/farm/HouseInterior";
+import { FarmProps, FarmWater } from "@/components/farm/FarmWater";
+import { CropSprite, FarmToolSprite } from "@/components/farm/CropSprite";
+import { FarmLifeLayer } from "@/components/farm/FarmLifeLayer";
+import { FarmPersonSprite } from "@/components/farm/FarmPersonSprite";
+import { FarmJournalPanel } from "@/components/farm/FarmJournalPanel";
+import { claimGoal, compostReward, fertilizedGrowth, remainingGrowthTime, emptyJournal, farmLevel, finiteCount, recordActivity, restoreJournal, upgradeCost, waterCapacity, type FarmActivity, type FarmJournal } from "@/utils/farmProgress";
 import { chat } from "@/services/deepseek";
 import { useSettings } from "@/store/useSettings";
 
@@ -97,7 +104,6 @@ const HOUSE_RECT = { x: 3, y: 92, w: 78, h: 56 };
 /** 水池：画进背景贴图里的大水池，轻点去打水；坐标必须与贴图一致 */
 const POND = { x: 100, y: 262, w: 68, h: 36 };
 /** 一壶水能浇几块地 */
-const WATER_CAP = 3;
 
 /** 空地上的树、花、灌木（纯装饰，点击穿透） */
 const DECOR: { kind: PropKind; x: number; y: number }[] = [
@@ -155,18 +161,10 @@ function plotPos(i: number) {
 }
 
 const MINUTE = 60_000;
+// Read the clock only from event handlers/effects; keep React's render path deterministic.
+const eventTime = () => Date.now();
 const DAY = 24 * MINUTE * 60;
 
-/** 作物：种子价 / 售价 / 从种下到成熟所需的真实时间
- *  利润刻意压薄：按时长算三档收益接近，避免金币像水一样涨 */
-const CROP_META: Record<
-  CropKind,
-  { price: number; sell: number; growMs: number }
-> = {
-  radish: { price: 14, sell: 20, growMs: 8 * MINUTE },
-  berry: { price: 34, sell: 48, growMs: 18 * MINUTE },
-  star: { price: 78, sell: 112, growMs: 34 * MINUTE },
-};
 
 /** 浇一次水保持湿润的时长：湿润期按真实时间 1:1 生长，干土只有 35% 速度 */
 const WET_MS = 30 * MINUTE;
@@ -184,10 +182,17 @@ interface PlotState {
   lastSync: number;
   /** 湿润截止时间（虚拟时间） */
   wetUntil: number;
+  fertilized?: boolean;
+  plantedSeason?: number;
+  harvests?: number;
 }
 
 interface SaveData {
-  v: 2;
+  v: 4;
+  economy: Economy;
+  canUpgrade: number;
+  compost: number;
+  journal: FarmJournal;
   /** 第 1 天 0 点对应的虚拟时间戳 */
   epoch: number;
   /** 睡觉 / 小游戏攒下的时间偏移 */
@@ -202,6 +207,10 @@ interface SaveData {
 
 /** 兼容老存档的宽结构 */
 interface RawSave {
+  economy?: unknown;
+  canUpgrade?: number;
+  compost?: number;
+  journal?: unknown;
   v?: number;
   epoch?: number;
   timeShift?: number;
@@ -224,7 +233,7 @@ const emptyPlot = (at: number): PlotState => ({
   wetUntil: 0,
 });
 
-/** 四季名（季节随天数轮换，只影响文案） */
+/** 每七个农场日换季；当季播种增加产量。 */
 const SEASONS = ["春", "夏", "秋", "冬"];
 
 /** 贴图自身含完整天空；这个底色只在极少数超高屏幕上露出一小条，取贴图顶行色避免出现接缝 */
@@ -239,21 +248,6 @@ const PIXEL_FONT = Platform.select({
 /* -------------------------------------------------------------------------- */
 /*  真实时间与作物生长                                                         */
 /* -------------------------------------------------------------------------- */
-
-function pad2(n: number) {
-  return n < 10 ? `0${n}` : `${n}`;
-}
-
-function clockLabel(ts: number) {
-  const d = new Date(ts);
-  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-}
-
-/** 19:00 到次日 6:00 算夜晚，场景跟着真实时间自动换 */
-function isNightAt(ts: number) {
-  const h = new Date(ts).getHours();
-  return h >= 19 || h < 6;
-}
 
 function midnightOf(ts: number) {
   const d = new Date(ts);
@@ -471,40 +465,6 @@ const SPEAKER_META: Record<
 };
 
 /** 三个儿子：站位、名牌与贴图 */
-const SONS: {
-  who: Speaker;
-  label: string;
-  accent: string;
-  at: { x: number; y: number };
-  rows: string[];
-  palette: Record<string, string>;
-}[] = [
-  {
-    who: "xiaoba",
-    label: "小八",
-    accent: "#A78BFA",
-    at: XIAOBA_AT,
-    rows: XIAOBA_ROWS,
-    palette: XIAOBA_PALETTE,
-  },
-  {
-    who: "yujie",
-    label: "玉洁",
-    accent: "#FB923C",
-    at: YUJIE_AT,
-    rows: YUJIE_ROWS,
-    palette: YUJIE_PALETTE,
-  },
-  {
-    who: "weigang",
-    label: "唯纲",
-    accent: "#D176D0",
-    at: WEIGANG_AT,
-    rows: WEIGANG_ROWS,
-    palette: WEIGANG_PALETTE,
-  },
-];
-
 function farmSystemPrompt(
   who: Speaker,
   ctx: {
@@ -520,61 +480,10 @@ function farmSystemPrompt(
 规则：用中文口语聊天；每次回复 1-3 句、不超过 80 个字；不要用引号包住整段话，不要写括号动作或旁白，不要提及 AI、模型或提示词；可以自然聊农场、课表、写代码和日常；遇到不适合回答的话题就轻轻岔开。`;
 }
 
-const chatId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+const chatId = () => `${eventTime()}-${Math.random().toString(36).slice(2, 7)}`;
 
 /* -------------------------------------------------------------------------- */
 /*  会轻轻呼吸的像素小人                                                       */
-/* -------------------------------------------------------------------------- */
-
-function IdleSprite({
-  rows,
-  palette,
-  pixel,
-  onPress,
-}: {
-  rows: string[];
-  palette: Record<string, string>;
-  pixel: number;
-  onPress: () => void;
-}) {
-  const bob = useSharedValue(0);
-
-  useEffect(() => {
-    bob.value = withRepeat(
-      withTiming(-1, { duration: 1400, easing: Easing.inOut(Easing.sin) }),
-      -1,
-      true,
-    );
-  }, [bob]);
-
-  const style = useAnimatedStyle(() => ({
-    transform: [{ translateY: bob.value * pixel }],
-  }));
-
-  return (
-    <Pressable onPress={onPress} hitSlop={12}>
-      <View>
-        <View
-          style={{
-            position: "absolute",
-            left: 4 * pixel,
-            top: 16 * pixel,
-            width: 8 * pixel,
-            height: 2 * pixel,
-            borderRadius: 99,
-            backgroundColor: "rgba(0,0,0,0.18)",
-          }}
-        />
-        <Animated.View style={style}>
-          <PixelSprite rows={rows} palette={palette} pixel={pixel} />
-        </Animated.View>
-      </View>
-    </Pressable>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/*  空气里飘的光点                                                             */
 /* -------------------------------------------------------------------------- */
 
 const MOTES = (() => {
@@ -709,6 +618,7 @@ function NameTag({
 
 export function FarmScreen() {
   const router = useRouter();
+  const focused = useIsFocused();
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const apiKey = useSettings((s) => s.apiKey);
@@ -719,30 +629,47 @@ export function FarmScreen() {
   const chatMaxH = Math.max(150, Math.min(258, Math.round(height * 0.32)));
 
   const [loaded, setLoaded] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(() => eventTime());
   /** 睡觉、小游戏攒出来的时间偏移：虚拟时间 = 真实时间 + 偏移 */
   const [timeShift, setTimeShift] = useState(0);
   /** 第 1 天 0 点对应的虚拟时间戳 */
-  const [epoch, setEpoch] = useState(() => midnightOf(Date.now()));
+  const [epoch, setEpoch] = useState(() => midnightOf(eventTime()));
   const [coins, setCoins] = useState(120);
-  const [seeds, setSeeds] = useState<Record<CropKind, number>>({
-    radish: 3,
-    berry: 0,
-    star: 0,
-  });
+  const [seeds, setSeeds] = useState<Record<CropKind, number>>(() => ({ ...cropRecord(), radish: 3, wheat: 2 }));
+  const [economy, setEconomy] = useState(() => restoreEconomy(undefined, eventTime()));
+  const [saveError, setSaveError] = useState(false);
+  const saveQueue = useRef(Promise.resolve());
+  const [loadFailed, setLoadFailed] = useState(false);
   const [plots, setPlots] = useState<PlotState[]>(() =>
-    Array.from({ length: PLOT_COUNT }, () => emptyPlot(Date.now())),
+    Array.from({ length: PLOT_COUNT }, () => emptyPlot(eventTime())),
   );
   const [harvested, setHarvested] = useState(0);
   const [selected, setSelected] = useState<CropKind>("radish");
   /** 水壶里还能浇几次；必须先去水池打水 */
   const [water, setWater] = useState(0);
+  const [canUpgrade, setCanUpgrade] = useState(0);
+  const [compost, setCompost] = useState(2);
+  const [journal, setJournal] = useState(() => emptyJournal(eventTime()));
+  const [journalOpen, setJournalOpen] = useState(false);
+  const [lifeOpen, setLifeOpen] = useState(false);
+  const [fertilizing, setFertilizing] = useState(false);
+  const waterCap = waterCapacity(canUpgrade);
+  const level = farmLevel(harvested);
+  const actionBusy = useRef(false);
+  useEffect(() => { actionBusy.current = false; });
+  const beginAction = () => {
+    if (!loaded || loadFailed || actionBusy.current) return false;
+    actionBusy.current = true;
+    return true;
+  };
+  const record = (kind: FarmActivity, amount = 1) => setJournal((j) => recordActivity(j, kind, amount, eventTime()));
   /** 小铺一次买几包 */
   const [qty, setQty] = useState(1);
 
   const [houseOpen, setHouseOpen] = useState(false);
   const [gameOpen, setGameOpen] = useState(false);
   const [gameToken, setGameToken] = useState(0);
+  const settledGame = useRef(-1);
   const houseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
@@ -777,11 +704,8 @@ export function FarmScreen() {
   const [kbH, setKbH] = useState(0);
   const chatRef = useRef<ScrollViewInstance>(null);
 
-  /* ---------------- 时间 / 昼夜 / 季节：全部由真实时间推导 ---------------- */
-  const vNow = now + timeShift;
-  const night = isNightAt(vNow);
-  const day = Math.max(1, Math.floor((vNow - epoch) / DAY) + 1);
-  const season = Math.floor((day - 1) / 7) % 4;
+  /* ---------------- 天色用本地时间；生长、天数和季节用游戏时间 ---------------- */
+  const { growthNow: vNow, night, day, season, clock } = farmTime(now, timeShift, epoch);
   const seasonName = SEASONS[season];
 
   /** 每块地的累计生长量（每次渲染按当前虚拟时间实时结算，不落库） */
@@ -793,16 +717,14 @@ export function FarmScreen() {
   // 每 3 秒走一次表：作物进度、天色、时钟都靠它刷新
   // （原来 1 秒一次，整棵树每秒重渲染会让贴图与动画掉帧）
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 3000);
-    return () => clearInterval(t);
+    const t = setInterval(() => setNow(eventTime()), 3000);
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") setNow(eventTime());
+    });
+    return () => { clearInterval(t); subscription.remove(); };
   }, []);
 
-  // 昼夜切换用一层透明渐变，不要硬切。
-  // 但「第一次落位」必须硬切：挂载时 timeShift 还是 0（存档还没读回来），
-  // 算出来的 night 不可信——虚拟时间可能已经被睡觉/小游戏推过昼夜分界。
-  // 如果先按错的天色画一遍再淡过去，进农场就会看到一次莫名其妙的
-  // 「黑夜贴图 → 白天贴图」交叉淡化，很突兀。所以贴图等读档完再挂，
-  // 挂之前先把 nightV 直接摆到正确位置，之后的天色变化才走 700ms 渐变。
+  // 首次读档后再挂贴图，之后用交叉淡化切换真实昼夜。
   const nightV = useSharedValue(night ? 1 : 0);
   const nightSettled = useRef(false);
   /** 读档完成、天色已硬切到位之后才挂场景贴图 */
@@ -824,15 +746,17 @@ export function FarmScreen() {
 
 
   /* ---------------- 玩家位置：UI 线程上平滑走动 ---------------- */
+  const [playerMoving, setPlayerMoving] = useState(false);
   const px = useSharedValue(PLAYER_START.x);
   const py = useSharedValue(PLAYER_START.y);
   const face = useSharedValue(1);
 
+  const playerFacingStyle = useAnimatedStyle(() => ({ transform: [{ scaleX: face.value }] }));
   const playerStyle = useAnimatedStyle(() => ({
+    zIndex: Math.round(py.value),
     transform: [
       { translateX: px.value * scale },
       { translateY: py.value * scale },
-      { scaleX: face.value },
     ],
   }));
 
@@ -852,18 +776,19 @@ export function FarmScreen() {
             ? POND.y - 5
             : POND.y + POND.h + 4;
       }
+      setPlayerMoving(true);
       const dist = Math.hypot(targetX - px.value, targetY - py.value);
       face.value = targetX < px.value ? -1 : 1;
       const duration = Math.min(820, 180 + dist * 9);
       const cfg = { duration, easing: Easing.inOut(Easing.quad) };
       px.value = withTiming(targetX, cfg);
-      py.value = withTiming(targetY, cfg);
+      py.value = withTiming(targetY, cfg, (finished) => { if (finished) runOnJS(setPlayerMoving)(false); });
     },
     [face, px, py],
   );
 
   const showToast = useCallback((text: string) => {
-    setToast({ id: Date.now(), text });
+    setToast({ id: eventTime(), text });
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 1800);
   }, []);
@@ -902,12 +827,14 @@ export function FarmScreen() {
         try {
           data = JSON.parse(raw) as RawSave;
         } catch {
+          setLoadFailed(true);
           return;
         }
-        const realNow = Date.now();
-        const shift = typeof data.timeShift === "number" ? data.timeShift : 0;
+        if (!data || typeof data !== "object" || Array.isArray(data)) { setLoadFailed(true); return; }
+        const realNow = eventTime();
+        const shift = typeof data.timeShift === "number" && Number.isFinite(data.timeShift) ? Math.max(0, data.timeShift) : 0;
 
-        if (data.v === 2 && typeof data.epoch === "number") {
+        if ((data.v === 2 || data.v === 3 || data.v === 4) && typeof data.epoch === "number" && Number.isFinite(data.epoch)) {
           setEpoch(data.epoch);
           setTimeShift(shift);
         } else {
@@ -917,27 +844,25 @@ export function FarmScreen() {
           setTimeShift(0);
         }
 
-        if (typeof data.coins === "number") setCoins(Math.max(0, data.coins));
+        setCanUpgrade(finiteCount(data.canUpgrade, 3));
+        setCompost(data.compost === undefined ? 2 : finiteCount(data.compost));
+        setJournal(restoreJournal(data.journal, realNow));
+        setCoins(migrateCoins(data.v, data.coins));
+        setEconomy(restoreEconomy(data.economy, realNow));
         if (typeof data.water === "number") {
-          setWater(Math.min(WATER_CAP, Math.max(0, data.water)));
+          setWater(finiteCount(data.water, waterCapacity(finiteCount(data.canUpgrade, 3))));
         }
         if (typeof data.harvested === "number") {
-          setHarvested(Math.max(0, data.harvested));
+          setHarvested(finiteCount(data.harvested));
         }
         if (data.seeds) {
-          setSeeds({
-            radish: Math.max(0, Number(data.seeds.radish) || 0),
-            berry: Math.max(0, Number(data.seeds.berry) || 0),
-            star: Math.max(0, Number(data.seeds.star) || 0),
-          });
+          setSeeds(restoreSeeds(data.seeds));
         }
         if (Array.isArray(data.plots) && data.plots.length > 0) {
           const vNowNow = realNow + shift;
           const parsed = data.plots.slice(0, PLOT_COUNT).map((p) => {
               const kind =
-                p?.crop === "radish" ||
-                p?.crop === "berry" ||
-                p?.crop === "star"
+                isCropKind(p?.crop)
                   ? p.crop
                   : null;
               if (!kind) return emptyPlot(vNowNow);
@@ -945,13 +870,17 @@ export function FarmScreen() {
               // 新结构：直接恢复生长累计
               if (
                 typeof p.growMs === "number" &&
-                typeof p.lastSync === "number"
+                Number.isFinite(p.growMs) &&
+                typeof p.lastSync === "number" && Number.isFinite(p.lastSync)
               ) {
                 return {
                   crop: kind,
                   growMs: Math.min(need, Math.max(0, p.growMs)),
                   lastSync: Math.max(0, p.lastSync),
-                  wetUntil: typeof p.wetUntil === "number" ? p.wetUntil : 0,
+                  wetUntil: typeof p.wetUntil === "number" && Number.isFinite(p.wetUntil) ? p.wetUntil : 0,
+                  fertilized: p.fertilized === true,
+                  plantedSeason: finiteCount(p.plantedSeason, 3),
+                  harvests: finiteCount(p.harvests, CROP_META[kind].rounds - 1),
                 };
               }
               // 旧结构：按 stage / watered 折算
@@ -968,7 +897,7 @@ export function FarmScreen() {
           setPlots(parsed);
         }
       })
-      .catch(() => {})
+      .catch(() => setLoadFailed(true))
       .finally(() => {
         if (alive) setLoaded(true);
       });
@@ -978,9 +907,13 @@ export function FarmScreen() {
   }, []);
 
   useEffect(() => {
-    if (!loaded) return;
+    if (!loaded || loadFailed) return;
     const payload: SaveData = {
-      v: 2,
+      v: 4,
+      economy,
+      canUpgrade,
+      compost,
+      journal,
       epoch,
       timeShift,
       coins,
@@ -989,27 +922,107 @@ export function FarmScreen() {
       harvested,
       water,
     };
-    AsyncStorage.setItem(SAVE_KEY, JSON.stringify(payload)).catch(() => {});
-  }, [loaded, epoch, timeShift, coins, seeds, plots, harvested, water]);
+    const serialized = JSON.stringify(payload);
+    saveQueue.current = saveQueue.current.then(() => AsyncStorage.setItem(SAVE_KEY, serialized)).then(() => setSaveError(false)).catch(() => setSaveError(true));
+  }, [loaded, loadFailed, economy, epoch, timeShift, coins, seeds, plots, harvested, water, canUpgrade, compost, journal]);
 
   /* ---------------- 操作 ---------------- */
+  const collectHarvest = (indices: number[], t: number) => {
+    const next = { ...economy.inventory };
+    let count = 0;
+    const newPlots = plots.map((plot, i) => {
+      if (!indices.includes(i) || !plot.crop) return plot;
+      const kind = plot.crop;
+      const result = harvestResult(kind, plot.fertilized === true, plot.plantedSeason ?? season, plot.harvests);
+      const quality = result.premium ? "premium" : "normal";
+      next[kind] = { ...next[kind], [quality]: next[kind][quality] + result.quantity };
+      count += result.quantity;
+      return result.regrow ? { ...plot, growMs: CROP_META[kind].growMs * 0.5, lastSync: t, harvests: (plot.harvests ?? 0) + 1, fertilized: false } : emptyPlot(t);
+    });
+    setEconomy(e => ({ ...e, inventory: next }));
+    setPlots(newPlots);
+    setHarvested(h => h + indices.length);
+    record("harvest", indices.length);
+    showToast(`收获 ${count} 份已入仓 · 手账里出售、交订单或加工`);
+  };
+  const sellStock = (kind: CropKind) => {
+    if (!beginAction()) return;
+    const gain = stockValue(kind, economy.inventory[kind], eventTime());
+    if (!gain) return;
+    setCoins(c => c + gain);
+    setEconomy(e => ({ ...e, inventory: { ...e.inventory, [kind]: { normal: 0, premium: 0 } } }));
+    showToast(`出售${CROP_ART[kind].label} · +${gain} 金币`);
+  };
+  const deliverOrder = (kind: CropKind) => {
+    if (!beginAction() || level < CROP_META[kind].level) return;
+    const result = completeOrder(economy, kind, level, eventTime());
+    if (!result) { showToast("订单已交付或库存不足"); return; }
+    setEconomy(result.economy);
+    setCoins(c => c + result.reward);
+    setCompost(c => c + 1);
+    showToast("订单完成 · +" + result.reward + " 金币，+1 肥料");
+  };
+  const improveIrrigation = () => {
+    if (!beginAction() || economy.irrigation >= 3 || level < economy.irrigation + 2 || coins < irrigationCost(economy.irrigation)) return;
+    setCoins(c => c - irrigationCost(economy.irrigation));
+    setEconomy(e => ({ ...e, irrigation: e.irrigation + 1 }));
+    showToast("保水改良完成 · 此后每次浇水多保持湿润 15 分钟");
+  };
+  const makeRecipe = (recipe: Recipe) => {
+    if (!beginAction() || !economy.kitchen) return;
+    const next = craft(economy.inventory, recipe, coins);
+    if (!next) { showToast("食材或加工费不足"); return; }
+    setEconomy(e => ({ ...e, inventory: next }));
+    setCoins(c => c + recipe.sell - recipe.fee);
+    showToast(`${recipe.label}已售出 · 扣费后 +${recipe.sell - recipe.fee} 金币`);
+  };
+  const buildKitchen = () => {
+    if (!beginAction() || economy.kitchen || level < 3 || coins < 280) return;
+    setCoins(c => c - 280);
+    setEconomy(e => ({ ...e, kitchen: true }));
+    showToast("厨房建好了，试着把收成做成料理吧");
+  };
+  const rescueSeeds = () => {
+    if (!beginAction()) return;
+    const date = realDate(eventTime());
+    if (economy.rescueDate === date) { showToast("今天已领过起步种子，明天再来"); return; }
+    if (coins >= CROP_META.radish.price || plots.some(p => p.crop) || CROP_KINDS.some(k => seeds[k] > 0 || stockCount(economy.inventory[k]) > 0)) { showToast("还有可用资金、种子或作物，先经营一下吧"); return; }
+    setSeeds(s => ({ ...s, radish: 3 }));
+    setEconomy(e => ({ ...e, rescueDate: date }));
+    showToast("顾送来 3 包萝卜种子，重新出发吧");
+  };
   const actOnPlot = (index: number) => {
-    const t = now + timeShift;
+    if (!beginAction()) return;
+    const t = eventTime() + timeShift;
     const plot = plots[index];
     const pos = plotPos(index);
     moveTo(pos.x + 4, pos.y + PLOT_H - 14);
 
+    if (fertilizing) {
+      if (!plot.crop) { showToast("先播种，再施肥"); return; }
+      const need = CROP_META[plot.crop].growMs;
+      if (plotGrowth(plot, t) >= need) { showToast("这株已经成熟，可以收获啦"); return; }
+      if (plot.fertilized) { showToast("这轮已经施过肥啦"); return; }
+      if (compost <= 0) { showToast("肥料不足，抓 4 只虫可制作 1 份"); return; }
+      setCompost((c) => c - 1);
+      setPlots((ps) => ps.map((p, i) => i === index ? { ...p, growMs: fertilizedGrowth(plotGrowth(p, t), need), lastSync: t, fertilized: true } : p));
+      showToast("施肥完成 · 成长 +25%，收获为优质品");
+      return;
+    }
+
     if (!plot.crop) {
+      if (CROP_META[selected].level > level) { showToast("等级不足，多收获就能解锁"); return; }
       if (seeds[selected] <= 0) {
         showToast("种子用完了，去小铺买一点吧");
         return;
       }
       const kind = selected;
+      record("plant");
       setSeeds((s) => ({ ...s, [kind]: s[kind] - 1 }));
       setPlots((ps) =>
         ps.map((p, i) =>
           i === index
-            ? { crop: kind, growMs: 0, lastSync: t, wetUntil: 0 }
+            ? { crop: kind, growMs: 0, lastSync: t, wetUntil: 0, plantedSeason: season, harvests: 0 }
             : p,
         ),
       );
@@ -1022,18 +1035,14 @@ export function FarmScreen() {
     const g = plotGrowth(plot, t);
 
     if (g >= need) {
-      const gain = CROP_META[kind].sell;
-      setCoins((c) => c + gain);
-      setHarvested((h) => h + 1);
-      setPlots((ps) => ps.map((p, i) => (i === index ? emptyPlot(t) : p)));
-      showToast(`收获${CROP_ART[kind].label} +${gain}`);
+      collectHarvest([index], t);
       return;
     }
 
     if (t < plot.wetUntil) {
       const pct = Math.min(99, Math.floor((g / need) * 100));
       showToast(
-        `${CROP_ART[kind].label} · 成长 ${pct}% · 还需 ${restLabel(need - g)}`,
+        `${CROP_ART[kind].label} · 成长 ${pct}% · 还需 ${restLabel(remainingGrowthTime(need - g, plot.wetUntil - t))}`,
       );
       return;
     }
@@ -1044,10 +1053,11 @@ export function FarmScreen() {
     }
 
     setWater((w) => Math.max(0, w - 1));
+    record("water");
     setPlots((ps) =>
       ps.map((p, i) =>
         i === index
-          ? { ...p, growMs: g, lastSync: t, wetUntil: t + WET_MS }
+          ? { ...p, growMs: g, lastSync: t, wetUntil: t + wetDuration(economy.irrigation) }
           : p,
       ),
     );
@@ -1056,13 +1066,14 @@ export function FarmScreen() {
 
   /** 去水池打水：走到岸边，把水壶灌满 */
   const fetchWater = () => {
+    if (!beginAction()) return;
     moveTo(POND.x + POND.w / 2, POND.y + POND.h + 6);
-    if (water >= WATER_CAP) {
-      showToast(`水壶是满的（${water}/${WATER_CAP}）`);
+    if (water >= waterCap) {
+      showToast(`水壶是满的（${water}/${waterCap}）`);
       return;
     }
-    setWater(WATER_CAP);
-    showToast(`打满水壶，能浇 ${WATER_CAP} 块地`);
+    setWater(waterCap);
+    showToast(`打满水壶，能浇 ${waterCap} 块地`);
   };
 
   /** 点击房子：先走到门口，再进屋 */
@@ -1074,7 +1085,8 @@ export function FarmScreen() {
 
   /** 睡到第二天早上 7 点：虚拟时间一起往前跳，作物跟着长 */
   const doSleep = () => {
-    const t = now + timeShift;
+    if (!beginAction()) return;
+    const t = eventTime() + timeShift;
     const d = new Date(t);
     const target = new Date(t);
     if (d.getHours() >= WAKE_HOUR) target.setDate(target.getDate() + 1);
@@ -1084,14 +1096,18 @@ export function FarmScreen() {
     setTimeShift((s) => s + jump);
     setHouseOpen(false);
     const nextDay = Math.max(1, Math.floor((next - epoch) / DAY) + 1);
-    showToast(`第 ${nextDay} 天 · 早上 7:00，作物悄悄长高了`);
+    showToast(`第 ${nextDay} 天 · 作物悄悄长高了，天色仍跟随本地时间`);
   };
 
   /** 抓虫小游戏结算：游戏时长也算进农场时间，作物自然长得更快（不再直接发金币，钱靠种地） */
   const finishBugGame = (score: number, jumpMs: number) => {
+    if (settledGame.current === gameToken) return;
+    settledGame.current = gameToken;
+    const reward = compostReward(score);
+    setCompost((c) => c + reward);
     setTimeShift((s) => s + jumpMs);
     const mins = Math.max(1, Math.round(jumpMs / MINUTE));
-    showToast(`抓了 ${score} 只虫，农场时间前进了 ${mins} 分钟，作物长大了一截`);
+    showToast(`抓了 ${score} 只虫 · 肥料 +${reward} · 生长加速 ${mins} 分钟`);
   };
 
   const openBugGame = () => {
@@ -1101,9 +1117,11 @@ export function FarmScreen() {
 
 
   const buy = (kind: CropKind) => {
+    if (!beginAction()) return;
+    if (level < CROP_META[kind].level) { showToast("等级不足，收获作物可升级"); return; }
     const price = CROP_META[kind].price * qty;
     if (coins < price) {
-      showToast("金币不够，先去收点作物吧");
+      showToast("金币不够，去手账卖点库存或交订单吧");
       return;
     }
     setCoins((c) => c - price);
@@ -1111,8 +1129,40 @@ export function FarmScreen() {
     showToast(`买到了 ${qty} 包${CROP_ART[kind].label}种子`);
   };
 
-  const openTalk = (who: Speaker) => {
-    const at = {
+  const harvestAll = () => {
+    if (!beginAction()) return;
+    const t = eventTime() + timeShift;
+    const ready = plots.map((p, i) => p.crop && plotGrowth(p, t) >= CROP_META[p.crop].growMs ? i : -1).filter((i) => i >= 0);
+    if (ready.length) collectHarvest(ready, t);
+    else showToast("还没有成熟作物，再等一会儿吧");
+  };
+  const waterAll = () => {
+    if (!beginAction()) return;
+    const t = eventTime() + timeShift;
+    const dry = plots.map((p, i) => p.crop && !isWet(p, t) && plotStage(p, t) < 2 ? i : -1).filter((i) => i >= 0).slice(0, water);
+    if (dry.length) {
+      setWater((w) => w - dry.length);
+      setPlots((ps) => ps.map((p, i) => dry.includes(i) ? { ...p, growMs: plotGrowth(p, t), lastSync: t, wetUntil: t + wetDuration(economy.irrigation) } : p));
+      record("water", dry.length);
+    }
+    setJournalOpen(false);
+    showToast(dry.length ? `照料了 ${dry.length} 块田地 · 按田地顺序浇水` : water <= 0 ? "水壶空了，先去水池打水" : "作物都已湿润，或还没有需要浇水的作物");
+  };
+  const claimDaily = (kind: FarmActivity) => {
+    if (!beginAction()) return;
+    const result = claimGoal(journal, kind, eventTime());
+    setJournal(result.journal);
+    if (result.reward) { setCoins((c) => c + result.reward); setCompost((c) => c + 1); }
+  };
+  const upgradeCan = () => {
+    if (!beginAction()) return;
+    if (canUpgrade >= 3 || level < canUpgrade + 2 || coins < upgradeCost(canUpgrade)) { showToast("尚未满足水壶升级条件"); return; }
+    setCoins((c) => c - upgradeCost(canUpgrade));
+    setCanUpgrade((u) => u + 1);
+  };
+
+  const openTalk = (who: Speaker, position?: { x: number; y: number }) => {
+    const at = position ?? {
       door: DOOR_AT,
       gu: GU_AT,
       chicken: CHICKEN_AT,
@@ -1264,7 +1314,7 @@ export function FarmScreen() {
               marginTop: 2,
             }}
           >
-            {`第 ${day} 天 · ${seasonName} · ${clockLabel(vNow)} ${
+            {`Lv.${level} · 第 ${day} 天 · ${seasonName} · 本地 ${clock} ${
               night ? "夜晚" : "白天"
             }`}
           </Text>
@@ -1335,7 +1385,7 @@ export function FarmScreen() {
                 marginLeft: 4,
               }}
             >
-              {`${water}/${WATER_CAP}`}
+              {`${water}/${waterCap}`}
             </Text>
           </Pressable>
         </View>
@@ -1343,11 +1393,14 @@ export function FarmScreen() {
 
       {/* ---------- 场景 ---------- */}
       {/* 贴图自身含完整天空（含太阳/月亮/星空），天空延展也画进了贴图，这里不再有代码画的天空 */}
-      <View
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        bounces={false}
+        contentOffset={{ x: 0, y: 72 * scale }}
+        contentContainerStyle={{ flexGrow: 1, justifyContent: "flex-end" }}
         style={{
           flex: 1,
           overflow: "hidden",
-          justifyContent: "flex-end",
           // 贴图还没挂之前先铺夜色：上一屏是深色夜空，这样过渡过去不会闪一块亮蓝
           backgroundColor: !texReady || night ? SKY_BG.night : SKY_BG.day,
         }}
@@ -1359,7 +1412,7 @@ export function FarmScreen() {
             <>
               <Animated.View style={[StyleSheet.absoluteFill, dayLayerStyle]}>
                 <Image
-                  source={require("../../assets/images/farm-day.png")}
+                  source={require("../../assets/images/farm-day-v2.png")}
                   style={{ width, height: sceneH }}
                   resizeMode="stretch"
                   fadeDuration={0}
@@ -1367,7 +1420,7 @@ export function FarmScreen() {
               </Animated.View>
               <Animated.View style={[StyleSheet.absoluteFill, nightLayerStyle]}>
                 <Image
-                  source={require("../../assets/images/farm-night.png")}
+                  source={require("../../assets/images/farm-night-v2.png")}
                   style={{ width, height: sceneH }}
                   resizeMode="stretch"
                   fadeDuration={0}
@@ -1375,6 +1428,8 @@ export function FarmScreen() {
               </Animated.View>
             </>
           ) : null}
+          <FarmWater scale={scale} night={night} />
+          {decorReady ? <FarmProps scale={scale} night={night} /> : null}
           <Svg
             width={width}
             height={sceneH}
@@ -1401,9 +1456,7 @@ export function FarmScreen() {
                       opacity="0.32"
                     />
                   ) : null}
-                  {p.crop
-                    ? cropRects(p.crop, stage, pos.x + 5, pos.y + 4)
-                    : null}
+
                   {p.crop && stage < 2 ? (
                     <>
                       <Rect
@@ -1456,6 +1509,15 @@ export function FarmScreen() {
               );
             })}
           </Svg>
+
+          {plots.map((p, i) => {
+            if (!p.crop) return null;
+            const pos = plotPos(i);
+            return <View key={i} pointerEvents="none" style={{ position: "absolute", left: (pos.x + 1) * scale, top: (pos.y - 3) * scale }}>
+              <CropSprite kind={p.crop} stage={plotStage(p, vNow)} size={16 * scale} />
+              {p.fertilized ? <Text style={{ position: "absolute", right: 0, top: 0, color: "#FFF4A6", fontSize: 7 * scale }}>✦</Text> : null}
+            </View>;
+          })}
 
           {/* 空气里缓慢浮动的光点 */}
           {decorReady
@@ -1577,102 +1639,9 @@ export function FarmScreen() {
           {/* 空地装饰：树、花、灌木（合并成一张 SVG） */}
           {decorReady ? <DecorLayer scale={scale} /> : null}
 
-          {/* 顾 */}
-          <View
-            style={{
-              position: "absolute",
-              left: GU_AT.x * scale,
-              top: GU_AT.y * scale,
-              zIndex: 5,
-            }}
-          >
-            <NameTag
-              label="顾"
-              accent="#F9A8D4"
-              scale={scale}
-              hit={threads.gu.length > 0}
-            />
-            <IdleSprite
-              rows={GU_ROWS}
-              palette={GU_PALETTE}
-              pixel={scale}
-              onPress={() => openTalk("gu")}
-            />
-          </View>
-
-          {/* door */}
-          <View
-            style={{
-              position: "absolute",
-              left: DOOR_AT.x * scale,
-              top: DOOR_AT.y * scale,
-              zIndex: 5,
-            }}
-          >
-            <NameTag
-              label="door"
-              accent="#38BDF8"
-              scale={scale}
-              hit={threads.door.length > 0}
-            />
-            <IdleSprite
-              rows={DOOR_ROWS}
-              palette={DOOR_PALETTE}
-              pixel={scale}
-              onPress={() => openTalk("door")}
-            />
-          </View>
-
-          {/* 小鸡坤坤 */}
-          <View
-            style={{
-              position: "absolute",
-              left: CHICKEN_AT.x * scale,
-              top: CHICKEN_AT.y * scale,
-              zIndex: 5,
-            }}
-          >
-            <NameTag
-              label="坤坤"
-              accent="#F5C466"
-              scale={scale}
-              hit={threads.chicken.length > 0}
-            />
-            <IdleSprite
-              rows={PROP_ART.chicken.rows}
-              palette={PROP_ART.chicken.palette}
-              pixel={scale}
-              onPress={() => openTalk("chicken")}
-            />
-          </View>
-
-          {/* 三个儿子：小八 / 玉洁 / 唯纲 */}
-          {folkReady
-            ? SONS.map((son) => (
-                <View
-                  key={son.who}
-                  style={{
-                    position: "absolute",
-                    left: son.at.x * scale,
-                    top: son.at.y * scale,
-                    zIndex: 5,
-                  }}
-                >
-                  <NameTag
-                    label={son.label}
-                    accent={son.accent}
-                    scale={scale * 0.8}
-                    hit={threads[son.who].length > 0}
-                  />
-                  <IdleSprite
-                    rows={son.rows}
-                    palette={son.palette}
-                    pixel={scale * 0.8}
-                    onPress={() => openTalk(son.who)}
-                  />
-                </View>
-              ))
-            : null}
+          <FarmLifeLayer scale={scale} night={night} apiKey={apiKey}
+            active={focused && loaded && folkReady && !speaker && !shopOpen && !houseOpen && !gameOpen && !journalOpen && !toast}
+            panelOpen={lifeOpen} onClosePanel={() => setLifeOpen(false)} onTalk={openTalk} />
 
           {/* 玩家 */}
           <Animated.View
@@ -1694,11 +1663,7 @@ export function FarmScreen() {
                 backgroundColor: "rgba(0,0,0,0.18)",
               }}
             />
-            <PixelSprite
-              rows={HERO_ROWS}
-              palette={HERO_PALETTE}
-              pixel={scale}
-            />
+            <Animated.View style={playerFacingStyle}><FarmPersonSprite who="hero" activity={playerMoving ? "walk" : "idle"} size={20 * scale} /></Animated.View>
           </Animated.View>
 
           {/* 提示 */}
@@ -1734,35 +1699,35 @@ export function FarmScreen() {
             </Animated.View>
           ) : null}
         </View>
-      </View>
+      </ScrollView>
 
       {/* ---------- 底部操作区 ---------- */}
       <View
         style={{
           paddingHorizontal: 12,
+          paddingTop: 10,
           paddingBottom: insets.bottom + 8,
           gap: 7,
+          borderTopWidth: 1,
+          borderTopColor: "rgba(143,209,79,0.2)",
+          backgroundColor: "#112016",
         }}
       >
-        <Text
-          style={{
-            color: "rgba(246,238,220,0.42)",
-            fontSize: 10,
-            textAlign: "center",
-          }}
-        >
-          轻点土地耕作　·　轻点水池打水　·　轻点房子睡觉　·　轻点小人聊天
-        </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+          <Text style={{ flex: 1, color: "rgba(246,238,220,0.5)", fontSize: 10, lineHeight: 16 }}>{loadFailed ? "存档读取失败，请退出农场重进，原存档未覆盖" : saveError ? "保存失败，请保持应用开启并重试操作" : fertilizing ? "施肥模式 · 轻点未成熟作物" : "横滑选种 · 收成在手账出售 · 水池打水"}</Text>
+          <Pressable accessibilityRole="button" onPress={() => setLifeOpen(true)} style={{ minHeight: 36, justifyContent: "center", paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#2B4230" }}><Text style={{ color: "#D7EAC5", fontSize: 11 }}>居民生活</Text></Pressable>
+        </View>
 
-        <View style={{ flexDirection: "row", gap: 8 }}>
-          {(Object.keys(CROP_ART) as CropKind[]).map((kind) => {
+        <ScrollView horizontal style={{ flexGrow: 0 }} showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+          {CROP_KINDS.map((kind) => {
             const on = selected === kind;
             return (
               <Pressable
                 key={kind}
                 onPress={() => setSelected(kind)}
                 style={{
-                  flex: 1,
+                  minWidth: 110,
+                  minHeight: 48,
                   flexDirection: "row",
                   alignItems: "center",
                   justifyContent: "center",
@@ -1777,12 +1742,8 @@ export function FarmScreen() {
                     : "rgba(246,238,220,0.04)",
                 }}
               >
-                <View style={{ width: 18, height: 18 }}>
-                  <PixelSprite
-                    rows={CROP_STAGE_ROWS[2]}
-                    palette={CROP_ART[kind].palette}
-                    pixel={1.8}
-                  />
+                <View style={{ width: 26, height: 26 }}>
+                  <CropSprite kind={kind} size={26} />
                 </View>
                 <View style={{ marginLeft: 5 }}>
                   <Text
@@ -1801,13 +1762,13 @@ export function FarmScreen() {
                       marginTop: 1,
                     }}
                   >
-                    {`种子 ×${seeds[kind]}`}
+                    {level < CROP_META[kind].level ? "Lv." + CROP_META[kind].level + " 解锁" : "种子 ×" + seeds[kind]}
                   </Text>
                 </View>
               </Pressable>
             );
           })}
-        </View>
+        </ScrollView>
 
         <View style={{ flexDirection: "row", gap: 8 }}>
           <Pressable
@@ -1835,6 +1796,12 @@ export function FarmScreen() {
             >
               小铺
             </Text>
+          </Pressable>
+
+          <Pressable accessibilityRole="button" onPress={() => setJournalOpen(true)}
+            style={{ flex: 1.3, minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 3, borderRadius: 16, backgroundColor: fertilizing ? "#5B4426" : "#28452D", borderWidth: 1, borderColor: "#739B59" }}>
+            <FarmToolSprite kind={fertilizing ? "compost" : "seed"} size={24} />
+            <Text style={{ color: "#E2EDC9", fontSize: 11, fontWeight: "700" }}>{fertilizing ? "施肥中" : `手账 Lv.${level}`}</Text>
           </Pressable>
 
           <Pressable
@@ -1865,6 +1832,14 @@ export function FarmScreen() {
       </View>
 
       {/* ---------- 小铺 ---------- */}
+      <FarmJournalPanel visible={journalOpen} onClose={() => setJournalOpen(false)}
+        harvested={harvested} coins={coins} upgrade={canUpgrade} compost={compost}
+        journal={restoreJournal(journal, now)} fertilizing={fertilizing}
+        onClaim={claimDaily} onUpgrade={upgradeCan} onHarvestAll={harvestAll} onWaterAll={waterAll}
+        onFertilize={() => { setFertilizing((v) => !v); setJournalOpen(false); }} >
+        <FarmEconomyPanel economy={economy} coins={coins} level={level} season={season} at={now}
+          onSell={sellStock} onOrder={deliverOrder} onCraft={makeRecipe} onKitchen={buildKitchen} onRescue={rescueSeeds} onIrrigation={improveIrrigation} />
+      </FarmJournalPanel>
       <Modal
         visible={shopOpen}
         transparent
@@ -1892,6 +1867,7 @@ export function FarmScreen() {
                 paddingHorizontal: 18,
                 paddingTop: 16,
                 paddingBottom: insets.bottom + 18,
+                maxHeight: height * 0.82,
                 borderTopWidth: 1,
                 borderColor: "rgba(246,238,220,0.10)",
               }}
@@ -1991,7 +1967,8 @@ export function FarmScreen() {
                 </Text>
               </View>
 
-              {(Object.keys(CROP_ART) as CropKind[]).map((kind) => (
+              <ScrollView showsVerticalScrollIndicator={false}>
+              {CROP_KINDS.map((kind) => (
                 <View
                   key={kind}
                   style={{
@@ -2002,12 +1979,8 @@ export function FarmScreen() {
                     borderColor: "rgba(246,238,220,0.08)",
                   }}
                 >
-                  <View style={{ width: 24, height: 24 }}>
-                    <PixelSprite
-                      rows={CROP_STAGE_ROWS[2]}
-                      palette={CROP_ART[kind].palette}
-                      pixel={2.4}
-                    />
+                  <View style={{ width: 32, height: 32 }}>
+                    <CropSprite kind={kind} size={32} />
                   </View>
                   <View style={{ flex: 1, marginLeft: 10 }}>
                     <Text
@@ -2017,7 +1990,7 @@ export function FarmScreen() {
                         fontWeight: "700",
                       }}
                     >
-                      {CROP_ART[kind].label}种子
+                      {CROP_ART[kind].label}种子 · Lv.{CROP_META[kind].level}
                     </Text>
                     <Text
                       style={{
@@ -2026,19 +1999,18 @@ export function FarmScreen() {
                         marginTop: 2,
                       }}
                     >
-                      {`${CROP_META[kind].price} 金币/包 · 成熟卖 ${
-                        CROP_META[kind].sell
-                      } · ${Math.round(CROP_META[kind].growMs / MINUTE)} 分钟`}
+                      {CROP_META[kind].price + " 金币/包 · 基础单价 " + CROP_META[kind].sell + " · " + CROP_META[kind].growMs / MINUTE + " 分钟 · " + CROP_META[kind].rounds + " 轮"}
                     </Text>
                   </View>
                   <Pressable
+                    disabled={level < CROP_META[kind].level || coins < CROP_META[kind].price * qty}
                     onPress={() => buy(kind)}
                     style={{
                       borderRadius: 999,
                       paddingHorizontal: 12,
                       paddingVertical: 7,
                       backgroundColor:
-                        coins >= CROP_META[kind].price * qty
+                        level >= CROP_META[kind].level && coins >= CROP_META[kind].price * qty
                           ? "#8FD14F"
                           : "rgba(246,238,220,0.12)",
                     }}
@@ -2048,16 +2020,17 @@ export function FarmScreen() {
                         fontSize: 11.5,
                         fontWeight: "800",
                         color:
-                          coins >= CROP_META[kind].price * qty
+                          level >= CROP_META[kind].level && coins >= CROP_META[kind].price * qty
                             ? "#152A12"
                             : "rgba(246,238,220,0.4)",
                       }}
                     >
-                      {`买入 ×${qty} · ${CROP_META[kind].price * qty}`}
+                      {level < CROP_META[kind].level ? "Lv." + CROP_META[kind].level + " 解锁" : "买入 ×" + qty + " · " + CROP_META[kind].price * qty}
                     </Text>
                   </Pressable>
                 </View>
               ))}
+              </ScrollView>
             </View>
           </Animated.View>
         </View>
@@ -2120,11 +2093,7 @@ export function FarmScreen() {
                     backgroundColor: "rgba(246,238,220,0.06)",
                   }}
                 >
-                  <PixelSprite
-                    rows={speakerMeta.rows}
-                    palette={speakerMeta.palette}
-                    pixel={speaker === "chicken" ? 3 : 2.6}
-                  />
+                  <FarmPersonSprite who={speaker ?? "gu"} size={36} />
                 </View>
                 <View style={{ marginLeft: 10, flex: 1 }}>
                   <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -2394,7 +2363,7 @@ export function FarmScreen() {
         visible={houseOpen}
         night={night}
         day={day}
-        clock={clockLabel(vNow)}
+        clock={clock}
         onClose={() => setHouseOpen(false)}
         onSleep={doSleep}
       />

@@ -9,7 +9,6 @@ import {
   Text,
   View,
   useWindowDimensions,
-  type ImageSourcePropType,
   type ScrollViewInstance,
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -33,6 +32,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColorScheme } from "nativewind";
 
 import { ChatImage } from "@/components/ChatImage";
+import { PetAnimation, type PetAnimationKind } from "@/components/PetAnimation";
 import { ChatInputBar } from "@/components/ChatInputBar";
 import { BACKGROUND_PRESETS, resolveTint } from "@/constants/backgrounds";
 import { askWhalePet } from "@/services/ai";
@@ -49,12 +49,15 @@ import { useSettings } from "@/store/useSettings";
 import { useWhalePet } from "@/store/useWhalePet";
 import type { WhaleCare } from "@/store/useWhalePet";
 import { useWhaleVoice } from "@/store/useWhaleVoice";
+import { useWhaleMemory } from "@/store/useWhaleMemory";
+import { useWhalePersona } from "@/store/useWhalePersona";
 import { bumpHaptic, successHaptic, tapHaptic, warnHaptic } from "@/utils/haptics";
 import type {
   AssistantAction,
   PetActionKind,
   ScheduleAction,
   WhaleAction,
+  ChatMessage,
 } from "@/types";
 import { uid } from "@/utils/id";
 import { getDateInfo } from "@/utils/time";
@@ -64,17 +67,7 @@ import { getDateInfo } from "@/utils/time";
    手势回调、帧回调与 effect 对其赋值是官方标准用法；手势回调只在事件触发时执行，
    不会在渲染期读 ref。React 编译器的不可变/纯函数假设不适用于这些场景 */
 
-type PetFrame = "idle" | "happy" | "sleep" | "dance" | "eat" | "study";
-
-/** 桌宠立绘：待机 / 被戳开心 / 打瞌睡 / 跳舞 / 吃团子 / 陪你学习 */
-const SPRITES: Record<PetFrame, ImageSourcePropType> = {
-  idle: require("../../assets/whale/pet-idle.png"),
-  happy: require("../../assets/whale/pet-happy.png"),
-  sleep: require("../../assets/whale/pet-sleep.png"),
-  dance: require("../../assets/whale/pet-dance.png"),
-  eat: require("../../assets/whale/pet-eat.png"),
-  study: require("../../assets/whale/pet-study.png"),
-};
+type PetFrame = PetAnimationKind;
 
 const SIZE = 84;
 /** 立绘高宽比（素材是竖构图） */
@@ -166,21 +159,13 @@ const LOCAL_ACTIONS: { re: RegExp; action: PetActionKind; reply: string }[] = [
   { re: /打招呼|招手|^hi$|^hello$/i, action: "wave", reply: "大爹～我在这儿呢" },
 ];
 
-interface PetMsg {
-  id: string;
-  role: "user" | "assistant";
-  text: string;
-  /** 待确认的课表操作 */
-  actions?: ScheduleAction[];
-  /** 生成图 */
-  imageUri?: string;
-  imageAspect?: number;
-}
+type PetMsg = ChatMessage;
 
 const petMsg = (role: PetMsg["role"], text: string): PetMsg => ({
   id: uid(),
   role,
-  text,
+  content: text.replaceAll("大爹", useWhalePersona.getState().persona.userName),
+  timestamp: Date.now(),
 });
 
 const SCHEDULE_TYPES = new Set([
@@ -281,6 +266,7 @@ function WhalePetLayer() {
   const sqY = useSharedValue(1);
   const tilt = useSharedValue(0);
   const bob = useSharedValue(0);
+  const breathEnergy = useSharedValue(1);
   const lift = useSharedValue(0);
   const scale = useSharedValue(0.5);
   /** 本次抛掷是否已经触发过落地反馈 */
@@ -293,7 +279,13 @@ function WhalePetLayer() {
   const minY = useSharedValue(insets.top + 48);
   const maxY = useSharedValue(height - H - insets.bottom - FLOOR_RESERVE);
 
-  const [frame, setFrame] = useState<PetFrame>("idle");
+  const [frame, setFrameState] = useState<PetFrame>("idle");
+  const frameRef = useRef<PetFrame>("idle");
+  const lastInteraction = useRef(0);
+  const setFrame = (next: PetFrame) => {
+    frameRef.current = next;
+    setFrameState(next);
+  };
   const [bubble, setBubble] = useState<string | null>(
     "大爹，我出来啦～拖我、戳我都行，点三下能说话",
   );
@@ -301,7 +293,8 @@ function WhalePetLayer() {
   const [nearRight, setNearRight] = useState(true);
 
   const [chatOpen, setChatOpen] = useState(false);
-  const [chatMsgs, setChatMsgs] = useState<PetMsg[]>([]);
+  const chatMsgs = useWhaleMemory((s) => s.petMessages);
+  const setChatMsgs = useWhaleMemory((s) => s.setPetMessages);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [panelPos, setPanelPos] = useState({ left: 12, top: 120 });
@@ -374,24 +367,31 @@ function WhalePetLayer() {
   const armIdle = () => {
     if (idleTimer.current) clearTimeout(idleTimer.current);
     if (sleepTimer.current) clearTimeout(sleepTimer.current);
+    if (frameRef.current === "sleep" || chatOpenRef.current) return;
     idleTimer.current = setTimeout(
       runIdleTick,
       IDLE_DELAY_MIN + randBetween(0, IDLE_DELAY_MAX - IDLE_DELAY_MIN),
     );
     sleepTimer.current = setTimeout(() => {
-      if (chatOpenRef.current) return;
-      if (phase.value !== 0) return;
+      if (chatOpenRef.current || phase.value !== 0 || frameTimer.current) {
+        armIdle();
+        return;
+      }
+      stopAction();
       setFrame("sleep");
-    }, SLEEP_AFTER);
+      if (idleTimer.current) clearTimeout(idleTimer.current);
+    }, Math.max(1000, SLEEP_AFTER - (nowMs() - lastInteraction.current)));
   };
 
   const wake = () => {
-    setFrame((f) => (f === "sleep" ? "idle" : f));
+    lastInteraction.current = nowMs();
+    if (frameRef.current === "sleep") setFrame("idle");
     armIdle();
   };
 
   // 登场：从屏幕正中蹦出来，弹一下落到中间偏下的位置
   useEffect(() => {
+    lastInteraction.current = nowMs();
     const lo = insets.top + 48;
     const hi = Math.max(lo, height - H - insets.bottom - FLOOR_RESERVE);
     minX.value = EDGE;
@@ -429,8 +429,12 @@ function WhalePetLayer() {
 
   // 待机呼吸：鲸鱼浮在空气里轻轻起伏
   useEffect(() => {
+    breathEnergy.value = withTiming(frame === "sleep" ? 0.45 : 1, { duration: 400 });
     bob.value = withRepeat(
-      withTiming(1, { duration: 1900, easing: Easing.inOut(Easing.sin) }),
+      withTiming(1, {
+        duration: frame === "sleep" ? 3200 : frame === "eat" ? 650 : 2100,
+        easing: Easing.inOut(Easing.sin),
+      }),
       -1,
       true,
     );
@@ -438,7 +442,7 @@ function WhalePetLayer() {
       cancelAnimation(bob);
       bob.value = 0;
     };
-  }, [bob]);
+  }, [bob, breathEnergy, frame]);
 
   // 养护心跳：每分钟按真实时间结算一次（应用开着也不会忘记饿）
   useEffect(() => {
@@ -494,7 +498,7 @@ function WhalePetLayer() {
     if (phase.value !== 0) return;
     const from = boxX.value;
     if (Math.abs(target - from) < 24) return;
-    face.value = target > from ? 1 : -1;
+    face.value = withTiming(target > from ? 1 : -1, { duration: 180 });
     cancelAnimation(tilt);
     tilt.value = withRepeat(
       withTiming(face.value * 2.4, {
@@ -528,25 +532,27 @@ function WhalePetLayer() {
   const stopAction = () => {
     if (frameTimer.current) clearTimeout(frameTimer.current);
     frameTimer.current = null;
+    cancelAnimation(boxX);
     cancelAnimation(tilt);
     cancelAnimation(lift);
-    tilt.value = 0;
-    lift.value = 0;
+    tilt.value = withTiming(0, { duration: 180 });
+    lift.value = withSpring(0, { damping: 16, stiffness: 180 });
   };
 
   /** 播放一个动作，结束后回到待机并重新计时 */
   const playAction = (kind: PetActionKind, silent = false) => {
     if (phase.value === 2) return;
     stopAction();
-    wake();
+    if (!silent) wake();
     if (sleepTimer.current) clearTimeout(sleepTimer.current);
 
     const settle = (ms: number) => {
       frameTimer.current = setTimeout(() => {
+        frameTimer.current = null;
         setFrame("idle");
         cancelAnimation(tilt);
-        tilt.value = 0;
-        lift.value = 0;
+        tilt.value = withTiming(0, { duration: 220 });
+        lift.value = withSpring(0, { damping: 16, stiffness: 180 });
         armIdle();
       }, ms);
     };
@@ -563,15 +569,9 @@ function WhalePetLayer() {
         settle(3200);
         break;
       case "spin":
-        setFrame("dance");
-        tilt.value = withTiming(
-          720,
-          { duration: 1100, easing: Easing.inOut(Easing.cubic) },
-          () => {
-            tilt.value = 0;
-          },
-        );
-        settle(1250);
+        setFrame("spin");
+        lift.value = withSequence(withTiming(-5, { duration: 200 }), withTiming(0, { duration: 920 }));
+        settle(1120);
         break;
       case "eat":
         setFrame("eat");
@@ -584,7 +584,7 @@ function WhalePetLayer() {
         break;
       case "sleep":
         setFrame("sleep");
-        settle(6000);
+        if (idleTimer.current) clearTimeout(idleTimer.current);
         break;
       case "jump":
         setFrame("happy");
@@ -597,7 +597,7 @@ function WhalePetLayer() {
         settle(900);
         break;
       case "wave":
-        setFrame("happy");
+        setFrame("wave");
         tilt.value = withRepeat(withTiming(7, { duration: 170 }), 5, true);
         settle(1100);
         break;
@@ -608,6 +608,7 @@ function WhalePetLayer() {
 
   /** 空闲时的自娱自乐：饿 / 孤独会优先抱怨，其余时间游动、小动作、自语 */
   const runIdleTick = () => {
+    if (frameRef.current === "sleep") return;
     // 正在对话、被拖着/飞着、或动作还没播完时，先不安排新的自娱自乐
     if (chatOpenRef.current || phase.value !== 0 || frameTimer.current) {
       armIdle();
@@ -615,7 +616,6 @@ function WhalePetLayer() {
     }
     const c = useWhalePet.getState().care;
     const roll = rand();
-    setFrame((f) => (f === "sleep" ? "idle" : f));
 
     if (c.fullness < 25 && roll < 0.55) {
       showBubble(pick(HUNGRY_LINES));
@@ -674,6 +674,7 @@ function WhalePetLayer() {
     lift.value = withTiming(0, { duration: 200 });
     if (!thrown) {
       phase.value = 0;
+      tilt.value = withSpring(0, { damping: 14, stiffness: 160 });
       armIdle();
     }
   };
@@ -750,6 +751,10 @@ function WhalePetLayer() {
       runOnJS(onDragStart)();
     })
     .onUpdate((e) => {
+      tilt.value = withSpring(Math.max(-12, Math.min(12, e.velocityX * 0.015)), {
+        damping: 18,
+        stiffness: 150,
+      });
       boxX.value = Math.min(
         Math.max(dragStartX.value + e.translationX, minX.value),
         maxX.value,
@@ -772,26 +777,39 @@ function WhalePetLayer() {
         phase.value = 0;
         runOnJS(onDragEnd)(false);
       }
+    })
+    .onFinalize(() => {
+      // 系统取消手势时也要松手，避免永远卡在拖拽状态。
+      if (phase.value === 1) {
+        phase.value = 0;
+        runOnJS(onDragEnd)(false);
+      }
     });
 
   const wrapperStyle = useAnimatedStyle(() => ({
     transform: [
       { translateX: boxX.value },
       {
-        translateY: boxY.value + (H * (1 - sqY.value)) / 2 - lift.value,
+        translateY: boxY.value + (H * (1 - sqY.value)) / 2 + lift.value,
       },
       { scale: scale.value },
       { rotate: `${tilt.value}deg` },
-      { scaleX: face.value * sqX.value },
+      { scaleX: sqX.value },
       { scaleY: sqY.value },
     ],
   }));
 
   const bobStyle = useAnimatedStyle(() => ({
     transform: [
-      { translateY: bob.value * 3.4 },
-      { rotate: `${(bob.value - 0.5) * 1.6}deg` },
+      { translateY: phase.value === 0 ? bob.value * 3.4 * breathEnergy.value : 0 },
+      { rotate: `${phase.value === 0 ? (bob.value - 0.5) * 1.6 * breathEnergy.value : 0}deg` },
+      { scaleX: 1 + bob.value * 0.012 * breathEnergy.value },
+      { scaleY: 1 - bob.value * 0.009 * breathEnergy.value },
     ],
+  }));
+
+  const facingStyle = useAnimatedStyle(() => ({
+    transform: [{ scaleX: face.value }],
   }));
 
   /* ------------------------------------------------------------------ */
@@ -799,6 +817,7 @@ function WhalePetLayer() {
   /* ------------------------------------------------------------------ */
 
   const poke = () => {
+    stopAction();
     wake();
     squash(0.84);
     lift.value = withSequence(
@@ -807,7 +826,11 @@ function WhalePetLayer() {
     );
     setFrame("happy");
     if (frameTimer.current) clearTimeout(frameTimer.current);
-    frameTimer.current = setTimeout(() => setFrame("idle"), 1500);
+    frameTimer.current = setTimeout(() => {
+      frameTimer.current = null;
+      setFrame("idle");
+      armIdle();
+    }, 1500);
 
     // 点一下算摸头：加心情，但短时间内连点不会无限刷
     if (nowMs() - lastPat.current > 6000) {
@@ -863,7 +886,7 @@ function WhalePetLayer() {
   const closeChat = () => {
     chatOpenRef.current = false;
     setChatOpen(false);
-    armIdle();
+    wake();
   };
 
   const onPetPress = () => {
@@ -886,6 +909,8 @@ function WhalePetLayer() {
 
   /** 面板里的「摸摸头」 */
   const patHead = () => {
+    stopAction();
+    wake();
     patPet();
     lastPat.current = nowMs();
     setFrame("happy");
@@ -895,7 +920,11 @@ function WhalePetLayer() {
     showBubble(line);
     say(line);
     if (frameTimer.current) clearTimeout(frameTimer.current);
-    frameTimer.current = setTimeout(() => setFrame("idle"), 1600);
+    frameTimer.current = setTimeout(() => {
+      frameTimer.current = null;
+      setFrame("idle");
+      armIdle();
+    }, 1600);
   };
 
   /** 面板里的「喂白饭」 */
@@ -908,7 +937,9 @@ function WhalePetLayer() {
     actions: WhaleAction[],
     userText: string,
   ) => {
+    const memoryEpoch = useWhaleMemory.getState().epoch;
     for (const action of actions) {
+      if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
       if (action.type === "set_summon_phrase") {
         const phrase = String(action.phrase ?? "")
           .replace(/[\s「」"“”'']/g, "")
@@ -918,14 +949,14 @@ function WhalePetLayer() {
             [
               ...prev,
               petMsg("assistant", "这个口令太短啦，换一个 2-12 个字的吧。"),
-            ].slice(-30),
+            ].slice(-200),
           );
           continue;
         }
         setWhalePhrase(phrase);
         const line = `（尾巴晃了晃）记住啦：以后喊「${phrase}」，我就游出来。`;
         setChatMsgs((prev) =>
-          [...prev, petMsg("assistant", line)].slice(-30),
+          [...prev, petMsg("assistant", line)].slice(-200),
         );
         showBubble(line, 2600);
       } else if (action.type === "set_background") {
@@ -936,7 +967,7 @@ function WhalePetLayer() {
         }
         const line = `（把背景调成了「${BACKGROUND_PRESETS[tint].label}」）大爹看看，喜不喜欢？`;
         setChatMsgs((prev) =>
-          [...prev, petMsg("assistant", line)].slice(-30),
+          [...prev, petMsg("assistant", line)].slice(-200),
         );
         showBubble(line, 2600);
       } else if (action.type === "generate_image") {
@@ -949,7 +980,7 @@ function WhalePetLayer() {
               imageUri: uri,
               imageAspect: imageAspect(action.size),
             },
-          ].slice(-30),
+          ].slice(-200),
         );
       } else if (action.type === "web_search") {
         const query = String(action.query ?? "").trim();
@@ -958,12 +989,14 @@ function WhalePetLayer() {
           const hits = await searchWeb(query);
           if (!hits.length) throw new Error("没有结果");
           const answer = await answerFromSearch(userText, hits, apiKey);
+          if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
           setChatMsgs((prev) =>
-            [...prev, petMsg("assistant", answer)].slice(-30),
+            [...prev, petMsg("assistant", answer)].slice(-200),
           );
           showBubble(answer, 3000);
           say(answer);
         } catch {
+          if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
           setChatMsgs((prev) =>
             [
               ...prev,
@@ -971,11 +1004,17 @@ function WhalePetLayer() {
                 "assistant",
                 `呜，网线被海浪打断了……「${query}」没查到。`,
               ),
-            ].slice(-30),
+            ].slice(-200),
           );
         }
       } else if (action.type === "dismiss_pet") {
         setTimeout(() => dismiss(), 700);
+      } else if (action.type === "forget_memory") {
+        useWhaleMemory.getState().clearMemory();
+        stopWhaleVoice();
+        clearBubble();
+        showBubble("已经忘掉之前的对话啦，我们重新聊吧。", 2600);
+        return;
       }
     }
   };
@@ -997,7 +1036,7 @@ function WhalePetLayer() {
           m.id === id ? { ...m, actions: undefined } : m,
         ),
         petMsg("assistant", `课表改好啦：${summary}`),
-      ].slice(-30),
+      ].slice(-200),
     );
     showBubble(summary, 2800);
     say("改好啦，大爹。");
@@ -1008,11 +1047,14 @@ function WhalePetLayer() {
     const content = (text ?? input).trim();
     if (!content || busy) return;
     setInput("");
-    setChatMsgs((prev) => [...prev, petMsg("user", content)].slice(-30));
+    const userMsg: ChatMessage = { id: uid(), role: "user", content, timestamp: nowMs() };
+    setChatMsgs((prev) => [...prev, userMsg]);
+    const memoryEpoch = useWhaleMemory.getState().epoch;
 
     const reply = (line: string) => {
       setTimeout(() => {
-        setChatMsgs((prev) => [...prev, petMsg("assistant", line)].slice(-30));
+        if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
+        setChatMsgs((prev) => [...prev, petMsg("assistant", line)].slice(-200));
         showBubble(line, 2400);
         say(line);
       }, 220);
@@ -1021,7 +1063,8 @@ function WhalePetLayer() {
     /** 只往对话里补一句，气泡和语音交给动作本身 */
     const pushReply = (line: string) => {
       setTimeout(() => {
-        setChatMsgs((prev) => [...prev, petMsg("assistant", line)].slice(-30));
+        if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
+        setChatMsgs((prev) => [...prev, petMsg("assistant", line)].slice(-200));
       }, 220);
     };
 
@@ -1032,23 +1075,23 @@ function WhalePetLayer() {
       );
 
     // 想让她回去：桌宠自己收起来
-    if (/回去|退下|收起来|藏起来|走吧|变回去|别陪我/.test(content)) {
+    if (/^(请|你)?(回去|退下|收起来|藏起来|走吧|变回去|别陪我)(吧|啦|了|休息吧)?[。！!～~]*$/.test(content)) {
       reply("呜…那我先回水里啦，大爹记得再叫我。");
       setTimeout(() => dismiss(), 900);
       return;
     }
-    if (!looksLikeSchedule && /饿|喂|吃|饭|团子|零食/.test(content)) {
+    if (!apiKey && !looksLikeSchedule && /^(喂你|给你|吃饭|吃点|吃个|吃吧)/.test(content)) {
       pushReply("白饭！嗷呜——好吃，谢谢大爹。");
       playAction("eat");
       return;
     }
-    if (!looksLikeSchedule && /摸|抱|亲|贴|rua|头/i.test(content)) {
+    if (!apiKey && !looksLikeSchedule && /^(摸摸|摸头|抱抱|亲亲|贴贴|rua)/i.test(content)) {
       pushReply("唔…摸头的话，我就原谅你啦。");
       patHead();
       return;
     }
 
-    const local = looksLikeSchedule
+    const local = looksLikeSchedule || apiKey
       ? undefined
       : LOCAL_ACTIONS.find((a) => a.re.test(content));
     if (local) {
@@ -1065,8 +1108,8 @@ function WhalePetLayer() {
     setBusy(true);
     const history = [
       ...chatMsgs,
-      { role: "user" as const, text: content },
-    ].map((m) => ({ role: m.role, content: m.text }));
+      userMsg,
+    ].map((m) => ({ id: m.id, role: m.role, content: m.content }));
     // 带上当前课表上下文：小对话框也能像助手页一样增删改课表
     const ctx = {
       schedule,
@@ -1079,6 +1122,7 @@ function WhalePetLayer() {
       ctx,
     })
       .then(async (res) => {
+        if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
         const scheduleActions = res.actions.filter(isScheduleAction);
         const whaleActions = res.actions.filter(isWhaleAction);
         setChatMsgs((prev) =>
@@ -1088,7 +1132,7 @@ function WhalePetLayer() {
               ...petMsg("assistant", res.reply),
               actions: scheduleActions.length ? scheduleActions : undefined,
             },
-          ].slice(-30),
+          ].slice(-200),
         );
         showBubble(res.reply, 2800);
         say(res.reply);
@@ -1097,6 +1141,7 @@ function WhalePetLayer() {
         if (whaleActions.length) await runWhaleActions(whaleActions, content);
       })
       .catch((e) => {
+        if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
         setChatMsgs((prev) =>
           [
             ...prev,
@@ -1104,7 +1149,7 @@ function WhalePetLayer() {
               "assistant",
               e instanceof Error ? e.message : "鱼脑子卡住了，再说一次？",
             ),
-          ].slice(-30),
+          ].slice(-200),
         );
       })
       .finally(() => setBusy(false));
@@ -1238,11 +1283,9 @@ function WhalePetLayer() {
                   backgroundColor: "rgba(0,0,0,0.16)",
                 }}
               />
-              <Animated.Image
-                source={SPRITES[frame]}
-                resizeMode="contain"
-                style={{ width: SIZE, height: H }}
-              />
+              <Animated.View style={[{ width: SIZE, height: H }, facingStyle]}>
+                <PetAnimation kind={frame} width={SIZE} height={H} />
+              </Animated.View>
             </Animated.View>
           </Pressable>
         </Animated.View>
@@ -1426,7 +1469,7 @@ function WhalePetLayer() {
                             : "#0F172A",
                     }}
                   >
-                    {m.text}
+                    {m.content}
                   </Text>
                   {m.actions?.length ? (
                     <Pressable

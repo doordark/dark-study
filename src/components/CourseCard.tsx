@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { useEffect } from "react";
 import { Text, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -15,6 +16,7 @@ import Animated, {
 
 import { GlassContainer } from "@/components/GlassContainer";
 import { coursePalette } from "@/constants/palette";
+import { useSettings } from "@/store/useSettings";
 import type { Course, Period } from "@/types";
 import { getCourseTime } from "@/utils/time";
 
@@ -44,6 +46,8 @@ export function CourseCard({
   onLongPress,
 }: CourseCardProps) {
   const palette = coursePalette[course.color];
+  const glass = useSettings((s) => s.material === "glass");
+  const solidActive = active && !glass;
   const time = getCourseTime(periods, course.startPeriod, course.endPeriod);
 
   /* ---------------- 按压跟手缩放（UI 线程弹簧） ---------------- */
@@ -113,22 +117,37 @@ export function CourseCard({
           <View>
             <GlassContainer
               radius={24}
-              borderOpacity={active ? 0 : 0.16}
+              borderOpacity={active ? glass ? 0.24 : 0 : 0.14}
               style={
-                active
-                  ? {
+                solidActive ? {
                       backgroundColor: palette.solid,
                       borderColor: "transparent",
                     }
-                  : { opacity: 0.94 }
+                  : undefined
               }
             >
+              {glass ? (
+                <LinearGradient
+                  pointerEvents="none"
+                  colors={[`${palette.solid}${active ? "30" : "0D"}`, `${palette.solid}00`]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0.85 }}
+                  style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}
+                />
+              ) : null}
+              {glass ? (
+                <View pointerEvents="none" style={{
+                  position: "absolute", left: 0, top: 22, bottom: 22,
+                  width: 3, borderRadius: 2, backgroundColor: palette.solid,
+                  opacity: active ? 0.9 : 0.5,
+                }} />
+              ) : null}
               <View className="relative px-4 py-3.5">
                 {/* 进行中 胶囊标签 */}
                 {active ? (
-                  <View className="absolute right-10 top-10 flex-row items-center rounded-full border border-white/40 bg-white/25 px-2.5 py-1">
-                    <View className="mr-1.5 h-1.5 w-1.5 rounded-full bg-white" />
-                    <Text className="text-[10px] font-semibold tracking-wide text-white">
+                  <View className="absolute right-4 top-3.5 flex-row items-center rounded-full border border-white/20 bg-white/15 px-2 py-1">
+                    <View className="mr-1.5 h-1.5 w-1.5 rounded-full" style={{ backgroundColor: glass ? palette.solid : "#FFFFFF" }} />
+                    <Text className={`text-[10px] font-semibold tracking-wide ${solidActive ? "text-white" : "text-slate-600 dark:text-slate-200"}`}>
                       进行中
                     </Text>
                   </View>
@@ -139,10 +158,8 @@ export function CourseCard({
                   右侧留白仅在显示「进行中」胶囊时需要 */}
                 <Text
                   numberOfLines={2}
-                  className={`text-[15px] font-bold ${
-                    active
-                      ? "pr-12 text-white"
-                      : "text-slate-800 dark:text-slate-100"
+                  className={`text-[15px] font-bold ${active ? "pr-16" : ""} ${
+                    solidActive ? "text-white" : "text-slate-800 dark:text-slate-100"
                   }`}
                 >
                   {course.name}
@@ -152,7 +169,7 @@ export function CourseCard({
                 <View className="mt-1.5 flex-row items-center">
                   <Text
                     className={`text-[11px] font-medium ${
-                      active
+                      solidActive
                         ? "text-white/85"
                         : "text-slate-500 dark:text-slate-400"
                     }`}
@@ -174,7 +191,7 @@ export function CourseCard({
                   <Text
                     numberOfLines={1}
                     className={`text-[11px] ${
-                      active
+                      solidActive
                         ? "text-white/85"
                         : "text-slate-500 dark:text-slate-400"
                     }`}
@@ -184,13 +201,13 @@ export function CourseCard({
                   <View className="flex-row items-center">
                     <View
                       className={`mr-1 h-1.5 w-1.5 rounded-full ${
-                        active ? "bg-white/85" : palette.bar
+                        solidActive ? "bg-white/85" : palette.bar
                       }`}
                     />
                     <Text
                       numberOfLines={1}
                       className={`flex-1 text-[11px] font-medium ${
-                        active ? "text-white/95" : palette.text
+                        solidActive ? "text-white/95" : "text-slate-600 dark:text-slate-300"
                       }`}
                     >
                       {course.classroom}
@@ -214,8 +231,8 @@ export function CourseCard({
                     left: 0,
                     right: 0,
                     borderRadius: 24,
-                    borderWidth: 2,
-                    borderColor: "#FFFFFF",
+                    borderWidth: 1,
+                    borderColor: glass ? `${palette.solid}80` : "#FFFFFF",
                   },
                   glowStyle,
                 ]}

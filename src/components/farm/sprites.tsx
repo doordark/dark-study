@@ -1,3 +1,4 @@
+import type { CropKind } from "@/utils/farmEconomy";
 import React, { memo, useMemo } from "react";
 import Svg, { Rect } from "react-native-svg";
 
@@ -267,7 +268,7 @@ export const HERO_ROWS = [
 /*  作物                                                                       */
 /* -------------------------------------------------------------------------- */
 
-export type CropKind = "radish" | "berry" | "star";
+export type { CropKind } from "@/utils/farmEconomy";
 
 export const CROP_STAGE_ROWS: string[][] = [
   [
@@ -339,6 +340,12 @@ export const CROP_ART: Record<
       "5": "#84CC16",
     },
   },
+  wheat: { label: "小麦", palette: { "1": "#287347", "2": "#83BE60", "3": "#E6C65B", "5": "#568C39" } },
+  carrot: { label: "胡萝卜", palette: { "1": "#287347", "2": "#83BE60", "3": "#F69340", "5": "#568C39" } },
+  tomato: { label: "番茄", palette: { "1": "#287347", "2": "#83BE60", "3": "#F06450", "5": "#568C39" } },
+  corn: { label: "玉米", palette: { "1": "#287347", "2": "#83BE60", "3": "#FFD65A", "5": "#568C39" } },
+  pumpkin: { label: "南瓜", palette: { "1": "#287347", "2": "#83BE60", "3": "#E99536", "5": "#568C39" } },
+  grape: { label: "葡萄", palette: { "1": "#287347", "2": "#83BE60", "3": "#AF83DF", "5": "#568C39" } },
 };
 
 /** 嵌在主场景 SVG 里的作物图块 */

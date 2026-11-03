@@ -33,7 +33,6 @@ import {
 } from "@/services/updater";
 import { useSettings } from "@/store/useSettings";
 import { useUpdateTask } from "@/store/useUpdateTask";
-import { useWhaleMemory } from "@/store/useWhaleMemory";
 import { useActiveSchedule, useStore } from "@/store/useStore";
 import type { Schedule } from "@/types";
 import {
@@ -51,8 +50,8 @@ const APPEARANCES = [
 
 /** 卡片材质：扁平实心 / 玻璃磨砂 */
 const MATERIALS = [
-  { key: "flat", label: "扁平", icon: "square-outline" },
-  { key: "glass", label: "玻璃", icon: "water-outline" },
+  { key: "flat", label: "扁平", hint: "简洁 · 清晰", icon: "square-outline" },
+  { key: "glass", label: "雾面玻璃", hint: "通透 · 柔光", icon: "water-outline" },
 ] as const;
 
 function DateRow({
@@ -110,7 +109,7 @@ function UpdateCard() {
     return (
       <Animated.View
         entering={FadeInDown.delay(420).springify()}
-        className="mt-3.5"
+        style={{ marginTop: 14 }}
       >
         <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
           <View className="px-4 py-4">
@@ -129,7 +128,7 @@ function UpdateCard() {
   return (
     <Animated.View
       entering={FadeInDown.delay(420).springify()}
-      className="mt-3.5"
+      style={{ marginTop: 14 }}
     >
       <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
         <View className="px-4 py-4">
@@ -319,9 +318,6 @@ export function SettingsScreen() {
   const mergeSchedule = useStore((s) => s.mergeSchedule);
   const grades = useStore((s) => s.grades);
   const resetToSample = useStore((s) => s.resetToSample);
-  // 只有处于大肥鱼人格时才提供「删除记忆」
-  const whaleActive = useWhaleMemory((s) => s.active);
-  const clearWhaleMemory = useWhaleMemory((s) => s.clearMemory);
 
   const [editing, setEditing] = useState(apiKey);
   const [saved, setSaved] = useState(false);
@@ -444,7 +440,7 @@ export function SettingsScreen() {
           }}
           showsVerticalScrollIndicator={false}
         >
-          <Animated.View entering={FadeInDown.springify()} className="mb-5">
+          <Animated.View entering={FadeInDown.springify()} style={{ marginBottom: 20 }}>
             <Pressable
               onPress={() => router.back()}
               className="mb-3 h-9 w-9 items-center justify-center rounded-full bg-white/20 dark:bg-white/[0.07]"
@@ -498,7 +494,7 @@ export function SettingsScreen() {
           {/* 材质 */}
           <Animated.View
             entering={FadeInDown.delay(90).springify()}
-            className="mt-3.5"
+            style={{ marginTop: 14 }}
           >
             <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
               <View className="px-4 py-4">
@@ -506,33 +502,41 @@ export function SettingsScreen() {
                   材质
                 </Text>
                 <Text className="mb-3 text-[11px] leading-4 text-slate-500 dark:text-slate-400">
-                  玻璃：卡片背后带模糊与斜向反光，观感更通透。Android 11 及以下没有硬件模糊，会自动退回磨砂半透明
+                  柔和透色与细腻亮边，让背景自然融入卡片。旧版 Android 自动使用磨砂效果。
                 </Text>
                 <View className="flex-row gap-x-2.5">
                   {MATERIALS.map((m) => (
                     <Pressable
                       key={m.key}
                       onPress={() => setMaterial(m.key)}
-                      className={`flex-1 items-center rounded-2xl border py-3 ${
+                      accessibilityRole="radio"
+                      accessibilityLabel={`${m.label}，${m.hint}`}
+                      accessibilityState={{ checked: material === m.key }}
+                      className={`flex-1 rounded-[20px] border p-1 ${
                         material === m.key
-                          ? "border-sky-400/70 bg-sky-400/25"
-                          : "border-white/15 bg-white/[0.06]"
+                          ? "border-sky-400/60 bg-sky-400/10"
+                          : "border-slate-300/40 dark:border-white/10"
                       }`}
                     >
-                      <Ionicons
-                        name={m.icon}
-                        size={18}
-                        color={material === m.key ? "#38BDF8" : "#94A3B8"}
-                      />
-                      <Text
-                        className={`mt-1 text-[11px] font-semibold ${
-                          material === m.key
-                            ? "text-sky-300"
-                            : "text-slate-500 dark:text-slate-400"
-                        }`}
-                      >
-                        {m.label}
-                      </Text>
+                      <GlassContainer material={m.key} radius={16} borderOpacity={0.18}>
+                        <View className="items-center px-2 py-4">
+                          <Ionicons
+                            name={m.icon}
+                            size={18}
+                            color={material === m.key ? "#38BDF8" : "#94A3B8"}
+                          />
+                          <Text
+                            className={`mt-1 text-[11px] font-semibold ${
+                              material === m.key
+                                ? "text-sky-600 dark:text-sky-300"
+                                : "text-slate-500 dark:text-slate-400"
+                            }`}
+                          >
+                            {m.label}
+                          </Text>
+                          <Text className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">{m.hint}</Text>
+                        </View>
+                      </GlassContainer>
                     </Pressable>
                   ))}
                 </View>
@@ -543,7 +547,7 @@ export function SettingsScreen() {
           {/* 背景 */}
           <Animated.View
             entering={FadeInDown.delay(120).springify()}
-            className="mt-3.5"
+            style={{ marginTop: 14 }}
           >
             <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
               <View className="px-4 py-4">
@@ -600,7 +604,7 @@ export function SettingsScreen() {
           {/* 学期时间 */}
           <Animated.View
             entering={FadeInDown.delay(180).springify()}
-            className="mt-3.5"
+            style={{ marginTop: 14 }}
           >
             <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
               <View className="px-4 py-4">
@@ -637,7 +641,7 @@ export function SettingsScreen() {
           {/* 课程表管理 */}
           <Animated.View
             entering={FadeInDown.delay(240).springify()}
-            className="mt-3.5"
+            style={{ marginTop: 14 }}
           >
             <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
               <View className="px-4 py-4">
@@ -728,7 +732,7 @@ export function SettingsScreen() {
           {/* DeepSeek Key */}
           <Animated.View
             entering={FadeInDown.delay(300).springify()}
-            className="mt-3.5"
+            style={{ marginTop: 14 }}
           >
             <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
               <View className="px-4 py-4">
@@ -788,10 +792,20 @@ export function SettingsScreen() {
             </GlassContainer>
           </Animated.View>
 
+          <View style={{ marginTop: 14 }}>
+            <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
+              <Pressable accessibilityRole="button" onPress={() => router.push("/whale-settings")} className="min-h-20 flex-row items-center px-4 py-4">
+                <View className="mr-3 h-11 w-11 items-center justify-center rounded-2xl bg-sky-400/20"><Ionicons name="options" size={22} color="#38BDF8" /></View>
+                <View className="flex-1"><Text className="text-[14px] font-bold text-slate-800 dark:text-white">大肥鱼 · 人设与记忆</Text><Text className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">拖动性格滑条、改写人设，整理她记住的事</Text></View>
+                <Ionicons name="chevron-forward" size={17} color="#94A3B8" />
+              </Pressable>
+            </GlassContainer>
+          </View>
+
           {/* 数据 */}
           <Animated.View
             entering={FadeInDown.delay(360).springify()}
-            className="mt-3.5"
+            style={{ marginTop: 14 }}
           >
             <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
               <View className="px-4 py-4">
@@ -820,29 +834,6 @@ export function SettingsScreen() {
                   </Text>
                 </Pressable>
 
-                {whaleActive ? (
-                  <Pressable
-                    onPress={() =>
-                      Alert.alert(
-                        "删除大肥鱼记忆",
-                        "会清空与大肥鱼的全部聊天记录与记忆，无法恢复。",
-                        [
-                          { text: "取消", style: "cancel" },
-                          {
-                            text: "删除",
-                            style: "destructive",
-                            onPress: clearWhaleMemory,
-                          },
-                        ],
-                      )
-                    }
-                    className="mt-2 items-center rounded-2xl border border-sky-400/40 bg-sky-400/15 py-3"
-                  >
-                    <Text className="text-[12.5px] font-semibold text-sky-500 dark:text-sky-300">
-                      删除大肥鱼记忆
-                    </Text>
-                  </Pressable>
-                ) : null}
               </View>
             </GlassContainer>
           </Animated.View>

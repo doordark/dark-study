@@ -47,6 +47,7 @@ import {
 import { speakWhale, stopWhaleVoice } from "@/services/whaleVoice";
 import { useSettings } from "@/store/useSettings";
 import { useWhaleMemory } from "@/store/useWhaleMemory";
+import { useWhalePersona } from "@/store/useWhalePersona";
 import { useWhalePet } from "@/store/useWhalePet";
 import { useWhaleVoice } from "@/store/useWhaleVoice";
 import { useActiveSchedule, useStore } from "@/store/useStore";
@@ -139,6 +140,7 @@ export function AssistantScreen() {
   const messages = useWhaleMemory((s) => s.messages);
   const setMessages = useWhaleMemory((s) => s.setMessages);
   const whale = useWhaleMemory((s) => s.active);
+  const personaName = useWhalePersona((s) => s.persona.name);
   const setWhale = useWhaleMemory((s) => s.setActive);
   const archiveMemory = useWhaleMemory((s) => s.archive);
   const restoreMemory = useWhaleMemory((s) => s.restore);
@@ -419,9 +421,11 @@ export function AssistantScreen() {
     setInput("");
     setBusy(true);
     setNotice(null);
+    const memoryEpoch = useWhaleMemory.getState().epoch;
 
     try {
       const history = [...messages, userMsg].map((m) => ({
+        id: m.id,
         role: m.role,
         content: m.content,
       }));
@@ -435,6 +439,7 @@ export function AssistantScreen() {
         },
         apiKey,
       );
+      if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
 
       const scheduleActions = result.actions.filter(isScheduleAction);
       // 收回人格的那一句不执行任何大爹专属操作
@@ -457,7 +462,9 @@ export function AssistantScreen() {
         const pick = pickStickerForReply(result.reply);
         if (pick) {
           if (stickerTimer.current) clearTimeout(stickerTimer.current);
-          stickerTimer.current = setTimeout(() => pushSticker(pick), 420);
+          stickerTimer.current = setTimeout(() => {
+            if (useWhaleMemory.getState().epoch === memoryEpoch) pushSticker(pick);
+          }, 420);
         }
       }
 
@@ -487,7 +494,9 @@ export function AssistantScreen() {
 
   /** 执行大爹专属操作：改口令 / 改背景 / 生图 / 联网，全程自动 */
   async function runWhaleActions(actions: WhaleAction[], userText: string) {
+    const memoryEpoch = useWhaleMemory.getState().epoch;
     for (const action of actions) {
+      if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
       if (action.type === "set_summon_phrase") {
         const phrase = String(action.phrase ?? "")
           .replace(/[\s「」"“”'']/g, "")
@@ -533,6 +542,7 @@ export function AssistantScreen() {
           const hits = await searchWeb(query);
           if (!hits.length) throw new Error("没有结果");
           const answer = await answerFromSearch(userText, hits, apiKey);
+          if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
           const unique = Array.from(
             new Map(hits.map((h) => [h.url, h])).values(),
           ).slice(0, 3);
@@ -544,6 +554,7 @@ export function AssistantScreen() {
             },
           ]);
         } catch {
+          if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
           setMessages((prev) => [
             ...prev,
             localMsg(
@@ -617,7 +628,7 @@ export function AssistantScreen() {
                 <View className="flex-1">
                   <View className="flex-row items-center">
                     <Text className="text-[22px] font-extrabold text-slate-800 dark:text-white">
-                      {whale ? "蓝色大肥鱼" : "课程表助手"}
+                      {whale ? personaName : "课程表助手"}
                     </Text>
                     {whale ? (
                       <View className="ml-2 rounded-full border border-sky-400/35 bg-sky-400/15 px-2 py-0.5">
@@ -645,6 +656,11 @@ export function AssistantScreen() {
                     ) : null}
                   </View>
                 </View>
+                {whale ? (
+                  <Pressable accessibilityRole="button" accessibilityLabel="人设与记忆" onPress={() => router.push("/whale-settings")} className="mr-2 h-11 w-11 items-center justify-center rounded-full bg-sky-400/15">
+                    <Ionicons name="options-outline" size={20} color="#38BDF8" />
+                  </Pressable>
+                ) : null}
                 <View style={{ position: "relative", zIndex: 20 }}>
                   {reaction ? (
                     <Animated.View

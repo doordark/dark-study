@@ -1,626 +1,213 @@
 import { useEffect, useRef } from "react";
-import { Image, Text } from "react-native";
+import { StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import Animated, {
+  cancelAnimation,
   Easing,
+  Extrapolation,
   interpolate,
+  ReduceMotion,
   useAnimatedStyle,
+  useReducedMotion,
   useSharedValue,
-  withDelay,
-  withRepeat,
-  withSpring,
   withTiming,
   type SharedValue,
 } from "react-native-reanimated";
 
-/** 角色立绘来自作者提供的三视图；星光贴图来自 OpenMoji（CC BY-SA 4.0） */
-const WHALE = require("../../assets/character/whale-front.png");
-const SPARKLES = require("../../assets/stickers/sparkles.png");
-const HEART = require("../../assets/stickers/heart.png");
-const BUBBLE = require("../../assets/stickers/bubble.png");
+const ACTIONS = require("../../assets/whale/pet-actions-sheet.png");
+const TURN = require("../../assets/whale/pet-spin-sheet.png");
+const W = 192;
+const H = 256;
+const WAVE = [0, 1, 2, 3, 2, 3, 2, 1, 0];
+const ARRIVE = [4, 5, 6, 7, 0];
+const DEPART = [0, 1, 2, 3, 4];
+type Mode = "summon" | "leave";
+type Timeline = { p: SharedValue<number>; mode: Mode };
 
-// 这两个工具函数会被 useAnimatedStyle 的 worklet 调用，
-// 必须显式声明为 worklet，否则 UI 线程会当成远程函数同步调用而直接崩溃
-const clamp01 = (v: number) => {
+function phase(value: number, start: number, end: number) {
   "worklet";
-  return Math.min(1, Math.max(0, v));
-};
-const window01 = (v: number, from: number, to: number) => {
-  "worklet";
-  return clamp01((v - from) / (to - from));
-};
-
-interface SparkleProps {
-  p: SharedValue<number>;
-  source: number;
-  dx: number;
-  dy: number;
-  size: number;
-  appear: number;
+  return Math.max(0, Math.min(1, (value - start) / (end - start)));
 }
 
-function Sparkle({ p, source, dx, dy, size, appear }: SparkleProps) {
-  const style = useAnimatedStyle(() => {
-    const t = window01(p.value, appear, appear + 0.1);
-    const out = 1 - window01(p.value, 0.84, 1);
+function poseAt(value: number, frames: number[]) {
+  "worklet";
+  return frames[Math.min(frames.length - 1, Math.floor(value * frames.length))];
+}
+
+/** Both pose tracks share the scene clock: a slow frame never separates the turn from the dive. */
+function Character({ p, mode, reduced }: Timeline & { reduced: boolean }) {
+  const leaving = mode === "leave";
+  const waveStyle = useAnimatedStyle(() => {
+    const t = phase(p.value, leaving ? 0.06 : 0.42, leaving ? 0.42 : 0.87);
+    const frame = reduced ? 0 : poseAt(t, WAVE);
+    return { transform: [{ translateX: -(frame % 4) * W }] };
+  });
+  const turnStyle = useAnimatedStyle(() => {
+    const t = phase(p.value, leaving ? 0.42 : 0.12, leaving ? 0.69 : 0.42);
+    const frame = poseAt(t, leaving ? DEPART : ARRIVE);
+    return { transform: [
+      { translateX: -(frame % 4) * W },
+      { translateY: -Math.floor(frame / 4) * H },
+    ] };
+  });
+  const waveLayer = useAnimatedStyle(() => ({
+    opacity: reduced ? 1 : leaving
+      ? 1 - phase(p.value, 0.40, 0.44)
+      : phase(p.value, 0.40, 0.44),
+  }));
+  const turnLayer = useAnimatedStyle(() => ({
+    opacity: reduced ? 0 : leaving
+      ? phase(p.value, 0.40, 0.44)
+      : 1 - phase(p.value, 0.40, 0.44),
+    // The turn sheet fills more of each cell than the action sheet.
+    transform: [{ scale: 0.86 }, { translateY: 8 }],
+  }));
+  const body = useAnimatedStyle(() => {
+    const t = p.value;
+    if (reduced) return { opacity: 1 };
+    const travel = leaving ? phase(t, 0.58, 0.88) : 1 - phase(t, 0.12, 0.42);
+    const float = Math.sin(phase(t, 0.44, 0.87) * Math.PI * 2);
     return {
-      opacity: t * out * 0.9,
+      opacity: leaving ? 1 - phase(t, 0.80, 0.88) : phase(t, 0.12, 0.20),
       transform: [
-        { translateX: dx },
-        { translateY: dy - 16 * t },
-        { scale: 0.5 + 0.6 * t },
-        { rotate: `${t * 20}deg` },
+        { translateX: leaving ? travel * -14 : travel * 22 },
+        { translateY: travel * travel * 278 + float * -5 },
+        { scaleX: interpolate(t, leaving ? [0, 0.52, 0.62, 0.88] : [0, 0.28, 0.40, 0.48], leaving ? [1, 1, 1.04, 0.74] : [0.76, 0.90, 1.04, 1], Extrapolation.CLAMP) },
+        { scaleY: interpolate(t, leaving ? [0, 0.52, 0.62, 0.88] : [0, 0.28, 0.40, 0.48], leaving ? [1, 1, 0.96, 0.9] : [0.9, 1.06, 0.97, 1], Extrapolation.CLAMP) },
+        { rotate: `${leaving ? travel * -9 : travel * 12}deg` },
       ],
     };
   });
-  return (
-    <Animated.Image
-      source={source}
-      style={[
-        {
-          position: "absolute",
-          left: "50%",
-          top: "50%",
-          width: size,
-          height: size,
-          marginLeft: -size / 2,
-          marginTop: -size / 2,
-        },
-        style,
-      ]}
-    />
-  );
+  return <View style={styles.characterClip}>
+    <Animated.View style={[styles.character, body]}>
+      <Animated.View style={[styles.cell, turnLayer]}>
+        <Animated.Image source={TURN} fadeDuration={0} resizeMode="stretch"
+          style={[styles.sheet, { height: H * 2 }, turnStyle]} />
+      </Animated.View>
+      <Animated.View style={[styles.cell, waveLayer]}>
+        <Animated.Image source={ACTIONS} fadeDuration={0} resizeMode="stretch"
+          style={[styles.sheet, { height: H * 4 }, waveStyle]} />
+      </Animated.View>
+    </Animated.View>
+  </View>;
 }
 
-interface RingProps {
-  p: SharedValue<number>;
-  size: number;
-  appear: number;
-  color: string;
-  from: number;
-  to: number;
-}
-
-function SplashRing({ p, size, appear, color, from, to }: RingProps) {
+function Portal({ p, mode, front = false }: Timeline & { front?: boolean }) {
   const style = useAnimatedStyle(() => {
-    const t = window01(p.value, appear, appear + 0.34);
+    const open = phase(p.value, 0.02, mode === "leave" ? 0.22 : 0.14);
+    const close = 1 - phase(p.value, mode === "leave" ? 0.85 : 0.76, 0.98);
     return {
-      opacity: (1 - t) * 0.6,
-      transform: [{ scale: from + (to - from) * t }],
+      opacity: open * close,
+      transform: [{ scaleX: open * close }, { scaleY: 0.92 + Math.sin(p.value * 22) * 0.08 }],
     };
   });
-  return (
-    <Animated.View
-      style={[
-        {
-          position: "absolute",
-          left: "50%",
-          top: "50%",
-          width: size,
-          height: size,
-          marginLeft: -size / 2,
-          marginTop: -size / 2,
-          borderRadius: size / 2,
-          borderWidth: 1.5,
-          borderColor: color,
-        },
-        style,
-      ]}
-    />
-  );
+  return <Animated.View style={[styles.portal, front ? styles.portalFront : styles.portalBack, style]}>
+    {!front && <View style={styles.portalInner} />}
+  </Animated.View>;
 }
 
-/** 施法法阵：两圈细环反向旋转，不带虚线，避免 Android 渲染异常 */
-function SpellCircle({ p }: { p: SharedValue<number> }) {
-  const spin = useSharedValue(0);
-  useEffect(() => {
-    spin.value = withRepeat(
-      withTiming(1, { duration: 2000, easing: Easing.linear }),
-      -1,
-      false,
-    );
-  }, [spin]);
-
-  const outer = useAnimatedStyle(() => {
-    const t = window01(p.value, 0.58, 1);
+function Ripple({ p, mode, index }: Timeline & { index: number }) {
+  const style = useAnimatedStyle(() => {
+    const start = (mode === "leave" ? 0.65 : 0.22) + index * 0.045;
+    const t = phase(p.value, start, start + 0.22);
     return {
       opacity: Math.sin(t * Math.PI) * 0.65,
-      transform: [{ scale: 0.2 + 2.2 * t }, { rotate: `${spin.value * 200}deg` }],
+      transform: [{ scaleX: 0.5 + t * 1.1 }, { scaleY: 0.5 + t * 0.8 }],
     };
   });
-  const inner = useAnimatedStyle(() => {
-    const t = window01(p.value, 0.64, 1);
-    return {
-      opacity: Math.sin(t * Math.PI) * 0.55,
-      transform: [{ scale: 0.2 + 1.5 * t }, { rotate: `${-spin.value * 280}deg` }],
-    };
-  });
-
-  return (
-    <>
-      <Animated.View
-        style={[
-          {
-            position: "absolute",
-            left: "50%",
-            top: "50%",
-            width: 230,
-            height: 230,
-            marginLeft: -115,
-            marginTop: -115,
-            borderRadius: 115,
-            borderWidth: 1.5,
-            borderColor: "rgba(125,211,252,0.85)",
-          },
-          outer,
-        ]}
-      />
-      <Animated.View
-        style={[
-          {
-            position: "absolute",
-            left: "50%",
-            top: "50%",
-            width: 168,
-            height: 168,
-            marginLeft: -84,
-            marginTop: -84,
-            borderRadius: 84,
-            borderWidth: 1,
-            borderColor: "rgba(186,230,253,0.7)",
-          },
-          inner,
-        ]}
-      />
-    </>
-  );
+  return <Animated.View style={[styles.ripple, style]} />;
 }
 
-/**
- * 召唤大肥鱼的全屏动效：
- * 立绘从右下角游进来 → 水花与星光炸开 → 法阵扩张、蓝光一闪 → 界面已是鲸鱼空间
- */
+/** Small native shapes, staggered around the exact emergence / dive beat. */
+function WaterParticle({ p, mode, index }: Timeline & { index: number }) {
+  const bubble = index % 3 === 0;
+  const size = bubble ? 9 + index % 4 : 4 + index % 3;
+  const style = useAnimatedStyle(() => {
+    const start = (mode === "leave" ? 0.64 : 0.20) + (index % 4) * 0.025;
+    const t = phase(p.value, start, start + 0.26);
+    const direction = index % 2 === 0 ? -1 : 1;
+    const reach = 32 + index * 6;
+    return {
+      opacity: Math.sin(t * Math.PI) * 0.9,
+      transform: [
+        { translateX: direction * (18 + reach * t) },
+        { translateY: bubble ? -110 * t : -Math.sin(t * Math.PI) * (32 + index * 4) + 14 * t },
+        { scale: 1 - 0.5 * t },
+        { rotate: `${direction * t * 55}deg` },
+      ],
+    };
+  });
+  return <Animated.View style={[styles.particle, {
+    width: size, height: bubble ? size : size * 1.8, borderRadius: size,
+    backgroundColor: bubble ? "rgba(125,211,252,0.12)" : "#BAE6FD",
+    borderWidth: bubble ? 1 : 0, borderColor: "#BAE6FD",
+  }, style]} />;
+}
+
+function WhaleTransition({ mode, onDone }: { mode: Mode; onDone: () => void }) {
+  const doneRef = useRef(onDone);
+  const p = useSharedValue(0);
+  const reduced = useReducedMotion();
+  const { width, height } = useWindowDimensions();
+  const duration = reduced ? 240 : mode === "summon" ? 2600 : 2100;
+  const sceneScale = Math.min(1, Math.max(0.4, (width - 24) / 320), Math.max(0.4, (height - 32) / 460));
+
+  useEffect(() => { doneRef.current = onDone; }, [onDone]);
+  useEffect(() => {
+    p.value = 0;
+    p.value = withTiming(1, { duration, easing: Easing.linear, reduceMotion: ReduceMotion.Never });
+    // Only completion uses JS; poses, motion and water effects stay on the UI thread.
+    const timer = setTimeout(() => doneRef.current(), duration + 40);
+    return () => { clearTimeout(timer); cancelAnimation(p); };
+  }, [duration, mode, p]);
+
+  const overlay = useAnimatedStyle(() => ({
+    opacity: interpolate(p.value, [0, 0.08, 0.88, 1], [0, 1, 1, 0], Extrapolation.CLAMP),
+  }));
+  const caption = useAnimatedStyle(() => ({
+    opacity: reduced ? 1 : phase(p.value, mode === "leave" ? 0.06 : 0.43, mode === "leave" ? 0.16 : 0.53) * (1 - phase(p.value, 0.86, 0.98)),
+    transform: [{ translateY: reduced ? 0 : 8 * (1 - phase(p.value, 0.40, 0.54)) }],
+  }));
+  return <Animated.View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.overlay, overlay]}>
+    <View style={[styles.scene, { transform: [{ scale: sceneScale }] }]}>
+      {!reduced && <Portal p={p} mode={mode} />}
+      <Character p={p} mode={mode} reduced={reduced} />
+      {!reduced && <>
+        <Portal p={p} mode={mode} front />
+        {[0, 1, 2].map(index => <Ripple key={index} p={p} mode={mode} index={index} />)}
+        {Array.from({ length: 12 }, (_, index) => <WaterParticle key={index} p={p} mode={mode} index={index} />)}
+      </>}
+      <Animated.View style={[styles.caption, caption]}>
+        <Text style={styles.eyebrow}>{mode === "summon" ? "✦ 鲸鱼空间 · 开 ✦" : "✦ 暂时潜水中 ✦"}</Text>
+        <Text style={styles.title}>{mode === "summon" ? "喊我就来！" : "一会儿见，大爹"}</Text>
+        <Text style={styles.subtitle}>{mode === "summon" ? "大肥鱼浮出水面，向你挥了挥手" : "先回水里歇一会，想我了就喊我"}</Text>
+      </Animated.View>
+    </View>
+  </Animated.View>;
+}
+
 export function WhaleSummonFX({ onDone }: { onDone: () => void }) {
-  const doneRef = useRef(onDone);
-  const firedRef = useRef(false);
-
-  useEffect(() => {
-    doneRef.current = onDone;
-  }, [onDone]);
-
-  const p = useSharedValue(0);
-  const enter = useSharedValue(0);
-  const idle = useSharedValue(0);
-
-  useEffect(() => {
-    firedRef.current = false;
-    p.value = withTiming(1, { duration: 2300, easing: Easing.linear });
-    enter.value = withDelay(
-      100,
-      withSpring(1, { damping: 14, stiffness: 120, mass: 1 }),
-    );
-    idle.value = withDelay(
-      900,
-      withRepeat(
-        withTiming(1, { duration: 1500, easing: Easing.inOut(Easing.sin) }),
-        -1,
-        true,
-      ),
-    );
-
-    // 用 JS 定时器收尾，不走 runOnJS，避免 UI 线程回调的边界问题
-    const timer = setTimeout(() => {
-      if (firedRef.current) return;
-      firedRef.current = true;
-      doneRef.current();
-    }, 2360);
-    return () => clearTimeout(timer);
-  }, [p, enter, idle]);
-
-  const overlay = useAnimatedStyle(() => ({
-    opacity: interpolate(p.value, [0, 0.05, 0.86, 1], [0, 1, 1, 0]),
-  }));
-
-  const whaleStyle = useAnimatedStyle(() => {
-    // 落地后仍有呼吸起伏与轻微摆动，看起来是活的而不像一张贴图
-    const breathe = 1 + (idle.value - 0.5) * 0.035;
-    return {
-      opacity: interpolate(enter.value, [0, 0.2, 1], [0, 1, 1]),
-      transform: [
-        { translateX: (1 - enter.value) * 170 + (idle.value - 0.5) * 7 },
-        { translateY: (1 - enter.value) * 130 + (idle.value - 0.5) * 10 },
-        {
-          scale:
-            interpolate(enter.value, [0, 0.72, 1], [0.35, 1.12, 1]) * breathe,
-        },
-        {
-          rotate: `${(1 - enter.value) * -20 + (idle.value - 0.5) * 4}deg`,
-        },
-      ],
-    };
-  });
-
-  const titleStyle = useAnimatedStyle(() => {
-    const t = window01(p.value, 0.4, 0.54);
-    return {
-      opacity: t * (1 - window01(p.value, 0.86, 1)),
-      transform: [{ scale: interpolate(t, [0, 0.75, 1], [0.6, 1.1, 1]) }],
-    };
-  });
-
-  const spellTextStyle = useAnimatedStyle(() => ({
-    opacity: window01(p.value, 0.6, 0.7) * (1 - window01(p.value, 0.94, 1)),
-  }));
-
-  const flashStyle = useAnimatedStyle(() => {
-    const t = window01(p.value, 0.66, 0.78);
-    return { opacity: t * (1 - window01(p.value, 0.78, 0.92)) * 0.45 };
-  });
-
-  return (
-    <Animated.View
-      pointerEvents="none"
-      style={[
-        {
-          position: "absolute",
-          top: 0,
-          right: 0,
-          bottom: 0,
-          left: 0,
-          alignItems: "center",
-          justifyContent: "center",
-          backgroundColor: "rgba(8,25,50,0.6)",
-          zIndex: 40,
-        },
-        overlay,
-      ]}
-    >
-      <SpellCircle p={p} />
-
-      <SplashRing p={p} size={150} appear={0.16} color="#7DD3FC" from={0.5} to={2} />
-      <SplashRing p={p} size={150} appear={0.23} color="#BAE6FD" from={0.4} to={1.6} />
-      <SplashRing p={p} size={150} appear={0.3} color="#E0F2FE" from={0.3} to={1.25} />
-
-      <Sparkle p={p} source={SPARKLES} dx={-96} dy={-104} size={26} appear={0.22} />
-      <Sparkle p={p} source={SPARKLES} dx={96} dy={-84} size={22} appear={0.28} />
-      <Sparkle p={p} source={SPARKLES} dx={-84} dy={52} size={20} appear={0.32} />
-      <Sparkle p={p} source={SPARKLES} dx={88} dy={76} size={24} appear={0.25} />
-      <Sparkle p={p} source={HEART} dx={-6} dy={-128} size={22} appear={0.36} />
-      <Sparkle p={p} source={BUBBLE} dx={62} dy={-134} size={18} appear={0.4} />
-
-      <Animated.View
-        style={[
-          {
-            position: "absolute",
-            left: "50%",
-            top: "50%",
-            width: 180,
-            height: 216,
-            marginLeft: -90,
-            marginTop: -108,
-          },
-          whaleStyle,
-        ]}
-      >
-        <Image
-          source={WHALE}
-          style={{ width: 180, height: 216 }}
-          resizeMode="contain"
-        />
-      </Animated.View>
-
-      <Animated.View
-        style={[
-          {
-            position: "absolute",
-            left: 0,
-            right: 0,
-            top: "50%",
-            marginTop: 124,
-            alignItems: "center",
-          },
-          titleStyle,
-        ]}
-      >
-        <Text
-          style={{
-            fontSize: 21,
-            fontWeight: "900",
-            color: "#E0F2FE",
-            letterSpacing: 2,
-          }}
-        >
-          闪亮登场！
-        </Text>
-        <Text
-          style={{
-            marginTop: 6,
-            fontSize: 10.5,
-            fontWeight: "600",
-            color: "rgba(186,230,253,0.85)",
-            letterSpacing: 1,
-          }}
-        >
-          大肥鱼来啦 · 准备施法
-        </Text>
-      </Animated.View>
-
-      <Animated.View
-        style={[
-          {
-            position: "absolute",
-            left: 0,
-            right: 0,
-            bottom: "18%",
-            alignItems: "center",
-          },
-          spellTextStyle,
-        ]}
-      >
-        <Text
-          style={{
-            fontSize: 12,
-            fontWeight: "800",
-            color: "#7DD3FC",
-            letterSpacing: 3,
-          }}
-        >
-          ✦ 鲸 鱼 空 间 · 开 ✦
-        </Text>
-      </Animated.View>
-
-      <Animated.View
-        pointerEvents="none"
-        style={[
-          {
-            position: "absolute",
-            top: 0,
-            right: 0,
-            bottom: 0,
-            left: 0,
-            backgroundColor: "#BAE6FD",
-          },
-          flashStyle,
-        ]}
-      />
-    </Animated.View>
-  );
+  return <WhaleTransition mode="summon" onDone={onDone} />;
 }
 
-/* -------------------------------------------------------------------------- */
-/*  退场动效：缩成一个小身影、摆尾钻回水里，气泡上浮，界面淡回正常              */
-/* -------------------------------------------------------------------------- */
-
-function CollapseRing({
-  p,
-  size,
-  color,
-  delay,
-}: {
-  p: SharedValue<number>;
-  size: number;
-  color: string;
-  delay: number;
-}) {
-  const style = useAnimatedStyle(() => {
-    const t = window01(p.value, delay, delay + 0.62);
-    return {
-      opacity: (1 - t) * 0.55,
-      transform: [{ scale: 1.55 - 1.3 * t }],
-    };
-  });
-  return (
-    <Animated.View
-      style={[
-        {
-          position: "absolute",
-          left: "50%",
-          top: "50%",
-          width: size,
-          height: size,
-          marginLeft: -size / 2,
-          marginTop: -size / 2,
-          borderRadius: size / 2,
-          borderWidth: 1.5,
-          borderColor: color,
-        },
-        style,
-      ]}
-    />
-  );
-}
-
-function ExitBubble({
-  p,
-  dx,
-  size,
-  delay,
-}: {
-  p: SharedValue<number>;
-  dx: number;
-  size: number;
-  delay: number;
-}) {
-  const style = useAnimatedStyle(() => {
-    const t = window01(p.value, delay, delay + 0.55);
-    return {
-      opacity: (1 - t) * 0.85,
-      transform: [
-        { translateX: dx + Math.sin(t * 7) * 5 },
-        { translateY: -46 * t },
-        { scale: 0.55 + 0.55 * t },
-      ],
-    };
-  });
-  return (
-    <Animated.Image
-      source={BUBBLE}
-      style={[
-        {
-          position: "absolute",
-          left: "50%",
-          top: "50%",
-          width: size,
-          height: size,
-          marginLeft: -size / 2,
-          marginTop: -size / 2,
-        },
-        style,
-      ]}
-    />
-  );
-}
-
-/**
- * 大肥鱼退场：原地一闪 → 立绘缩小摆尾游向屏幕外 → 水圈收缩、气泡上浮，
- * 遮罩在末尾淡出，露出正常课表助手界面。
- */
 export function WhaleLeaveFX({ onDone }: { onDone: () => void }) {
-  const doneRef = useRef(onDone);
-  const firedRef = useRef(false);
-
-  useEffect(() => {
-    doneRef.current = onDone;
-  }, [onDone]);
-
-  const p = useSharedValue(0);
-
-  useEffect(() => {
-    firedRef.current = false;
-    p.value = withTiming(1, { duration: 1500, easing: Easing.inOut(Easing.cubic) });
-
-    const timer = setTimeout(() => {
-      if (firedRef.current) return;
-      firedRef.current = true;
-      doneRef.current();
-    }, 1560);
-    return () => clearTimeout(timer);
-  }, [p]);
-
-  const overlay = useAnimatedStyle(() => ({
-    opacity: interpolate(p.value, [0, 0.1, 0.72, 1], [0, 1, 1, 0]),
-  }));
-
-  const whaleStyle = useAnimatedStyle(() => {
-    const t = p.value;
-    return {
-      opacity: interpolate(t, [0, 0.62, 0.95], [1, 1, 0]),
-      transform: [
-        { translateX: 150 * t * t + Math.sin(t * 9) * 6 },
-        { translateY: 132 * t * t },
-        { scale: interpolate(t, [0, 0.16, 1], [1, 1.12, 0.2]) },
-        { rotate: `${-18 * t}deg` },
-      ],
-    };
-  });
-
-  const textStyle = useAnimatedStyle(() => {
-    const t = window01(p.value, 0.06, 0.26);
-    return {
-      opacity: t * (1 - window01(p.value, 0.62, 0.82)),
-      transform: [{ translateY: -18 * t }],
-    };
-  });
-
-  const flashStyle = useAnimatedStyle(() => ({
-    opacity: (1 - window01(p.value, 0, 0.18)) * 0.5,
-  }));
-
-  return (
-    <Animated.View
-      pointerEvents="none"
-      style={[
-        {
-          position: "absolute",
-          top: 0,
-          right: 0,
-          bottom: 0,
-          left: 0,
-          alignItems: "center",
-          justifyContent: "center",
-          backgroundColor: "rgba(8,25,50,0.5)",
-          zIndex: 40,
-        },
-        overlay,
-      ]}
-    >
-      <CollapseRing p={p} size={158} color="#7DD3FC" delay={0.02} />
-      <CollapseRing p={p} size={158} color="#E0F2FE" delay={0.12} />
-
-      <ExitBubble p={p} dx={-58} size={16} delay={0.2} />
-      <ExitBubble p={p} dx={44} size={20} delay={0.26} />
-      <ExitBubble p={p} dx={4} size={13} delay={0.32} />
-
-      <Animated.View
-        style={[
-          {
-            position: "absolute",
-            left: "50%",
-            top: "50%",
-            width: 180,
-            height: 216,
-            marginLeft: -90,
-            marginTop: -108,
-          },
-          whaleStyle,
-        ]}
-      >
-        <Image
-          source={WHALE}
-          style={{ width: 180, height: 216 }}
-          resizeMode="contain"
-        />
-      </Animated.View>
-
-      <Animated.View
-        style={[
-          {
-            position: "absolute",
-            left: 0,
-            right: 0,
-            top: "50%",
-            marginTop: 124,
-            alignItems: "center",
-          },
-          textStyle,
-        ]}
-      >
-        <Text
-          style={{
-            fontSize: 19,
-            fontWeight: "900",
-            color: "#E0F2FE",
-            letterSpacing: 2,
-          }}
-        >
-          扑通——
-        </Text>
-        <Text
-          style={{
-            marginTop: 6,
-            fontSize: 10.5,
-            fontWeight: "600",
-            color: "rgba(186,230,253,0.85)",
-            letterSpacing: 1,
-          }}
-        >
-          大肥鱼先溜回水里啦，学累了记得喊我
-        </Text>
-      </Animated.View>
-
-      <Animated.View
-        pointerEvents="none"
-        style={[
-          {
-            position: "absolute",
-            top: 0,
-            right: 0,
-            bottom: 0,
-            left: 0,
-            backgroundColor: "#E0F2FE",
-          },
-          flashStyle,
-        ]}
-      />
-    </Animated.View>
-  );
+  return <WhaleTransition mode="leave" onDone={onDone} />;
 }
+
+const styles = StyleSheet.create({
+  overlay: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(5,18,38,0.78)", zIndex: 40 },
+  scene: { width: 320, height: 460 },
+  characterClip: { position: "absolute", top: 22, left: 0, width: 320, height: 286, overflow: "hidden" },
+  character: { position: "absolute", top: 16, left: (320 - W) / 2, width: W, height: H },
+  cell: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, overflow: "hidden" },
+  sheet: { position: "absolute", top: 0, left: 0, width: W * 4 },
+  portal: { position: "absolute", left: 48, top: 284, width: 224, height: 48, borderRadius: 112, borderWidth: 2, borderColor: "#7DD3FC" },
+  portalBack: { backgroundColor: "rgba(14,116,144,0.30)" },
+  portalFront: { borderTopColor: "transparent", backgroundColor: "transparent" },
+  portalInner: { position: "absolute", top: 9, bottom: 9, left: 20, right: 20, borderRadius: 92, borderWidth: 1, borderColor: "rgba(186,230,253,0.4)", backgroundColor: "rgba(56,189,248,0.16)" },
+  ripple: { position: "absolute", top: 284, left: 48, width: 224, height: 48, borderRadius: 112, borderWidth: 1, borderColor: "#BAE6FD" },
+  particle: { position: "absolute", left: 156, top: 299 },
+  caption: { position: "absolute", top: 352, left: 0, right: 0, alignItems: "center" },
+  eyebrow: { color: "#7DD3FC", fontSize: 10, fontWeight: "700", letterSpacing: 3 },
+  title: { marginTop: 10, color: "#E0F2FE", fontSize: 23, fontWeight: "900", letterSpacing: 2 },
+  subtitle: { marginTop: 8, color: "#BAE6FD", fontSize: 11, textAlign: "center" },
+});

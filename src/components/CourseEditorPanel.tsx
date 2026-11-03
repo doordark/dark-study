@@ -168,8 +168,8 @@ export function CourseEditorPanel({
               exiting={FadeOutDown}
             >
               <GlassContainer
+                variant="sheet"
                 radius={32}
-                intensity={62}
                 borderOpacity={0.3}
                 style={{ height: sheetH, paddingBottom: 16 }}
               >

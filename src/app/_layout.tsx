@@ -1,15 +1,23 @@
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useColorScheme } from "nativewind";
+import { colorScheme as appColorScheme, useColorScheme } from "nativewind";
+import { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { ImportTaskOverlay } from "@/components/ImportTaskOverlay";
 import { WhalePet } from "@/components/WhalePet";
+import { useSettings } from "@/store/useSettings";
 import "@/global.css";
 
 export default function RootLayout() {
   const { colorScheme } = useColorScheme();
+  const appearance = useSettings((s) => s.appearance);
   const isDark = colorScheme !== "light";
+
+  // Reapply the saved theme after storage hydration, including direct web loads.
+  useEffect(() => {
+    appColorScheme.set(appearance);
+  }, [appearance]);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
@@ -26,6 +34,7 @@ export default function RootLayout() {
           <Stack.Screen name="assistant" options={{ presentation: "modal" }} />
           <Stack.Screen name="grades" options={{ presentation: "modal" }} />
           <Stack.Screen name="settings" options={{ presentation: "modal" }} />
+          <Stack.Screen name="whale-settings" options={{ presentation: "modal" }} />
           <Stack.Screen
             name="farm"
             options={{ presentation: "fullScreenModal", animation: "fade" }}

@@ -257,8 +257,8 @@ export function GradeEditorPanel({
               exiting={FadeOutDown}
             >
               <GlassContainer
+                variant="sheet"
                 radius={32}
-                intensity={62}
                 borderOpacity={0.3}
                 style={{ height: sheetH, paddingBottom: 16 }}
               >
@@ -614,8 +614,8 @@ export function GradeYearEditor({
               exiting={FadeOutDown}
             >
               <GlassContainer
+                variant="sheet"
                 radius={32}
-                intensity={62}
                 borderOpacity={0.3}
                 style={{ height: sheetH, paddingBottom: 16 }}
               >
@@ -740,8 +740,8 @@ export function GradeRuleEditor({
               exiting={FadeOutDown}
             >
               <GlassContainer
+                variant="sheet"
                 radius={32}
-                intensity={62}
                 borderOpacity={0.3}
                 style={{ height: sheetH, paddingBottom: 16 }}
               >

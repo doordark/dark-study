@@ -3,6 +3,7 @@ import React from "react";
 import { ActivityIndicator, Pressable, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColorScheme } from "nativewind";
+import { GlassContainer } from "@/components/GlassContainer";
 
 export interface ChatInputBarProps {
   value: string;
@@ -41,21 +42,16 @@ export function ChatInputBar({
         paddingBottom: padBottom,
       }}
     >
-      <View
+      <GlassContainer
+        radius={28}
+        variant="floating"
+        borderOpacity={0.2}
         style={{
           flexDirection: "row",
           alignItems: "center",
           minHeight: 46,
           paddingLeft: 16,
           paddingRight: 5,
-          borderRadius: 999,
-          backgroundColor: isDark
-            ? "rgba(15,23,42,0.58)"
-            : "rgba(255,255,255,0.78)",
-          borderWidth: 1,
-          borderColor: isDark
-            ? "rgba(255,255,255,0.12)"
-            : "rgba(148,163,184,0.28)",
         }}
       >
         <TextInput
@@ -80,6 +76,9 @@ export function ChatInputBar({
         <Pressable
           onPress={onSend}
           disabled={!canSend}
+          accessibilityRole="button"
+          accessibilityLabel="发送消息"
+          accessibilityState={{ disabled: !canSend, busy }}
           hitSlop={8}
           style={{
             width: 36,
@@ -104,7 +103,7 @@ export function ChatInputBar({
             />
           )}
         </Pressable>
-      </View>
+      </GlassContainer>
     </View>
   );
 }
