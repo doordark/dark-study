@@ -725,8 +725,14 @@ export function FarmScreen() {
         previous = point; total += duration;
         return { point, duration };
       });
+      // 回调必须带 worklet 标记单独定义：写在三元表达式里的内联箭头不会被
+      // Reanimated 插件 worklet 化，走路结束那一刻 UI 线程调用 JS 闭包会直接闪退
+      const walkFinished = (finished?: boolean) => {
+        "worklet";
+        if (finished) runOnJS(setPlayerMoving)(false);
+      };
       px.value = withSequence(...steps.map(step => withTiming(step.point.x, { duration: step.duration, easing: Easing.linear })));
-      py.value = withSequence(...steps.map((step, i) => withTiming(step.point.y, { duration: step.duration, easing: Easing.linear }, i === steps.length - 1 ? (finished) => { if (finished) runOnJS(setPlayerMoving)(false); } : undefined)));
+      py.value = withSequence(...steps.map((step, i) => withTiming(step.point.y, { duration: step.duration, easing: Easing.linear }, i === steps.length - 1 ? walkFinished : undefined)));
       return total;
     },
     [face, px, py],
