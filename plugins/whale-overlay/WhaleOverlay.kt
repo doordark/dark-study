@@ -50,19 +50,25 @@ class WhaleOverlayModule(private val context: ReactApplicationContext) : ReactCo
   }
   @ReactMethod fun addListener(name: String) {}
   @ReactMethod fun removeListeners(count: Double) {}
-  @ReactMethod fun getStatus(promise: Promise) = UiThreadUtil.runOnUiThread {
-    val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-    promise.resolve(Arguments.createMap().apply {
-      putBoolean("permission", Settings.canDrawOverlays(context))
-      putBoolean("running", WhaleOverlayService.instance?.attached() == true)
-      putDouble("lastImpactAt", prefs.getLong("impactAt", 0).toDouble())
-      putString("lastImpactText", prefs.getString("impactText", "") ?: "")
-    })
+  // @ReactMethod bodies must return void: UiThreadUtil.runOnUiThread returns Boolean in RN 0.88,
+  // and expression bodies would make TurboModule interop reject the module at startup.
+  @ReactMethod fun getStatus(promise: Promise) {
+    UiThreadUtil.runOnUiThread {
+      val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+      promise.resolve(Arguments.createMap().apply {
+        putBoolean("permission", Settings.canDrawOverlays(context))
+        putBoolean("running", WhaleOverlayService.instance?.attached() == true)
+        putDouble("lastImpactAt", prefs.getLong("impactAt", 0).toDouble())
+        putString("lastImpactText", prefs.getString("impactText", "") ?: "")
+      })
+    }
   }
-  @ReactMethod fun acknowledgeImpact(at: Double, promise: Promise) = UiThreadUtil.runOnUiThread {
-    val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-    if (prefs.getLong("impactAt",0) == at.toLong()) prefs.edit().remove("impactAt").remove("impactText").apply()
-    promise.resolve(null)
+  @ReactMethod fun acknowledgeImpact(at: Double, promise: Promise) {
+    UiThreadUtil.runOnUiThread {
+      val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+      if (prefs.getLong("impactAt",0) == at.toLong()) prefs.edit().remove("impactAt").remove("impactText").apply()
+      promise.resolve(null)
+    }
   }
   @ReactMethod fun openPermission(promise: Promise) {
     try {
@@ -70,26 +76,30 @@ class WhaleOverlayModule(private val context: ReactApplicationContext) : ReactCo
       promise.resolve(null)
     } catch (error: Exception) { promise.reject("OVERLAY_PERMISSION", "无法打开悬浮窗权限设置，请在系统设置中手动允许", error) }
   }
-  @ReactMethod fun start(payload: String, promise: Promise) = UiThreadUtil.runOnUiThread {
-    try {
-      if (!Settings.canDrawOverlays(context)) throw SecurityException("请先允许显示在其他应用上层")
-      if (context.currentActivity == null) throw IllegalStateException("请回到软件内开启桌面桌宠")
-      JSONObject(payload)
-      if (WhaleOverlayService.launchResult != null) throw IllegalStateException("桌宠正在出来，请稍等")
-      WhaleOverlayService.launchResult = { error ->
-        if (error == null) promise.resolve(null) else promise.reject("OVERLAY_START", error.message, error)
+  @ReactMethod fun start(payload: String, promise: Promise) {
+    UiThreadUtil.runOnUiThread {
+      try {
+        if (!Settings.canDrawOverlays(context)) throw SecurityException("请先允许显示在其他应用上层")
+        if (context.currentActivity == null) throw IllegalStateException("请回到软件内开启桌面桌宠")
+        JSONObject(payload)
+        if (WhaleOverlayService.launchResult != null) throw IllegalStateException("桌宠正在出来，请稍等")
+        WhaleOverlayService.launchResult = { error ->
+          if (error == null) promise.resolve(null) else promise.reject("OVERLAY_START", error.message, error)
+        }
+        val intent = Intent(context, WhaleOverlayService::class.java).putExtra("options", payload)
+        if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent) else context.startService(intent)
+      } catch (error: Exception) {
+        WhaleOverlayService.launchResult = null
+        promise.reject("OVERLAY_START", error.message, error)
       }
-      val intent = Intent(context, WhaleOverlayService::class.java).putExtra("options", payload)
-      if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent) else context.startService(intent)
-    } catch (error: Exception) {
-      WhaleOverlayService.launchResult = null
-      promise.reject("OVERLAY_START", error.message, error)
     }
   }
-  @ReactMethod fun stop(promise: Promise) = UiThreadUtil.runOnUiThread {
-    WhaleOverlayService.instance?.dismiss()
-    context.stopService(Intent(context, WhaleOverlayService::class.java))
-    promise.resolve(null)
+  @ReactMethod fun stop(promise: Promise) {
+    UiThreadUtil.runOnUiThread {
+      WhaleOverlayService.instance?.dismiss()
+      context.stopService(Intent(context, WhaleOverlayService::class.java))
+      promise.resolve(null)
+    }
   }
 }
 
