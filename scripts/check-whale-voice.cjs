@@ -139,6 +139,42 @@ async function orchestratorChecks() {
   console.log("PASS shared voice: miss/hit, custom name, stale A/B race, error fallback, lifecycle guard, mute, injection cleaning");
 }
 
+async function offlineChecks() {
+  const calls = [];
+  let finishFirst;
+  const audio = { samples: [0, 0.5, -0.5], sampleRate: 24000 };
+  const load = loader({
+    "react-native-sherpa-onnx/tts": {
+      async createTTS() {
+        return {
+          async generateSpeech(text) {
+            calls.push(text);
+            if (text === "旧消息") return new Promise((resolve) => { finishFirst = resolve; });
+            return audio;
+          },
+        };
+      },
+    },
+  });
+  const { generateOfflineSpeech } = load("./services/whaleOfflineVoice");
+  const controller = new AbortController();
+  const first = assert.rejects(generateOfflineSpeech("旧消息", "normal", controller.signal), /cancelled/);
+  await tick();
+  controller.abort();
+  const second = generateOfflineSpeech("新消息", "normal", new AbortController().signal);
+  await tick();
+  assert.deepEqual(calls, ["旧消息"], "native synthesis remains serial after cancellation");
+  finishFirst(audio);
+  await first;
+  const bytes = Buffer.from(await second);
+  assert.equal(bytes.toString("ascii", 0, 4), "RIFF");
+  assert.equal(bytes.readUInt32LE(24), 24000);
+  assert.equal(bytes.readUInt32LE(40), 6);
+  assert.equal(bytes.readInt16LE(46), 16384);
+  assert.equal(bytes.readInt16LE(48), -16384);
+  console.log("PASS offline synthesis: one-shot native call, serial cancellation, PCM16 WAV");
+}
+
 async function playerChecks() {
   const players = [];
   let mode;
@@ -179,4 +215,4 @@ async function playerChecks() {
   console.log("PASS audio player: single channel, ducking config, stop/finish/error removal, cancelled load");
 }
 
-(async () => { await cacheChecks(); await orchestratorChecks(); await playerChecks(); })().catch((e) => { console.error(e); process.exitCode = 1; });
+(async () => { await cacheChecks(); await orchestratorChecks(); await offlineChecks(); await playerChecks(); })().catch((e) => { console.error(e); process.exitCode = 1; });

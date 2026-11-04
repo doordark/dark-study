@@ -1,0 +1,17 @@
+[
+  { "key": "default", "label": "默认", "color": "#38BDF8", "bgDark": "#173752", "borderDark": "#327FAA", "brandDark": "#56C7F9", "bgLight": "#C2E8FD", "borderLight": "#82CDF3", "brandLight": "#309ED1", "textDark": "#FFFFFF" },
+  { "key": "black", "label": "黑色", "color": "#1E293B", "bgDark": "#131F33", "borderDark": "#25354C", "brandDark": "#9A9FA7", "bgLight": "#BBC4D0", "borderLight": "#758395", "brandLight": "#1B2536", "textDark": "#FFFFFF" },
+  { "key": "white", "label": "白色", "color": "#F8FAFC", "bgDark": "#364052", "borderDark": "#929DAC", "brandDark": "#F9FBFC", "bgLight": "#F0F6FE", "borderLight": "#E2ECF5", "brandLight": "#656A74", "textDark": "#0F172A" },
+  { "key": "green", "label": "绿色", "color": "#34D399", "bgDark": "#173A42", "borderDark": "#308A7B", "brandDark": "#52DAA8", "bgLight": "#C1EDE7", "borderLight": "#80D8C4", "brandLight": "#2DB083", "textDark": "#FFFFFF" },
+  { "key": "yellow", "label": "黄色", "color": "#FBBF24", "bgDark": "#363730", "borderDark": "#948040", "brandDark": "#FCC945", "bgLight": "#F0E8CA", "borderLight": "#E4CE89", "brandLight": "#665422", "textDark": "#0F172A" },
+  { "key": "red", "label": "红色", "color": "#FB7185", "bgDark": "#362A3F", "borderDark": "#945971", "brandDark": "#FC8697", "bgLight": "#F0D5E2", "borderLight": "#E4A7BA", "brandLight": "#D06073", "textDark": "#FFFFFF" },
+  { "key": "blue", "label": "蓝色", "color": "#60A5FA", "bgDark": "#1E3352", "borderDark": "#4673AB", "brandDark": "#78B3FB", "bgLight": "#CBE2FE", "borderLight": "#96C1F4", "brandLight": "#518BD3", "textDark": "#FFFFFF" },
+  { "key": "orange", "label": "橙色", "color": "#FB923C", "bgDark": "#363034", "borderDark": "#94694C", "brandDark": "#FCA259", "bgLight": "#F0DDD0", "borderLight": "#E4B895", "brandLight": "#D07B37", "textDark": "#0F172A" },
+  { "key": "indigo", "label": "蓝紫", "color": "#818CF8", "bgDark": "#232F52", "borderDark": "#5766AA", "brandDark": "#949DF9", "bgLight": "#D3DCFD", "borderLight": "#A7B5F3", "brandLight": "#6C76D1", "textDark": "#FFFFFF" },
+  { "key": "purple", "label": "紫色", "color": "#A78BFA", "bgDark": "#292F52", "borderDark": "#6A66AB", "brandDark": "#B49CFB", "bgLight": "#DCDCFE", "borderLight": "#BAB4F4", "brandLight": "#8B75D3", "textDark": "#0F172A" },
+  { "key": "pink", "label": "粉色", "color": "#F472B6", "bgDark": "#352B47", "borderDark": "#905989", "brandDark": "#F687C1", "bgLight": "#EFD6ED", "borderLight": "#E0A8D2", "brandLight": "#CA619B", "textDark": "#0F172A" },
+  { "key": "cyan", "label": "青色", "color": "#22D3EE", "bgDark": "#143A50", "borderDark": "#278AA5", "brandDark": "#43DAF1", "bgLight": "#BCEDFB", "borderLight": "#77D8EE", "brandLight": "#1EB0C9", "textDark": "#0F172A" },
+  { "key": "teal", "label": "墨绿", "color": "#0F766E", "bgDark": "#112B3C", "borderDark": "#1E5B65", "brandDark": "#338B84", "bgLight": "#B8D7DC", "borderLight": "#6EAAAE", "brandLight": "#0E6460", "textDark": "#FFFFFF" },
+  { "key": "navy", "label": "藏蓝", "color": "#1E40AF", "bgDark": "#132346", "borderDark": "#254086", "brandDark": "#9AA9DB", "bgLight": "#BBCAEC", "borderLight": "#758FCF", "brandLight": "#1B3895", "textDark": "#FFFFFF" },
+  { "key": "gray", "label": "灰色", "color": "#94A3B8", "bgDark": "#263247", "borderDark": "#60728A", "brandDark": "#A4B1C3", "bgLight": "#D8E1EE", "borderLight": "#B0C0D3", "brandLight": "#7B899D", "textDark": "#0F172A" }
+]

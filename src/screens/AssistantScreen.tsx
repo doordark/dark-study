@@ -111,7 +111,7 @@ function pickStickerForReply(reply: string): WhaleStickerId | null {
 }
 
 /** 除自定义口令外始终有效的通用召唤词 */
-const SUMMON_ALIASES = ["召唤大肥鱼", "大肥鱼出来", "肥鱼出来"];
+const SUMMON_ALIASES = ["召唤大肥鱼", "大肥鱼出来", "肥鱼出来", "whaletest"];
 const DISMISS_ALIASES = ["大爹走了", "退下吧", "变回课表助手"];
 
 const normalizeCmd = (text: string) => text.trim().replace(/[!！。.~～]+$/, "");
@@ -164,6 +164,8 @@ export function AssistantScreen() {
   const toggleVoiceStore = useWhaleVoice((s) => s.toggle);
   const hydrateVoice = useWhaleVoice((s) => s.hydrate);
   const spokenId = useRef<string | null>(null);
+  // 本次进入页面之前的旧消息不再重读，避免每次打开对话都重新合成一遍语音
+  const openedAt = useRef(nowTs());
   const longPressAt = useRef(0);
   const [summonFx, setSummonFx] = useState(false);
   const [leaveFx, setLeaveFx] = useState(false);
@@ -198,6 +200,8 @@ export function AssistantScreen() {
     const last = messages[messages.length - 1];
     if (last.role !== "assistant" || last.id === spokenId.current) return;
     spokenId.current = last.id;
+    // 刚进入页面时接回来的历史对话（或上次留下的最后一句）不朗读
+    if (!last.timestamp || last.timestamp < openedAt.current) return;
     if (!whale || !voiceOn || !voiceScreenFocused) return;
     speakWhale(last.content);
   }, [messages, whale, voiceOn, voiceScreenFocused]);

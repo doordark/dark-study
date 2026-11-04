@@ -196,7 +196,7 @@ export const YUJIE_ROWS = [
   ".00002222220000.",
 ];
 
-/** 唯纲：door 的三儿子（紫色巫师帽） */
+/** 唯刚：door 的三儿子（紫色巫师帽） */
 export const WEIGANG_PALETTE: Record<string, string> = {
   "0": "#3F2631",
   "1": "#9B4CA3",

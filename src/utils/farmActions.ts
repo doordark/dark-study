@@ -54,6 +54,7 @@ export function parseNpcReply(raw: string): {
   }
 }
 export const DISCUSSION_PROMPT = '请家人一起讨论：';
+const mentionsResident = (text: string, id: ResidentId) => text.includes(RESIDENTS[id].name) || (id === 'weigang' && text.includes('唯纲'));
 
 /** An invitation must be explicit, and guest names only count in the invitation. */
 export function playerDiscussionCommand(text: string, who: ResidentId): FarmDiscussionAction | null {
@@ -62,7 +63,7 @@ export function playerDiscussionCommand(text: string, who: ResidentId): FarmDisc
   const question = text.slice(invitation.length).replace(/^(?:一下)?[：:，,\s]*/, '').trim();
   if (/^(?:这件事|这个问题|一下|吧)[。！？?!]?$/.test(question)) return null;
   const guests = RESIDENT_IDS.filter(id => id !== who &&
-    (id === 'gu' ? /顾(?:和|跟|、|，|一起|过来|来|也|$)/.test(invitation) : invitation.includes(RESIDENTS[id].name)));
+    (id === 'gu' ? /顾(?:和|跟|、|，|一起|过来|来|也|$)/.test(invitation) : mentionsResident(invitation, id)));
   const action = validateNpcAction({ type: 'discuss', question, guests });
   return action?.type === 'discuss' ? action : null;
 }
@@ -79,7 +80,7 @@ export function localNpcCommand(text: string, who: ResidentId): NpcAction | null
     type: 'water_crops'
   };
   if (/找.*聊|和.*聊|跟.*说/.test(text)) {
-    const target = RESIDENT_IDS.find(id => id !== who && (text.includes(RESIDENTS[id].name) || text.includes(id)));
+    const target = RESIDENT_IDS.find(id => id !== who && (mentionsResident(text, id) || text.includes(id)));
     if (target) return {
       type: 'talk_to',
       target

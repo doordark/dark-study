@@ -2,18 +2,22 @@ import { useEffect, useMemo, useState } from "react";
 import { useForegroundClock } from "@/hooks/useForegroundClock";
 import { Alert, AppState, Platform, Pressable, Text, View } from "react-native";
 import { GlassContainer } from "@/components/GlassContainer";
+import { coursePalette } from "@/constants/palette";
+import { WIDGET_ACCENTS } from "@/constants/widgetPalette";
 import { courseWidgetsAvailable, getCourseWidgetStatus, openWidgetPermissions, pinCourseWidget, syncCourseWidgets, type WidgetStatus } from "@/services/courseWidget";
 import { useActiveSchedule } from "@/store/useStore";
 import { useWidgetSettings } from "@/store/useWidgetSettings";
-import { upcomingWidgetCourses, widgetDayLabel, WIDGET_SHAPES } from "@/utils/courseWidget";
+import { upcomingWidgetCourses, widgetAccentColors, widgetDayLabel, widgetMeta, WIDGET_SHAPES } from "@/utils/courseWidget";
 
 export function CourseWidgetSettings() {
   const schedule = useActiveSchedule();
   const shape = useWidgetSettings((s) => s.shape);
   const theme = useWidgetSettings((s) => s.theme);
+  const accent = useWidgetSettings((s) => s.accent);
   const count = useWidgetSettings((s) => s.count);
   const setShape = useWidgetSettings((s) => s.setShape);
   const setTheme = useWidgetSettings((s) => s.setTheme);
+  const setAccent = useWidgetSettings((s) => s.setAccent);
   const setCount = useWidgetSettings((s) => s.setCount);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<WidgetStatus | null>(null);
@@ -35,6 +39,8 @@ export function CourseWidgetSettings() {
   const dark = theme === "dark";
   const ink = dark ? "#F1F5F9" : "#172554";
   const muted = dark ? "#A5B4CF" : "#536783";
+  const accentColors = widgetAccentColors(accent, theme);
+  const meta = useMemo(() => widgetMeta(schedule, new Date(now)), [schedule, now]);
   const add = async () => {
     setBusy(true);
     setMessage("正在检查系统中的小组件…");
@@ -45,7 +51,7 @@ export function CourseWidgetSettings() {
         setMessage(`系统仅识别 ${before.registered}/3 种小组件。请覆盖安装包含原生组件的完整新版 APK，再打开应用。`);
         return;
       }
-      await syncCourseWidgets(schedule, count, theme);
+      await syncCourseWidgets(schedule, count, theme, accent);
       if (!await pinCourseWidget(shape)) {
         setMessage("当前桌面不支持应用内添加，请使用安卓小组件列表。"); help(); return;
       }
@@ -87,18 +93,45 @@ export function CourseWidgetSettings() {
           <View className="mt-3 flex-row gap-2">{(["dark", "light"] as const).map((value) => (
             <Pressable key={value} onPress={() => setTheme(value)} accessibilityRole="radio" accessibilityState={{ selected: theme === value }} className={`rounded-xl px-4 py-2 ${theme === value ? "bg-sky-400/25" : "bg-slate-400/10"}`}><Text className="text-[12px] text-slate-700 dark:text-slate-200">{value === "dark" ? "深色" : "浅色"}</Text></Pressable>
           ))}</View>
-          <View style={{ width: shape === "square" ? 170 : "100%", minHeight: shape === "large" ? 280 : 166, alignSelf: "center", marginTop: 16, padding: 14, borderRadius: 22, backgroundColor: dark ? "#111D32" : "#EDF5FF", borderWidth: 1, borderColor: dark ? "#2C405C" : "#CCDDEE" }}>
-            <Text style={{ color: dark ? "#7DD3FC" : "#0369A1", fontSize: 10, fontWeight: "700", letterSpacing: 1 }}>DARK STUDY</Text>
-            <Text numberOfLines={1} style={{ color: ink, fontSize: 13, fontWeight: "700", marginTop: 4 }}>{schedule.name}</Text>
-            {visible.length ? visible.map((course) => (
-              <View key={course.id} style={{ marginTop: 11, borderLeftWidth: 2, borderLeftColor: "#38BDF8", paddingLeft: 8 }}>
-                <Text numberOfLines={1} style={{ color: ink, fontSize: 13, fontWeight: "700" }}>{course.name}</Text>
-                <Text numberOfLines={1} style={{ color: muted, fontSize: 10, marginTop: 3 }}>{course.start <= now.getTime() ? "上课中" : widgetDayLabel(course.start, now)} · {course.time}</Text>
-                <Text numberOfLines={1} style={{ color: muted, fontSize: 10, marginTop: 2 }}>{course.classroom || "教室待定"}</Text>
-              </View>
-            )) : <Text style={{ color: muted, fontSize: 12, lineHeight: 20, marginTop: 18 }}>{schedule.courses.length ? "本学期暂无后续课程\n享受自由时间吧" : "还没有课程\n先导入或添加课表吧"}</Text>}
+          <Text className="mt-4 text-[12px] font-semibold text-slate-700 dark:text-slate-200">主题色</Text>
+          <View className="mt-2 flex-row flex-wrap gap-1.5">
+            {WIDGET_ACCENTS.map((item) => {
+              const on = accent === item.key;
+              return (
+                <Pressable key={item.key} onPress={() => setAccent(item.key)} accessibilityRole="radio" accessibilityState={{ selected: on }} accessibilityLabel={item.label}
+                  style={{ flexBasis: "18%", height: 34, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: item.color,
+                    borderWidth: on ? 2 : 1, borderColor: on ? (dark ? "#FFFFFF" : "#0F172A") : "rgba(148,163,184,0.35)" }}>
+                  <Text style={{ color: item.textDark, fontSize: 11, fontWeight: "700" }}>{item.label}</Text>
+                </Pressable>
+              );
+            })}
           </View>
-          <Text className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">预览 · 小尺寸最多显示 2 门，大卡片最多 5 门；实际格数和可见数量随桌面尺寸调整。配色和数量会应用到已添加的小组件。</Text>
+          <View style={{ width: shape === "square" ? 178 : "100%", height: shape === "large" ? 280 : 170, alignSelf: "center", marginTop: 16, padding: 14, borderRadius: 22, backgroundColor: accentColors.background, borderWidth: 1, borderColor: accentColors.border }}>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <Text numberOfLines={1} style={{ flex: 1, color: accentColors.brand, fontSize: 10, fontWeight: "700", letterSpacing: 1 }}>DARK STUDY ↻</Text>
+              <Text numberOfLines={1} style={{ marginLeft: 6, color: muted, fontSize: 10, fontWeight: "600" }}>{meta}</Text>
+            </View>
+            <Text numberOfLines={1} style={{ color: ink, fontSize: 13, fontWeight: "700", marginTop: 4 }}>{schedule.name}</Text>
+            <View style={{ flex: 1, marginTop: 6 }}>
+              {visible.length ? visible.map((course) => {
+                const solid = coursePalette[course.color].solid;
+                return (
+                  <View key={course.id} style={{ flex: 1, flexDirection: "row", marginBottom: 4, backgroundColor: `${solid}14` }}>
+                    <View style={{ width: 2, marginVertical: 4, borderRadius: 1, backgroundColor: solid }} />
+                    <View style={{ flex: 1, justifyContent: "center", paddingLeft: 8 }}>
+                      <Text numberOfLines={1} style={{ color: ink, fontSize: 13, fontWeight: "700" }}>{course.name}</Text>
+                      <Text numberOfLines={1} style={{ color: muted, fontSize: 10, marginTop: 3 }}>{course.start <= now.getTime() ? "上课中" : widgetDayLabel(course.start, now)} · {course.time}</Text>
+                      <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
+                        <View style={{ width: 4, height: 4, borderRadius: 2, marginRight: 4, backgroundColor: solid }} />
+                        <Text numberOfLines={1} style={{ flex: 1, color: muted, fontSize: 10 }}>{course.classroom || "教室待定"}</Text>
+                      </View>
+                    </View>
+                  </View>
+                );
+              }) : <View style={{ flex: 1, justifyContent: "center" }}><Text style={{ color: muted, fontSize: 12, lineHeight: 20 }}>{schedule.courses.length ? "本学期暂无后续课程\n享受自由时间吧" : "还没有课程\n先导入或添加课表吧"}</Text></View>}
+            </View>
+          </View>
+          <Text className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">预览 · 课程颜色跟随课表里设置的主题色；主体与文字会按桌面上的实际尺寸自动撑满。配色和数量会应用到已添加的小组件。</Text>
           {Platform.OS === "android" && courseWidgetsAvailable ? (
             <Pressable disabled={busy} onPress={() => { void add(); }} accessibilityRole="button" className="mt-3 items-center rounded-2xl bg-sky-400/25 py-3"><Text className="text-[13px] font-bold text-sky-700 dark:text-sky-200">{busy ? "正在请求添加…" : `添加${selected.label}到桌面`}</Text></Pressable>
           ) : <Text className="mt-3 text-[11px] text-slate-500 dark:text-slate-400">{Platform.OS === "android" ? "安装包含此功能的新版 APK 后即可添加；Expo Go 不支持桌面小组件。" : "桌面小组件目前支持 Android，以上可预览样式。"}</Text>}

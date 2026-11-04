@@ -61,6 +61,10 @@ const PROGUARD_RULES = `
 # sherpa-onnx / onnxruntime: JNI 通过字段名反射读取 Java 配置对象，混淆后会 fid == null 崩溃
 -keep class com.k2fsa.sherpa.onnx.** { *; }
 -keep class ai.onnxruntime.** { *; }
+
+# sherpa-onnx 桥接层: TTS 回调对象由 JNI 按硬编码名称 invoke([F)Ljava/lang/Integer; 反射调用，
+# R8 合并/重命名匿名 Function1 后生成语音时会 NoSuchMethodError 直接 abort 闪退
+-keep class com.sherpaonnx.** { *; }
 `;
 
 const mirrorLines = (indent) =>
@@ -169,7 +173,7 @@ function withReleaseSigning(config) {
     const file = path.join(cfg.modRequest.platformProjectRoot, "app/proguard-rules.pro");
     if (!fs.existsSync(file)) return cfg;
     const contents = fs.readFileSync(file, "utf8");
-    if (!contents.includes("androidx.room.RoomDatabase")) {
+    if (!contents.includes("com.sherpaonnx.")) {
       fs.writeFileSync(file, `${contents.replace(/\s*$/, "")}\n${PROGUARD_RULES}`);
     }
     return cfg;

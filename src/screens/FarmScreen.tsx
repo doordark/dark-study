@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState, type ComponentRef } from "rea
 import {
   AppState,
   Keyboard,
+  KeyboardAvoidingView,
   Modal,
   Image,
   Platform,
@@ -59,7 +60,7 @@ import { FarmLifeLayer } from "@/components/farm/FarmLifeLayer";
 import { FarmPersonSprite } from "@/components/farm/FarmPersonSprite";
 import { FarmJournalPanel } from "@/components/farm/FarmJournalPanel";
 import { claimGoal, compostReward, fertilizedGrowth, remainingGrowthTime, emptyJournal, farmLevel, finiteCount, recordActivity, restoreJournal, upgradeCost, waterCapacity, type FarmActivity, type FarmJournal } from "@/utils/farmProgress";
-import { farmChat } from "@/services/farmChat";
+import { FarmChatError, farmChat } from "@/services/farmChat";
 import { DISCUSSION_PROMPT, localNpcCommand, playerDiscussionCommand, parseNpcReply, NPC_ACTION_SCHEMA, type NpcAction } from "@/utils/farmActions";
 import { farmPlotGrowth as plotGrowth, waterFarmPlots } from "@/utils/farmWatering";
 import { useFarmResidents } from "@/hooks/useFarmResidents";
@@ -75,6 +76,12 @@ import { useSettings } from "@/store/useSettings";
 
 const VIEW_W = SCENE_SIZE.width;
 const VIEW_H = SCENE_SIZE.height;
+const TERRAIN = {
+  morning: { clear: require("../../assets/images/farm-full-morning-clear.jpg"), rain: require("../../assets/images/farm-full-morning-rain.jpg") },
+  noon: { clear: require("../../assets/images/farm-full-noon-clear.jpg"), rain: require("../../assets/images/farm-full-noon-rain.jpg") },
+  evening: { clear: require("../../assets/images/farm-full-evening-clear.jpg"), rain: require("../../assets/images/farm-full-evening-rain.jpg") },
+  night: { clear: require("../../assets/images/farm-full-night-clear.jpg"), rain: require("../../assets/images/farm-full-night-rain.jpg") },
+};
 const PLOT_COUNT = PLOTS.length;
 const SAVE_KEY = "dark-study-farm";
 const plotPos = (i: number) => PLOTS[i];
@@ -155,7 +162,6 @@ const emptyPlot = (at: number): PlotState => ({
 /** 每七个农场日换季；当季播种增加产量。 */
 const SEASONS = ["春", "夏", "秋", "冬"];
 
-/** Quiet side gutters on short devices; the sky is part of the terrain artwork. */
 const CHAT_SURFACE = "#FFF7ED";
 
 const PIXEL_FONT = Platform.select({
@@ -223,7 +229,7 @@ function fallbackLine(
     "这个农场本来只是写着玩的，结果你真的找到了。",
     `第 ${ctx.day} 天，代码 0 报错，作物 0 枯死，今天算顺利。`,
     "别问我为什么课表里藏农场，问就是想让学习這件事轻一点。",
-    "顾让我喊三个孩子吃饭，结果唯纲先把坤坤喊来了。",
+    "顾让我喊三个孩子吃饭，结果唯刚先把坤坤喊来了。",
     `金币 ${ctx.coins}，够买种子，不够买显卡。`,
     "写这个应用的时候，我最想做的其实是一个能喘气的地方。",
     ctx.growing > 0
@@ -238,7 +244,7 @@ function fallbackLine(
     ctx.growing > 0
       ? "咕？那些苗苗还在长，我每天都来看一眼。"
       : "咕……地里空着，我想在土里洗澡，被顾说了。",
-    "咕，我叫坤坤！唯纲说我的鸡窝有保暖魔法。",
+    "咕，我叫坤坤！唯刚说我的鸡窝有保暖魔法。",
     `第 ${ctx.day} 天啦，咕，我数不清，但看你来了就开心。`,
     "怕猫，但我更怕你走了不回来，咕。",
     `金币 ${ctx.coins} 也用不完我的一粒米，咕咕。`,
@@ -266,7 +272,7 @@ function fallbackLine(
       : "地里空空的，我哥说种子不能偷吃，我觉得可以商量。",
     `第 ${ctx.day} 天，我哥又在装大人了。`,
     "眼镜先等会儿再擦，我刚练熟一首汪苏泷的歌。想听副歌吗？",
-    "唯纲今天没钓到鱼，我嘴上笑他空军，回屋还是给他留了半块饼。",
+    "唯刚今天没钓到鱼，我嘴上笑他空军，回屋还是给他留了半块饼。",
     "我看小说时老替角色着急。轮到我自己，又怕一句话发过去会打扰人。",
     ctx.harvested > 0
       ? `收了 ${ctx.harvested} 次，每次我都先尝过。`
@@ -479,7 +485,6 @@ export function FarmScreen() {
   const sceneW = width;
   const scale = sceneW / VIEW_W;
   const sceneH = VIEW_H * scale;
-  const renderedMapHeight = mapHeight || sceneH;
   /** 聊天消息区高度：小屏 + 键盘弹起时不把面板顶出屏幕 */
   const chatMaxH = Math.max(150, Math.min(258, Math.round(height * 0.32)));
 
@@ -567,7 +572,7 @@ export function FarmScreen() {
   useEffect(() => () => { personalRequest.current?.abort(); }, [speaker, focused]);
 
   /* ---------------- 天色用本地时间；生长、天数和季节用游戏时间 ---------------- */
-  const { growthNow: vNow, night, day, season, clock } = farmTime(now, timeShift, epoch);
+  const { growthNow: vNow, night, period, weather, day, season, clock } = farmTime(now, timeShift, epoch);
   const seasonName = SEASONS[season];
   /** 每块地的累计生长量（每次渲染按当前虚拟时间实时结算，不落库） */
   const grown = plots.map((p) => plotGrowth(p, vNow));
@@ -621,12 +626,11 @@ export function FarmScreen() {
     nightV.value = withTiming(night ? 1 : 0, { duration: 700 });
   }, [night, nightV]);
 
-  const [dayPainted, setDayPainted] = useState(false);
-  const [nightPainted, setNightPainted] = useState(false);
+  const [terrainPainted, setTerrainPainted] = useState(false);
   const [entranceFinished, setEntranceFinished] = useState(false);
   const entranceCover = useSharedValue(1);
   const reduceMotion = useReducedMotion();
-  const sceneReady = loaded && decorReady && mapHeight > 0 && (night ? nightPainted : dayPainted);
+  const sceneReady = loaded && decorReady && mapHeight > 0 && terrainPainted;
   const finishEntrance = useCallback(() => setEntranceFinished(true), []);
   const entranceStyle = useAnimatedStyle(() => ({ opacity: entranceCover.value }));
 
@@ -1084,7 +1088,8 @@ export function FarmScreen() {
     );
   };
 
-  const closePersonalChat = () => { personalRequest.current?.abort(); setSpeaker(null); Keyboard.dismiss(); };
+  // 先收键盘再关面板：避免键盘收起与弹层关闭同时发生，页面高度停留在被键盘压缩后的状态
+  const closePersonalChat = () => { personalRequest.current?.abort(); Keyboard.dismiss(); setSpeaker(null); };
 
   const sendChat = async (raw: string) => {
     const text = raw.trim(); const who = speaker;
@@ -1128,16 +1133,22 @@ export function FarmScreen() {
             { role: "assistant" as const, content: turn.reply },
           ]),
           { role: "user", content: text },
-        ], apiKey, { timeoutMs: 16000, maxTokens: 480, signal: request.signal });
+        ], apiKey, { timeoutMs: 16000, maxTokens: 480, retries: 2, signal: request.signal });
         if (request.signal.aborted) return;
         const parsed = parseNpcReply(rawReply);
         if (parsed) { reply = parsed.reply; action = continuing ? null : parsed.action; }
         else { reply = /^[\s]*[\[{]/.test(rawReply) ? "我刚才没想明白，这次先不忙做事。" : rawReply.trim().slice(0,140); action = null; }
         setChatOffline(false);
       }
-    } catch {
+    } catch (error) {
       if (request.signal.aborted) return;
       reply = localReply(); action = null; setChatOffline(true);
+      // 临时故障（超时/网络/服务繁忙）只影响这一轮，下一句仍会尝试联网
+      if (error instanceof FarmChatError && error.status !== undefined && !error.retryable) {
+        showToast(error.message);
+      } else {
+        showToast("网络有点波动，这句先用本地对白接住");
+      }
     } finally {
       if (personalRequest.current === request) { personalRequest.current = null; setChatBusy(false); }
     }
@@ -1164,49 +1175,26 @@ export function FarmScreen() {
       <View style={{ paddingTop: insets.top + 6, paddingBottom: 8, paddingHorizontal: 12, gap: 7, backgroundColor: '#F5EDD8', borderBottomWidth: 2, borderColor: '#D5B88D' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <FarmButton onPress={() => router.back()} tone="paper" variant="icon" style={{ width: 44, paddingHorizontal: 0 }}><Ionicons name="chevron-back" size={18} color="#76583B" /></FarmButton>
-          <View style={{ flex: 1 }}><Text variant="label" style={{ fontSize: 18, letterSpacing: .2 }}>doordoor 的农场</Text>
-            <Text style={{ color: '#86745A', fontSize: 10, marginTop: 3 }}>{`Lv.${level} · 第 ${day} 天 · ${seasonName} · ${clock} ${night ? '夜晚' : '白天'}`}</Text></View>
-        </View>
-        <View style={{ flexDirection: 'row', gap: 8, paddingLeft: 52 }}>
-          <View accessibilityLabel={`金币 ${coins}`} style={{ flex: 1, minWidth: 0, minHeight: 38, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#FFF5D9', borderWidth: 1, borderColor: '#DEC99E', justifyContent: 'center', alignItems: 'center', flexDirection: 'row', gap: 6 }}><View style={{ width: 12, height: 12, borderWidth: 2, borderColor: '#B48236', backgroundColor: '#E9C163' }} /><Text style={{ color: '#76572E', fontWeight: '800', fontSize: 13 }} numberOfLines={1} adjustsFontSizeToFit>{coins}</Text><Text style={{ color: '#8B7352', fontSize: 10 }}>金币</Text></View>
-          <FarmButton onPress={fetchWater} tone="blue" style={{ flex: 1, minWidth: 0, minHeight: 38, paddingVertical: 7, flexDirection: 'row', gap: 5 }}><FarmFunctionIcon name="water" size={20} /><Text style={{ color: '#426B7A', fontSize: 12, fontWeight: '700' }}>{water}/{waterCap}</Text><Text style={{ color: '#608494', fontSize: 10 }}>打水</Text></FarmButton>
+          <View style={{ flex: 1, minWidth: 0 }}><Text variant="label" numberOfLines={1} style={{ fontSize: 18, letterSpacing: .2 }}>doordoor 的农场</Text>
+            <Text numberOfLines={1} style={{ color: '#86745A', fontSize: 10, marginTop: 3 }}>{`Lv.${level} · 第 ${day} 天 · ${seasonName} · ${clock} ${{ morning: '早上', noon: '中午', evening: '傍晚', night: '深夜' }[period]}`}</Text></View>
         </View>
       </View>
 
       <View
         onLayout={({ nativeEvent }) => setMapHeight(nativeEvent.layout.height)}
-        style={{ flex: 1, overflow: "hidden", backgroundColor: night ? "#162537" : "#69B6ED" }}
+        style={{ flex: 1, maxHeight: sceneH, overflow: "hidden", backgroundColor: "#162537" }}
       >
-        {/* Scale the entire coordinate space so art, actors and hit areas stay aligned. */}
-        <View style={{
-          position: "absolute",
-          left: 0,
-          top: (renderedMapHeight - sceneH) / 2,
-          width: sceneW,
-          height: sceneH,
-          transform: [{ scaleY: renderedMapHeight / sceneH }],
-        }}>
-          <Animated.View style={[StyleSheet.absoluteFill, dayLayerStyle]}>
-            <Image
-              source={require("../../assets/images/farm-day-v3.png")}
-              style={{ width: sceneW, height: sceneH }}
-              resizeMode="stretch"
-              fadeDuration={0}
-              onLoad={() => setDayPainted(true)}
-              onError={() => setDayPainted(true)}
-            />
-          </Animated.View>
-          <Animated.View style={[StyleSheet.absoluteFill, nightLayerStyle]}>
-            <Image
-              source={require("../../assets/images/farm-night-v3.png")}
-              style={{ width: sceneW, height: sceneH }}
-              resizeMode="stretch"
-              fadeDuration={0}
-              onLoad={() => setNightPainted(true)}
-              onError={() => setNightPainted(true)}
-            />
-          </Animated.View>
-          {loaded ? <FarmSceneFacilities scale={scale} decorReady={decorReady} dayStyle={dayLayerStyle} nightStyle={nightLayerStyle} /> : null}
+        <ScrollView showsVerticalScrollIndicator={false} bounces={false} keyboardShouldPersistTaps="handled">
+        <View style={{ width: sceneW, height: sceneH }}>
+          <Image
+            pointerEvents="none"
+            source={TERRAIN[period][weather]}
+            style={{ width: sceneW, height: sceneH }}
+            resizeMode="cover"
+            fadeDuration={0}
+            onLoadEnd={() => setTerrainPainted(true)}
+          />
+          {loaded ? <FarmSceneFacilities scale={scale} decorReady={decorReady} dayStyle={dayLayerStyle} nightStyle={nightLayerStyle} period={period} /> : null}
           {decorReady && loaded ? <FarmWater scale={scale} night={night} /> : null}
           <Svg
             pointerEvents="none"
@@ -1482,14 +1470,30 @@ export function FarmScreen() {
             </Animated.View>
           ) : null}
         </View>
+        </ScrollView>
       </View>
 
       <View style={{ paddingHorizontal: 10, paddingTop: 8, paddingBottom: insets.bottom + 8, gap: 7, borderTopWidth: 1, borderColor: '#DED0B7', backgroundColor: '#F5EDD8' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Text style={{ flex: 1, color: '#877358', fontSize: 10, lineHeight: 16 }}>{loadFailed ? '存档读取失败，请退出农场重进' : saveError ? '保存失败，请保持应用开启' : fertilizing ? '施肥模式 · 轻点未成熟作物' : '横滑选种 · 手账出售 · 水池打水'}</Text>
-          <FarmButton label="居民生活" icon="residents" tone="rose" onPress={() => setLifeOpen(true)} style={{ minHeight: 36, paddingVertical: 8 }} />
+        {loadFailed || saveError ? (
+          <Text style={{ color: '#A05B45', fontSize: 10 }}>{loadFailed ? '存档读取失败，请退出农场重进' : '保存失败，请保持应用开启'}</Text>
+        ) : null}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+          <View accessibilityLabel={`金币 ${coins}`} style={{ flex: 1, minWidth: 0, height: 36, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#FFF5D9', borderWidth: 1, borderColor: '#DEC99E', flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <View style={{ width: 12, height: 12, borderWidth: 2, borderColor: '#B48236', backgroundColor: '#E9C163' }} />
+            <Text style={{ color: '#76572E', fontWeight: '800', fontSize: 13 }} numberOfLines={1} adjustsFontSizeToFit>{coins}</Text>
+            <Text style={{ color: '#8B7352', fontSize: 10 }}>金币</Text>
+          </View>
+          <FarmButton onPress={fetchWater} tone="blue" style={{ flex: 1, minWidth: 0, height: 36, minHeight: 36, paddingVertical: 0, paddingHorizontal: 10, gap: 4 }}>
+            <FarmFunctionIcon name="water" size={16} />
+            <Text style={{ color: '#426B7A', fontSize: 12, fontWeight: '700' }} numberOfLines={1}>{water}/{waterCap}</Text>
+            <Text style={{ color: '#608494', fontSize: 10 }}>打水</Text>
+          </FarmButton>
+          <FarmButton onPress={() => setLifeOpen(true)} tone="rose" style={{ flexShrink: 0, height: 36, minHeight: 36, paddingVertical: 0, paddingHorizontal: 11, gap: 5 }}>
+            <FarmFunctionIcon name="residents" size={18} />
+            <Text style={{ color: '#6B4B4B', fontSize: 12, fontWeight: '700' }}>居民生活</Text>
+          </FarmButton>
         </View>
-        <ScrollView horizontal style={{ flexGrow: 0 }} showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 7 }}>
+        <ScrollView horizontal style={{ flexGrow: 0, height: 54 }} showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 7 }}>
           {CROP_KINDS.map(kind => <FarmButton key={kind} onPress={() => setSelected(kind)} tone={selected === kind ? 'sage' : 'paper'} style={{ width: 112, height: 54, flexShrink: 0, flexDirection: 'row', gap: 7, paddingHorizontal: 9, borderWidth: selected === kind ? 2 : 1, borderColor: selected === kind ? '#8EAA68' : '#DED0B7' }}>
             <CropSprite kind={kind} size={28} /><View style={{ flex: 1 }}><Text style={{ color: '#655035', fontWeight: '700', fontSize: 11 }}>{CROP_ART[kind].label}</Text><Text style={{ color: '#8A785B', fontSize: 10 }}>{level < CROP_META[kind].level ? 'Lv.' + CROP_META[kind].level + ' 解锁' : '种子 ×' + seeds[kind]}</Text></View>
           </FarmButton>)}
@@ -1513,6 +1517,8 @@ export function FarmScreen() {
       <Modal
         visible={shopOpen}
         transparent
+        statusBarTranslucent
+        navigationBarTranslucent
         animationType="fade"
         onRequestClose={() => setShopOpen(false)}
       >
@@ -1716,7 +1722,7 @@ export function FarmScreen() {
           Keyboard.dismiss();
         }}
       >
-        <View style={{ flex: 1, justifyContent: "flex-end", paddingBottom: Platform.OS === "ios" ? kbH : 0 }}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1, justifyContent: "flex-end" }}>
           <Pressable
             style={{
               position: "absolute",
@@ -1764,7 +1770,7 @@ export function FarmScreen() {
                     backgroundColor: "#F5ECD8",
                   }}
                 >
-                  <FarmPersonSprite who={speaker ?? "gu"} size={36} />
+                  <FarmPersonSprite who={speaker ?? "gu"} size={36} centered />
                 </View>
                 <View style={{ marginLeft: 10, flex: 1 }}>
                   <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -2032,7 +2038,7 @@ export function FarmScreen() {
               </View>
             </View>
           </Animated.View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ---------- 小屋：进屋点床睡觉 ---------- */}

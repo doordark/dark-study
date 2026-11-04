@@ -42,11 +42,11 @@ const TOTAL_STARS = 7;
 
 /** 猫头鹰要听够几次呼唤才肯带路：前几句是对话，最后一句才放行 */
 const OWL_LINES = [
-  "（它歪了歪头，圆眼睛在你身上打量了好一会儿）",
-  "（它低头啄了啄羽毛，又抬起来看你，像是在确认什么）",
-  "（它轻轻叫了一声，声音被夜风卷走了）",
-  "（它朝小径的方向跳了半步，又回头望你）",
-  "（它终于展开翅膀，落在小径入口回头等你）",
+  "嘘——夜还长，先陪我看一会儿星星吧。",
+  "你拾起的每一颗星，我都记着呢。",
+  "风里有翻书的声音，你听见了吗？",
+  "想不想去一个更安静的地方？",
+  "那就跟紧我，小径就在前面。",
 ] as const;
 const OWL_TAPS_NEEDED = OWL_LINES.length + 1;
 
@@ -87,7 +87,6 @@ const DEPARTURE_MS = 1160;
 type OwlStage = "waiting" | "arriving" | "perched" | "leaving";
 
 const MOON_ATLAS = require("../../assets/images/night-moon-phases.png");
-const OWL_BUBBLE = require("../../assets/images/night-owl-bubble.png");
 const NIGHT_SPRITES = require("../../assets/images/night-sprites-v2.png");
 
 /* -------------------------------------------------------------------------- */
@@ -665,6 +664,9 @@ function Owl({
   onTap: () => void;
   hint?: string;
 }) {
+  // Give the text all available space to the left of the owl.
+  const bubbleWidth = Math.max(1, Math.min(196, left - 20));
+
   return (
     <View style={{ position: "absolute", left, top, zIndex: 6 }}>
       {hint ? (
@@ -672,28 +674,30 @@ function Owl({
           pointerEvents="none"
           style={{
             position: "absolute",
-            top: 4,
-            right: "100%",
-            marginRight: 10,
-            width: Math.max(72, Math.min(184, left - 22)),
-            minHeight: 64,
-            justifyContent: "center",
-            paddingLeft: 14,
-            paddingRight: 24,
-            paddingVertical: 12,
+            top: 2,
+            right: 88,
+            maxWidth: bubbleWidth,
+            paddingHorizontal: 12,
+            paddingVertical: 9,
+            borderRadius: 13,
+            borderWidth: 1,
+            borderColor: "#BDA784",
+            backgroundColor: "#121C35",
           }}
         >
-          <Image source={OWL_BUBBLE} resizeMode="stretch" fadeDuration={0}
-            style={{ position: "absolute", width: "100%", height: "100%", left: 0, top: 0 }} />
           <Text
             style={{
               color: "#F2E6D6",
-              fontSize: 11,
-              lineHeight: 17,
+              width: bubbleWidth - 44,
+              fontSize: 12,
+              lineHeight: 18,
             }}
           >
             {hint}
           </Text>
+          <Svg width={9} height={13} style={{ position: "absolute", right: -9, top: 13 }}>
+            <Path d="M0 1 L8 6.5 L0 12" fill="#121C35" stroke="#BDA784" strokeWidth={1} />
+          </Svg>
         </View>
       ) : null}
       <Pressable onPress={onTap} accessibilityRole="button" accessibilityLabel="和猫头鹰对话" hitSlop={12}>

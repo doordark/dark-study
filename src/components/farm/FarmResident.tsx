@@ -1,6 +1,6 @@
 import { FarmText } from './FarmSkin';
 import { memo, useEffect } from 'react';
-import { Pressable } from 'react-native';
+import { Pressable, View } from 'react-native';
 import Animated, { cancelAnimation, Easing, useAnimatedReaction, useAnimatedStyle, useSharedValue, withDelay, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
 import { RESIDENTS, type ResidentId } from '@/utils/farmLife';
 import { remainingResidentMotion, type ResidentModel } from '@/utils/farmResidentAI';
@@ -95,18 +95,22 @@ export const FarmResident = memo(function FarmResident({
     width: 22 * scale,
     height: 28 * scale
   }, position]}>
-    <FarmText variant="label" numberOfLines={1} pointerEvents="none" style={{
+    <View pointerEvents="none" style={{
       position: 'absolute',
       top: -17,
-      width: 76,
-      textAlign: 'center',
+      left: -50,
+      right: -50,
       alignSelf: 'center',
+      alignItems: 'center',
+    }}><FarmText variant="label" numberOfLines={1} style={{
       color: talking ? '#755538' : '#5B5138',
       backgroundColor: 'rgba(255,247,222,0.88)',
-      paddingHorizontal: 5,
-      borderRadius: 6,
+      paddingHorizontal: 6,
+      paddingVertical: 1,
+      overflow: 'hidden',
+      borderRadius: 7,
       fontSize: 10
-    }}>{meta.name}{taskLabel ? ` · ${taskLabel}` : talking ? ' ···' : ''}</FarmText>
+    }}>{meta.name}{taskLabel ? ` · ${taskLabel}` : talking ? ' ···' : ''}</FarmText></View>
     <Pressable accessibilityRole="button" accessibilityLabel={`${meta.name}，点击我的聊天`} hitSlop={5} onPress={() => onTalk(who, {
       x: x.get(),
       y: y.get()

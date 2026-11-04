@@ -8,6 +8,7 @@ export function CourseWidgetSync() {
   const schedule = useActiveSchedule();
   const count = useWidgetSettings((s) => s.count);
   const theme = useWidgetSettings((s) => s.theme);
+  const accent = useWidgetSettings((s) => s.accent);
   const [ready, setReady] = useState(false);
   const [resume, setResume] = useState(0);
   useEffect(() => {
@@ -22,9 +23,9 @@ export function CourseWidgetSync() {
     if (!ready) return;
     // Debounce edits; the native module serially persists the latest full schedule.
     const timer = setTimeout(() => {
-      void syncCourseWidgets(schedule, count, theme).catch((error) => console.warn("桌面课表同步失败", error));
+      void syncCourseWidgets(schedule, count, theme, accent).catch((error) => console.warn("桌面课表同步失败", error));
     }, 250);
     return () => clearTimeout(timer);
-  }, [ready, schedule, count, theme, resume]);
+  }, [ready, schedule, count, theme, accent, resume]);
   return null;
 }

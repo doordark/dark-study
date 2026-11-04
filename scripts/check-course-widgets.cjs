@@ -19,6 +19,7 @@ function load(relative) {
       sync: async (payload) => calls.push(JSON.parse(payload)), pin: async (shape) => shape === "large",
     } } };
     if (request.startsWith("@/")) return load(`src/${request.slice(2)}.ts`);
+    if (request.endsWith(".json")) return JSON.parse(fs.readFileSync(path.resolve(path.dirname(filename), request), "utf8"));
     return require(request);
   };
   target._compile(compiled.outputText, filename);
@@ -26,7 +27,7 @@ function load(relative) {
 }
 
 async function run() {
-  const { upcomingWidgetCourses: upcoming, widgetDayLabel } = load("src/utils/courseWidget.ts");
+  const { upcomingWidgetCourses: upcoming, widgetDayLabel, widgetMeta, widgetAccentColors } = load("src/utils/courseWidget.ts");
   const base = {
     id: "term", name: "秋季", kind: "fall", startDate: "2026-11-02", endDate: "2026-11-15", totalWeeks: 2,
     periods: [{ index: 1, startTime: "08:00", endTime: "08:45" }, { index: 2, startTime: "09:00", endTime: "09:45" }],
@@ -39,9 +40,16 @@ async function run() {
   assert.equal(rows[0].time, "08:00–09:45");
   assert(rows[0].start <= +now && rows[0].end > +now, "ongoing lesson remains visible");
   assert.equal(upcoming(base, new Date("2026-11-03T09:45:00")).length, 1, "drop lesson at its end boundary");
+  assert.equal(rows[0].color, "sky", "course theme colour reaches the widget");
   assert.equal(widgetDayLabel(rows[0].start, now), "今天");
   assert.equal(widgetDayLabel(rows[0].start, new Date("2026-11-02T23:59:00")), "明天");
   assert.equal(widgetDayLabel(rows[1].start, now), "11/10 周二");
+  assert.equal(widgetMeta(base, now), "11.3 第1周 周二");
+  assert.equal(widgetMeta({ ...base, totalWeeks: 0 }, now), "11.3 周二", "outside the semester only date and weekday");
+  assert.equal(widgetMeta(undefined, now), "11.3 周二");
+  assert.equal(widgetAccentColors("green", "dark").background, "#173A42");
+  assert.equal(widgetAccentColors("green", "light").brand, "#2DB083");
+  assert.deepEqual(widgetAccentColors("unknown", "dark"), widgetAccentColors("default", "dark"));
   assert.equal(upcoming(base, new Date("2026-11-16T00:00:00")).length, 0, "semester ended");
   assert.deepEqual(upcoming(undefined, now), []);
   assert.deepEqual(upcoming({ ...base, courses: [] }, now), []);
@@ -58,10 +66,12 @@ async function run() {
   ] };
   assert.deepEqual(upcoming(multi, now).slice(0, 3).map((r) => r.id), ["math-2026-11-03", "tomorrow-2026-11-04", "sunday-2026-11-08"]);
   const native = load("src/services/courseWidget.ts");
-  await native.syncCourseWidgets(base, 4, "light");
-  await native.syncCourseWidgets(undefined, 2, "dark");
+  await native.syncCourseWidgets(base, 4, "light", "green");
+  await native.syncCourseWidgets(undefined, 2, "dark", "default");
   assert.equal(calls[0].schedule.id, "term");
   assert.equal(calls[0].count, 4);
+  assert.equal(calls[0].accent, "green", "accent theme reaches native storage");
+  assert.equal(calls[0].colorPalette.sky, "#38BDF8", "course palette reaches native storage");
   assert.equal(calls[1].schedule, null, "empty state replaces previous schedule");
   assert.equal(await native.pinCourseWidget("large"), true);
   assert.equal(await native.pinCourseWidget("square"), false, "unsupported pinning permits manual-add fallback");

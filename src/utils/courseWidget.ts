@@ -1,4 +1,6 @@
-import type { Schedule } from "@/types";
+import type { CourseColor, Schedule } from "@/types";
+import type { WidgetAccentPalette } from "@/constants/widgetPalette";
+import { widgetAccent } from "@/constants/widgetPalette";
 import { addDays, mondayOf, parseIsoDate, toIsoDate } from "@/utils/time";
 
 export type WidgetShape = "square" | "rectangle" | "large";
@@ -17,6 +19,8 @@ export interface WidgetCourse {
   start: number;
   end: number;
   time: string;
+  /** 课程主题色，跟随课表里为课程设置的主题色 */
+  color: CourseColor;
 }
 
 function clock(value: string | undefined): number | null {
@@ -48,7 +52,7 @@ export function upcomingWidgetCourses(schedule: Schedule | undefined, now = new 
       end.setHours(Math.floor(to / 60), to % 60, 0, 0);
       if (end.getTime() <= now.getTime()) continue;
       result.push({ id: `${course.id}-${iso}`, name: course.name, classroom: course.classroom, teacher: course.teacher,
-        start: start.getTime(), end: end.getTime(), time: `${first!.startTime}–${last!.endTime}` });
+        start: start.getTime(), end: end.getTime(), time: `${first!.startTime}–${last!.endTime}`, color: course.color });
     }
   }
   return result.sort((a, b) => a.start - b.start || a.name.localeCompare(b.name));
@@ -59,4 +63,25 @@ export function widgetDayLabel(start: number, now = new Date()): string {
   if (toIsoDate(date) === toIsoDate(now)) return "今天";
   if (toIsoDate(date) === toIsoDate(addDays(now, 1))) return "明天";
   return `${date.getMonth() + 1}/${date.getDate()} 周${"日一二三四五六"[date.getDay()]}`;
+}
+
+/** 组件右上角的日期信息：11.4 第8周 周三（不在学期内时只显示日期和星期） */
+export function widgetMeta(schedule: Schedule | undefined, now = new Date()): string {
+  const weekday = `周${"日一二三四五六"[now.getDay()]}`;
+  const dateLabel = `${now.getMonth() + 1}.${now.getDate()}`;
+  if (!schedule) return `${dateLabel} ${weekday}`;
+  const monday = mondayOf(parseIsoDate(schedule.startDate));
+  if (!Number.isFinite(monday.getTime())) return `${dateLabel} ${weekday}`;
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const week = Math.floor((today.getTime() - monday.getTime()) / 86400000 / 7) + 1;
+  if (week < 1 || week > schedule.totalWeeks) return `${dateLabel} ${weekday}`;
+  return `${dateLabel} 第${week}周 ${weekday}`;
+}
+
+/** 根据深浅模式取小组件主题色对应的基础配色 */
+export function widgetAccentColors(accent: string | undefined, theme: WidgetTheme) {
+  const palette: WidgetAccentPalette = widgetAccent(accent);
+  return theme === "dark"
+    ? { background: palette.bgDark, border: palette.borderDark, brand: palette.brandDark }
+    : { background: palette.bgLight, border: palette.borderLight, brand: palette.brandLight };
 }

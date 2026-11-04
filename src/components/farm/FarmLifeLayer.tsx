@@ -127,7 +127,7 @@ export function FarmLifeLayer({
   return <>
     {controller.residents.map(resident => <FarmResident key={resident.id} resident={resident} scale={scale} active={controller.awake && (controller.autonomous || Boolean(resident.task) || resident.conversationSize > 0)} reducedMotion={controller.reducedMotion} onTalk={onTalk} />)}
     <FarmSpeechLayer residents={controller.residents} scale={scale} />
-    <Modal visible={panelOpen} transparent animationType="slide" onRequestClose={onClosePanel}>
+    <Modal visible={panelOpen} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={onClosePanel}>
       <View style={{
         flex: 1,
         justifyContent: 'flex-end',

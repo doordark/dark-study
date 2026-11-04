@@ -16,7 +16,7 @@ export function FarmJournalPanel({ children, visible, onClose, harvested, coins,
   const insets = useSafeAreaInsets();
   const level = farmLevel(harvested);
   const canUpgrade = upgrade < 3 && coins >= upgradeCost(upgrade) && level >= upgrade + 2;
-  return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+  return <Modal visible={visible} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={onClose}>
     <View style={{ flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.5)" }}>
       <Pressable accessibilityLabel="关闭农场手账" onPress={onClose} style={{ position: "absolute", width: "100%", height: "100%" }} />
       <View style={{ maxHeight: "90%", borderTopLeftRadius: 22, borderTopRightRadius: 22, backgroundColor: "#FFF8EF", overflow: "hidden" }}>

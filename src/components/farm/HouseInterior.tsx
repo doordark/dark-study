@@ -31,7 +31,7 @@ export function HouseInterior({ visible, night, day, clock, onClose, onSleep }: 
     setSleeping(true);
     timer.current = setTimeout(() => { setSleeping(false); onSleep(); }, 1200);
   };
-  return <Modal visible={visible} animationType="fade" onRequestClose={close} statusBarTranslucent>
+  return <Modal visible={visible} animationType="fade" onRequestClose={close} statusBarTranslucent navigationBarTranslucent>
     {visible ? <View style={{ flex: 1, paddingTop: insets.top, paddingBottom: insets.bottom, backgroundColor: night ? '#29313C' : '#F5EDD8' }}>
       <StatusBar style={night ? 'light' : 'dark'} />
       <View style={{ flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12 }}>

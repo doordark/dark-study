@@ -914,6 +914,158 @@ function ReminderAndWidgetSettings() {
   );
 }
 
+/** 顶部概览：当前学期、周次与进度，顺带把课程 / 成绩数据摊开 */
+function SettingsOverview() {
+  const schedule = useActiveSchedule();
+  const grades = useStore((s) => s.grades);
+  const info = getDateInfo(schedule.startDate);
+  const totalWeeks = Math.max(1, schedule.totalWeeks);
+  const week = Math.min(totalWeeks, Math.max(1, info.weekIndex));
+  const todayCourses = schedule.courses.filter(
+    (course) => course.weekday === info.weekday && course.weeks.includes(week),
+  ).length;
+  const progress = Math.min(1, week / totalWeeks);
+
+  return (
+    <Animated.View entering={FadeInDown.springify()}>
+      <GlassContainer radius={26} intensity={42} borderOpacity={0.22}>
+        <View className="px-5 py-4">
+          <View className="flex-row items-start">
+            <View className="flex-1">
+              <Text className="text-[10px] font-bold tracking-widest text-sky-600 dark:text-sky-300">
+                CURRENT SEMESTER
+              </Text>
+              <Text className="mt-1.5 text-[22px] font-extrabold text-slate-800 dark:text-white">
+                {schedule.name}
+              </Text>
+              <Text className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                开学于 {formatDateLabel(schedule.startDate)}
+              </Text>
+            </View>
+            <View className="items-end">
+              <Text className="text-[17px] font-extrabold text-slate-800 dark:text-white">
+                第 {week} 周
+              </Text>
+              <Text className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                {info.dateLabel} · 共 {totalWeeks} 周
+              </Text>
+            </View>
+          </View>
+
+          <View className="mt-4 flex-row items-center">
+            <View className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/35 dark:bg-white/10">
+              <View
+                className="h-full rounded-full bg-sky-400"
+                style={{ width: `${progress * 100}%` }}
+              />
+            </View>
+            <Text className="ml-2.5 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+              {Math.round(progress * 100)}%
+            </Text>
+          </View>
+
+          <View className="mt-4 flex-row items-center rounded-2xl bg-white/20 py-2.5 dark:bg-white/[0.05]">
+            <OverviewStat label="课程" value={String(schedule.courses.length)} unit=" 门" />
+            <View className="h-7 w-px bg-slate-400/25 dark:bg-white/10" />
+            <OverviewStat label="今日" value={String(todayCourses)} unit=" 节" />
+            <View className="h-7 w-px bg-slate-400/25 dark:bg-white/10" />
+            <OverviewStat label="成绩" value={String(grades.length)} unit=" 条" />
+          </View>
+        </View>
+      </GlassContainer>
+    </Animated.View>
+  );
+}
+
+function OverviewStat({
+  label,
+  value,
+  unit,
+}: {
+  label: string;
+  value: string;
+  unit: string;
+}) {
+  return (
+    <View className="flex-1 items-center">
+      <Text className="text-[17px] font-extrabold text-slate-800 dark:text-white">
+        {value}
+        <Text className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+          {unit}
+        </Text>
+      </Text>
+      <Text className="mt-0.5 text-[10px] text-slate-500 dark:text-slate-400">
+        {label}
+      </Text>
+    </View>
+  );
+}
+
+/** 常用操作：把散落在首页的入口在设置里也留一份快捷方式 */
+const QUICK_ACTIONS = [
+  {
+    key: "import",
+    label: "导入课表",
+    icon: "cloud-upload-outline",
+    onPress: () => router.push("/import"),
+  },
+  {
+    key: "grades",
+    label: "成绩",
+    icon: "stats-chart-outline",
+    onPress: () => router.push("/grades"),
+  },
+  {
+    key: "assistant",
+    label: "AI 助手",
+    icon: "sparkles-outline",
+    onPress: () => router.push("/assistant"),
+  },
+  {
+    key: "update",
+    label: "检查更新",
+    icon: "cloud-download-outline",
+    onPress: () =>
+      router.push({
+        pathname: "/settings/[category]",
+        params: { category: "data" },
+      }),
+  },
+] as const;
+
+function QuickActions() {
+  return (
+    <Animated.View
+      entering={FadeInDown.delay(150).springify()}
+      style={{ marginTop: 14 }}
+    >
+      <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
+        <View className="px-4 py-4">
+          <Text className="mb-3 text-[14px] font-bold text-slate-800 dark:text-white">
+            快捷操作
+          </Text>
+          <View className="flex-row gap-x-2">
+            {QUICK_ACTIONS.map((action) => (
+              <Pressable
+                key={action.key}
+                onPress={action.onPress}
+                accessibilityRole="button"
+                accessibilityLabel={action.label}
+                className="flex-1 items-center rounded-2xl border border-white/20 bg-white/15 py-3 dark:border-white/10 dark:bg-white/[0.05] active:bg-sky-400/15"
+              >
+                <Ionicons name={action.icon} size={18} color="#0EA5E9" />
+                <Text className="mt-1.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                  {action.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      </GlassContainer>
+    </Animated.View>
+  );
+}
+
 const SETTINGS_GROUPS = [
   {
     id: "schedule",
@@ -993,33 +1145,40 @@ export function SettingsScreen() {
       title="设置"
       onBack={() => router.canGoBack() ? router.back() : router.replace("/")}
     >
-      <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
-        {SETTINGS_GROUPS.map((group, index) => (
-          <Link
-            key={group.id}
-            href={{ pathname: "/settings/[category]", params: { category: group.id } }}
-            asChild
-          >
-            <Pressable
-              className="min-h-16 flex-row items-center gap-3 px-4 py-2.5 active:bg-sky-400/15"
-              style={index > 0 ? { borderTopWidth: 1, borderTopColor: "rgba(148,163,184,0.2)" } : undefined}
+      <SettingsOverview />
+      <Animated.View
+        entering={FadeInDown.delay(80).springify()}
+        style={{ marginTop: 14 }}
+      >
+        <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
+          {SETTINGS_GROUPS.map((group, index) => (
+            <Link
+              key={group.id}
+              href={{ pathname: "/settings/[category]", params: { category: group.id } }}
+              asChild
             >
-              <View className="h-9 w-9 items-center justify-center rounded-xl bg-sky-400/20">
-                <Ionicons name={group.icon} size={19} color="#0EA5E9" />
-              </View>
-              <View className="flex-1">
-                <Text className="text-[15px] font-bold text-slate-800 dark:text-white">
-                  {group.title}
-                </Text>
-                <Text className="mt-0.5 text-[12px] text-slate-600 dark:text-slate-400">
-                  {group.description}
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color="#94A3B8" />
-            </Pressable>
-          </Link>
-        ))}
-      </GlassContainer>
+              <Pressable
+                className="min-h-[70px] flex-row items-center gap-3 px-4 py-2.5 active:bg-sky-400/15"
+                style={index > 0 ? { borderTopWidth: 1, borderTopColor: "rgba(148,163,184,0.2)" } : undefined}
+              >
+                <View className="h-10 w-10 items-center justify-center rounded-[14px] bg-sky-400/20">
+                  <Ionicons name={group.icon} size={19} color="#0EA5E9" />
+                </View>
+                <View className="flex-1">
+                  <Text className="text-[15px] font-bold text-slate-800 dark:text-white">
+                    {group.title}
+                  </Text>
+                  <Text className="mt-0.5 text-[12px] text-slate-600 dark:text-slate-400">
+                    {group.description}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color="#94A3B8" />
+              </Pressable>
+            </Link>
+          ))}
+        </GlassContainer>
+      </Animated.View>
+      <QuickActions />
       <Text className="mt-5 text-center text-[11px] text-slate-500 dark:text-slate-400">
         Dark Study v{currentVersion()}
       </Text>

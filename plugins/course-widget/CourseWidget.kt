@@ -11,8 +11,10 @@ import android.content.Intent
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.util.TypedValue
 import android.view.View
 import android.widget.RemoteViews
+import androidx.core.content.ContextCompat
 import com.facebook.react.ReactPackage
 import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.Promise
@@ -24,6 +26,7 @@ import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import java.util.TimeZone
 
 class CourseWidgetPackage : ReactPackage {
   override fun createNativeModules(context: ReactApplicationContext): List<NativeModule> = listOf(CourseWidgetModule(context))
@@ -115,7 +118,12 @@ class CourseWidgetRefreshReceiver : BroadcastReceiver() {
 /** No JS process is required: recompute the full recurrence in the current timezone. */
 object CourseWidgetEngine {
   const val PREFS = "dark-study-course-widget"
-  private data class Lesson(val name: String, val room: String, val start: Long, val end: Long, val time: String)
+  /** 顶部固定占用的高度（dp）：上下内边距 20 + 一行品牌 16 + 标题 20 + 间隔 2 */
+  private const val CHROME_HEIGHT = 58
+  private const val BASE_ROW_HEIGHT = 44
+  /** 动态撑满时单行可以压缩到的下限，保证小尺寸组件也能多放一门课 */
+  private const val MIN_ROW_HEIGHT = 38
+  private data class Lesson(val name: String, val room: String, val start: Long, val end: Long, val time: String, val color: String)
   private val providers = listOf(SquareCourseWidget::class.java, RectangleCourseWidget::class.java, LargeCourseWidget::class.java)
 
   private fun parseDate(value: String): Calendar? {
@@ -167,7 +175,7 @@ object CourseWidgetEngine {
         if (iso < startDate || iso > endDate) continue
         val start = (day.clone() as Calendar).apply { set(Calendar.HOUR_OF_DAY, startMinutes / 60); set(Calendar.MINUTE, startMinutes % 60) }.timeInMillis
         val end = (day.clone() as Calendar).apply { set(Calendar.HOUR_OF_DAY, endMinutes / 60); set(Calendar.MINUTE, endMinutes % 60) }.timeInMillis
-        if (end > now) result.add(Lesson(course.optString("name"), course.optString("classroom"), start, end, "$from–$to"))
+        if (end > now) result.add(Lesson(course.optString("name"), course.optString("classroom"), start, end, "$from–$to", course.optString("color", "sky")))
       }
     }
     return result.sortedWith(compareBy<Lesson> { it.start }.thenBy { it.name })
@@ -181,6 +189,46 @@ object CourseWidgetEngine {
     today.add(Calendar.DAY_OF_MONTH, 1)
     if (format.format(date.time) == format.format(today.time)) return "明天"
     return "${date.get(Calendar.MONTH) + 1}/${date.get(Calendar.DAY_OF_MONTH)} 周${"日一二三四五六"[date.get(Calendar.DAY_OF_WEEK) - 1]}"
+  }
+
+  /** 右上角日期：11.4 第8周 周三；小尺寸只显示 11.4 周三 */
+  private fun metaText(schedule: JSONObject?, now: Long, wide: Boolean): String {
+    val today = Calendar.getInstance().apply { timeInMillis = now }
+    val weekday = "周${"日一二三四五六"[today.get(Calendar.DAY_OF_WEEK) - 1]}"
+    val dateLabel = "${today.get(Calendar.MONTH) + 1}.${today.get(Calendar.DAY_OF_MONTH)}"
+    if (schedule == null || !wide) return "$dateLabel $weekday"
+    val monday = parseDate(schedule.optString("startDate")) ?: return "$dateLabel $weekday"
+    monday.add(Calendar.DAY_OF_MONTH, -((monday.get(Calendar.DAY_OF_WEEK) + 5) % 7))
+    val days = daysBetween(monday, today)
+    val week = Math.floor(days.toDouble() / 7.0).toInt() + 1
+    val total = schedule.optInt("totalWeeks", 0)
+    return if (week in 1..total) "$dateLabel 第${week}周 $weekday" else "$dateLabel $weekday"
+  }
+
+  /** 用 UTC 午夜计算天数差，避免夏令时导致 23/25 小时的日子算错周次 */
+  private fun daysBetween(from: Calendar, to: Calendar): Long {
+    val a = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+      clear(); set(from.get(Calendar.YEAR), from.get(Calendar.MONTH), from.get(Calendar.DAY_OF_MONTH))
+    }
+    val b = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+      clear(); set(to.get(Calendar.YEAR), to.get(Calendar.MONTH), to.get(Calendar.DAY_OF_MONTH))
+    }
+    return (b.timeInMillis - a.timeInMillis) / 86400000L
+  }
+
+  private fun colorResource(context: Context, name: String, fallback: Int): Int {
+    val id = context.resources.getIdentifier(name, "color", context.packageName)
+    return if (id != 0) ContextCompat.getColor(context, id) else fallback
+  }
+
+  private fun drawableResource(context: Context, name: String, fallback: Int): Int {
+    val id = context.resources.getIdentifier(name, "drawable", context.packageName)
+    return if (id != 0) id else fallback
+  }
+
+  private fun courseColor(colorPalette: JSONObject?, name: String): Int {
+    val hex = colorPalette?.optString(name)?.takeIf { Regex("#[0-9a-fA-F]{6}").matches(it) } ?: "#38BDF8"
+    return try { Color.parseColor(hex) } catch (_: Exception) { Color.parseColor("#38BDF8") }
   }
 
   @Synchronized
@@ -197,19 +245,37 @@ object CourseWidgetEngine {
     val upcoming = lessons(schedule, now)
     val count = payload.optInt("count", 3).coerceIn(1, 5)
     val dark = payload.optString("theme", "dark") != "light"
+    val accent = payload.optString("accent", "default").takeIf { Regex("[a-z]+").matches(it) } ?: "default"
+    val mode = if (dark) "dark" else "light"
     val ink = Color.parseColor(if (dark) "#F1F5F9" else "#172554")
     val muted = Color.parseColor(if (dark) "#A5B4CF" else "#536783")
+    val brand = colorResource(context, "course_widget_brand_${accent}_$mode", Color.parseColor(if (dark) "#7DD3FC" else "#0369A1"))
+    val background = drawableResource(context, "course_widget_bg_${accent}_$mode", if (dark) R.drawable.course_widget_dark else R.drawable.course_widget_light)
+    val colorPalette = payload.optJSONObject("colorPalette")
     for ((id, provider) in widgets) {
+      val options = manager.getAppWidgetOptions(id)
+      val height = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 0)
+      val width = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0)
       val view = RemoteViews(context.packageName, R.layout.course_widget)
-      view.setInt(R.id.widget_root, "setBackgroundResource", if (dark) R.drawable.course_widget_dark else R.drawable.course_widget_light)
-      view.setTextColor(R.id.widget_title, ink)
-      view.setTextColor(R.id.widget_brand, Color.parseColor(if (dark) "#7DD3FC" else "#0369A1"))
+      view.setInt(R.id.widget_root, "setBackgroundResource", background)
+      view.setTextColor(R.id.widget_brand, brand)
+      view.setTextColor(R.id.widget_meta, muted)
       view.setTextViewText(R.id.widget_title, schedule?.optString("name") ?: "桌面课表")
+      view.setTextViewText(R.id.widget_meta, metaText(schedule, now, if (width > 0) width >= 200 else provider != SquareCourseWidget::class.java))
       view.removeAllViews(R.id.widget_courses)
-      val height = manager.getAppWidgetOptions(id).getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 0)
       val defaultCapacity = if (provider == LargeCourseWidget::class.java) 5 else 2
-      val capacity = if (height > 0) ((height - 54) / 44).coerceIn(1, 5) else defaultCapacity
-      for (lesson in upcoming.take(minOf(count, capacity))) {
+      val available = if (height > 0) height - CHROME_HEIGHT else 0
+      val capacity = if (available > 0) (available / MIN_ROW_HEIGHT).coerceIn(1, 5) else defaultCapacity
+      val visible = upcoming.take(minOf(count, capacity))
+      // 撑满整个组件：按剩余高度均分行高，并等比放大字号，避免底部留白。
+      val stretch = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && available > 0 && visible.isNotEmpty()
+      val rowHeight = if (stretch) available.toFloat() / visible.size else BASE_ROW_HEIGHT.toFloat()
+      val scale = if (stretch) (rowHeight / BASE_ROW_HEIGHT.toFloat()).coerceAtLeast(1f) else 1f
+      // 标题与顶部信息适度放大，和撑高后的课程行保持比例，同时不超过固定行高。
+      view.setTextViewTextSize(R.id.widget_title, TypedValue.COMPLEX_UNIT_SP, (12f * scale).coerceIn(12f, 16f))
+      view.setTextViewTextSize(R.id.widget_brand, TypedValue.COMPLEX_UNIT_SP, (9f * scale).coerceIn(9f, 11f))
+      view.setTextViewTextSize(R.id.widget_meta, TypedValue.COMPLEX_UNIT_SP, (9f * scale).coerceIn(9f, 11f))
+      for (lesson in visible) {
         val row = RemoteViews(context.packageName, R.layout.course_widget_row)
         row.setTextViewText(R.id.widget_course_name, lesson.name)
         row.setTextViewText(R.id.widget_course_time, "${if (lesson.start <= now) "上课中" else dayLabel(lesson.start, now)} · ${lesson.time}")
@@ -217,9 +283,23 @@ object CourseWidgetEngine {
         row.setTextColor(R.id.widget_course_name, ink)
         row.setTextColor(R.id.widget_course_time, muted)
         row.setTextColor(R.id.widget_course_room, muted)
+        val accentColor = courseColor(colorPalette, lesson.color)
+        row.setInt(R.id.widget_course_bar, "setBackgroundColor", accentColor)
+        row.setTextColor(R.id.widget_course_dot, accentColor)
+        row.setInt(R.id.widget_course_row, "setBackgroundColor",
+          Color.argb(if (dark) 0x1C else 0x14, Color.red(accentColor), Color.green(accentColor), Color.blue(accentColor)))
+        if (stretch && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+          row.setViewLayoutHeight(R.id.widget_course_row, rowHeight, TypedValue.COMPLEX_UNIT_DIP)
+          row.setTextViewTextSize(R.id.widget_course_name, TypedValue.COMPLEX_UNIT_SP, (12f * scale).coerceIn(11f, 20f))
+          row.setTextViewTextSize(R.id.widget_course_time, TypedValue.COMPLEX_UNIT_SP, (9f * scale).coerceIn(8f, 13f))
+          row.setTextViewTextSize(R.id.widget_course_room, TypedValue.COMPLEX_UNIT_SP, (9f * scale).coerceIn(8f, 13f))
+          row.setTextViewTextSize(R.id.widget_course_dot, TypedValue.COMPLEX_UNIT_SP, (7f * scale).coerceIn(6f, 11f))
+        }
         view.addView(R.id.widget_courses, row)
       }
-      view.setViewVisibility(R.id.widget_empty, if (upcoming.isEmpty()) View.VISIBLE else View.GONE)
+      val empty = visible.isEmpty()
+      view.setViewVisibility(R.id.widget_courses, if (empty) View.GONE else View.VISIBLE)
+      view.setViewVisibility(R.id.widget_empty, if (empty) View.VISIBLE else View.GONE)
       view.setTextColor(R.id.widget_empty, muted)
       view.setTextViewText(R.id.widget_empty, if (schedule == null) "打开 Dark Study 同步课表" else if ((schedule.optJSONArray("courses")?.length() ?: 0) == 0) "还没有课程\n先导入或添加课表吧" else "本学期暂无后续课程\n享受自由时间吧")
       val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)

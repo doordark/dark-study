@@ -6,11 +6,14 @@ import { RESIDENTS, type ResidentId } from "@/utils/farmLife";
 const WALK = require("../../../assets/images/farm-people-walk-v2.png");
 const IDLE = require("../../../assets/images/farm-people-idle-v2.png");
 const TALK = require("../../../assets/images/farm-people-talk-v2.png");
+const FAMILY = require("../../../assets/images/farm-people-family-v3.png");
+const FAMILY_IDLE = require("../../../assets/images/farm-people-family-idle-v3.png");
+const FAMILY_TALK = require("../../../assets/images/farm-people-family-talk-v3.png");
 const IDLE_HOLDS = [1700, 500, 80, 90, 80, 650];
 
-export function FarmPersonSprite({ who, activity = "idle", size, active = true, positionX, positionY, walkSpeed = 26 }: {
+export function FarmPersonSprite({ who, activity = "idle", size, active = true, positionX, positionY, walkSpeed = 26, centered = false }: {
   who: ResidentId | "hero"; activity?: "idle" | "walk" | "talk"; size: number; active?: boolean;
-  positionX?: SharedValue<number>; positionY?: SharedValue<number>; walkSpeed?: number;
+  positionX?: SharedValue<number>; positionY?: SharedValue<number>; walkSpeed?: number; centered?: boolean;
 }) {
   const awake = useAnimationActive(active);
   const reduced = useReducedMotion();
@@ -18,6 +21,8 @@ export function FarmPersonSprite({ who, activity = "idle", size, active = true, 
   const row = who === "hero" ? 6 : RESIDENTS[who].row;
   const frames = useMemo(() => Array.from({ length: 6 }, (_, i) => row * 6 + i), [row]);
   const walkFrames = useMemo(() => Array.from({ length: 8 }, (_, i) => row * 8 + i), [row]);
+  const familyRest = useMemo(() => Array.from({ length: 8 }, (_, i) => row * 8 + i), [row]);
+  const family = row < 5;
   const envelope = useSharedValue(0);
   const rate = useSharedValue(0);
   const distance = useSharedValue(0);
@@ -50,13 +55,16 @@ export function FarmPersonSprite({ who, activity = "idle", size, active = true, 
   const walkingStyle = useAnimatedStyle(() => ({ opacity: envelope.value }));
   const restingStyle = useAnimatedStyle(() => ({ opacity: 1 - envelope.value }));
   return <Animated.View style={[{ width: size, height: size * 1.25 }, body]}>
-    <Animated.View style={[{ position: "absolute" }, restingStyle]}>
+    <Animated.View style={[{ position: "absolute", top: family ? size * (centered ? 0.125 : 0.24924) : 0 }, restingStyle]}>
+      {family ? <AnimatedAtlas source={activity === "talk" ? FAMILY_TALK : FAMILY_IDLE} columns={8} rows={5} frames={familyRest}
+        holds={activity === "talk" ? [280, 180, 230, 320, 220, 250, 300, 240] : [1800, 300, 90, 100, 90, 500, 700, 400]}
+        width={size} height={size * 1.0014} active={awake && !walking} /> :
       <AnimatedAtlas source={activity === "talk" ? TALK : IDLE} columns={6} rows={7} frames={frames}
-        holds={activity === "talk" ? undefined : IDLE_HOLDS} frameDuration={110} width={size} height={size * 1.25} active={awake && !walking} />
+        holds={activity === "talk" ? undefined : IDLE_HOLDS} frameDuration={110} width={size} height={size * 1.25} active={awake && !walking} />}
     </Animated.View>
-    <Animated.View style={[{ position: "absolute" }, walkingStyle]}>
-      <AnimatedAtlas source={WALK} columns={8} rows={7} frames={walkFrames} frameDuration={80}
-        width={size} height={size * 1.25} active={awake && walking} playbackRate={rate} />
+    <Animated.View style={[{ position: "absolute", top: family ? size * (centered ? 0.125 : 0.24924) : 0 }, walkingStyle]}>
+      <AnimatedAtlas source={family ? FAMILY : WALK} columns={8} rows={family ? 5 : 7} frames={walkFrames} frameDuration={80}
+        width={size} height={size * (family ? 1.00076 : 1.25)} active={awake && walking} playbackRate={rate} />
     </Animated.View>
   </Animated.View>;
 }
