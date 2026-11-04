@@ -3,7 +3,7 @@ import { SCENE_SIZE } from '@/constants/farmMap';
 import { RESIDENTS } from '@/utils/farmLife';
 import type { ResidentModel } from '@/utils/farmResidentAI';
 import { placeFarmSpeech, type SpeechRect } from '@/utils/farmResidentSpace';
-import { FarmPaper, FarmText } from './FarmSkin';
+import { FarmText } from './FarmSkin';
 
 /** Speech sits above all y-sorted sprites. Only the current speaker keeps a card. */
 export function FarmSpeechLayer({ residents, scale }: { residents: ResidentModel[]; scale: number }) {
@@ -24,13 +24,12 @@ export function FarmSpeechLayer({ residents, scale }: { residents: ResidentModel
       const partner = r.conversationPartner;
       const tailBelow = anchor.y >= rect.top + rect.height / 2;
       const tailLeft = Math.max(12, Math.min(cardWidth - 22, anchor.x - rect.left - 5));
-      return <View key={r.id} style={{ position: 'absolute', ...rect, paddingHorizontal: 14, paddingTop: 8, backgroundColor: '#FCF1E6', borderWidth: 1, borderColor: '#AD8078', borderRadius: 3, shadowColor: '#59432E', shadowOpacity: .16, shadowOffset: { width: 0, height: 2 }, shadowRadius: 0 }}>
-        <View style={{ position: 'absolute', left: tailLeft, ...(tailBelow ? { bottom: -5 } : { top: -5 }), width: 9, height: 9, backgroundColor: '#FCF1E6', borderWidth: 1, borderColor: '#AD8078', transform: [{ rotate: '45deg' }] }} />
-        <FarmPaper theme="chat" />
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, borderBottomWidth: 1, borderBottomColor: '#DFC1B3', paddingBottom: 4, marginBottom: 4 }}>
-          <View style={{ width: 5, height: 5, backgroundColor: '#AB6C79', transform: [{ rotate: '45deg' }] }} />
+      return <View key={r.id} style={{ position: 'absolute', ...rect, paddingHorizontal: 14, paddingTop: 8, backgroundColor: '#FFF9EC', borderWidth: 1, borderColor: '#CBAE88', borderRadius: 12, shadowColor: '#59432E', shadowOpacity: .16, shadowOffset: { width: 0, height: 2 }, shadowRadius: 0 }}>
+        <View style={{ position: 'absolute', left: tailLeft, ...(tailBelow ? { bottom: -5 } : { top: -5 }), width: 9, height: 9, backgroundColor: '#FFF9EC', borderWidth: 1, borderColor: '#CBAE88', transform: [{ rotate: '45deg' }] }} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 4 }}>
+          <View style={{ width: 5, height: 5, backgroundColor: '#BD8972', transform: [{ rotate: '45deg' }] }} />
           <FarmText variant="label" numberOfLines={1} style={{ flex: 1, color: '#825064' }}>
-            {RESIDENTS[r.id].name}{partner ? ` · 与${RESIDENTS[partner].name}闲聊` : ''}
+            {RESIDENTS[r.id].name}{r.conversationSize > 2 ? ' · 大家一起聊' : partner ? ` · 与${RESIDENTS[partner].name}闲聊` : ''}
           </FarmText>
         </View>
         <FarmText style={{ color: '#493A2C', fontSize: 13, lineHeight: 19 }}>{message}</FarmText>

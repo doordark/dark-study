@@ -1,7 +1,8 @@
 import { isResidentId, RESIDENTS, RESIDENT_IDS, type ResidentId } from './farmLife';
 export const FARM_LOCATIONS = ['pond', 'farm', 'plaza', 'house', 'coop', 'bench', 'market'] as const;
 export type FarmLocation = typeof FARM_LOCATIONS[number];
-export type NpcAction = {
+export type FarmDiscussionAction = { type: 'discuss'; question: string; guests: ResidentId[] };
+export type NpcAction = FarmDiscussionAction | {
   type: 'fetch_water' | 'water_crops' | 'rest' | 'go_home';
 } | {
   type: 'talk_to';
@@ -13,6 +14,11 @@ export type NpcAction = {
 export function validateNpcAction(raw: unknown): NpcAction | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const v = raw as Record<string, unknown>;
+  if (v.type === 'discuss' && Object.keys(v).every(k => ['type', 'question', 'guests'].includes(k)) &&
+      typeof v.question === 'string' && v.question.trim().length >= 2 && v.question.length <= 160 &&
+      Array.isArray(v.guests) && v.guests.length <= 2 && v.guests.every(isResidentId) && new Set(v.guests).size === v.guests.length) {
+    return { type: 'discuss', question: v.question.trim(), guests: v.guests };
+  }
   if (Object.keys(v).some(k => !['type', 'target'].includes(k))) return null;
   if (['fetch_water', 'water_crops', 'rest', 'go_home'].includes(v.type as string) && Object.keys(v).length === 1) return {
     type: v.type as 'fetch_water' | 'water_crops' | 'rest' | 'go_home'
@@ -47,9 +53,24 @@ export function parseNpcReply(raw: string): {
     return null;
   }
 }
+export const DISCUSSION_PROMPT = '请家人一起讨论：';
+
+/** An invitation must be explicit, and guest names only count in the invitation. */
+export function playerDiscussionCommand(text: string, who: ResidentId): FarmDiscussionAction | null {
+  const invitation = /^(?:(?:请|麻烦|帮我|你能不能|能不能|你可以|可以)\s*)*(?:把|找|喊|叫|约|邀请|让|请)[^：:\n]{0,24}?(?:一起|过来|来)[^：:\n]{0,12}?(?:讨论|分析|想想|聊聊|商量)/.exec(text)?.[0];
+  if (!invitation || /不要|不用|别|不需要|假如|如果/.test(invitation)) return null;
+  const question = text.slice(invitation.length).replace(/^(?:一下)?[：:，,\s]*/, '').trim();
+  if (/^(?:这件事|这个问题|一下|吧)[。！？?!]?$/.test(question)) return null;
+  const guests = RESIDENT_IDS.filter(id => id !== who &&
+    (id === 'gu' ? /顾(?:和|跟|、|，|一起|过来|来|也|$)/.test(invitation) : invitation.includes(RESIDENTS[id].name)));
+  const action = validateNpcAction({ type: 'discuss', question, guests });
+  return action?.type === 'discuss' ? action : null;
+}
 /** Explicit local commands only. Never run this on malformed model output. */
 export function localNpcCommand(text: string, who: ResidentId): NpcAction | null {
   if (/不要|不用|别|不需要/.test(text)) return null;
+  const discussion = playerDiscussionCommand(text, who);
+  if (discussion) return discussion;
   if (/怎么|如何|如果|假如|要是|会.*吗/.test(text) && !/帮|请|麻烦/.test(text)) return null;
   if (/打[点些一壶]*水|取水|装[点些满]*水/.test(text)) return {
     type: 'fetch_water'

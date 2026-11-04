@@ -34,6 +34,35 @@ class CourseWidgetModule(private val context: ReactApplicationContext) : ReactCo
   override fun getName() = "CourseWidget"
 
   @ReactMethod
+  fun status(promise: Promise) {
+    try {
+      val manager = AppWidgetManager.getInstance(context)
+      val names = listOf(SquareCourseWidget::class.java, RectangleCourseWidget::class.java, LargeCourseWidget::class.java)
+      val registered = manager.installedProviders.map { it.provider }.toSet()
+      val result = com.facebook.react.bridge.Arguments.createMap()
+      result.putInt("registered", names.count { registered.contains(ComponentName(context, it)) })
+      result.putInt("installed", names.sumOf { manager.getAppWidgetIds(ComponentName(context, it)).size })
+      result.putBoolean("pinSupported", Build.VERSION.SDK_INT >= 26 && manager.isRequestPinAppWidgetSupported)
+      result.putString("manufacturer", Build.MANUFACTURER)
+      promise.resolve(result)
+    } catch (error: Exception) { promise.reject("WIDGET_STATUS", error) }
+  }
+
+  @ReactMethod
+  fun openPermissions(promise: Promise) {
+    try {
+      val intent = Intent("miui.intent.action.APP_PERM_EDITOR")
+        .setPackage("com.miui.securitycenter").putExtra("extra_pkgname", context.packageName)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      try { context.startActivity(intent) } catch (_: Exception) {
+        context.startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+          android.net.Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+      }
+      promise.resolve(null)
+    } catch (error: Exception) { promise.reject("WIDGET_SETTINGS", error) }
+  }
+
+  @ReactMethod
   fun sync(payload: String, promise: Promise) {
     try {
       JSONObject(payload) // Reject invalid JSON before replacing the saved schedule.
@@ -56,7 +85,14 @@ class CourseWidgetModule(private val context: ReactApplicationContext) : ReactCo
         else -> throw IllegalArgumentException("Unknown widget shape")
       }
       if (Build.VERSION.SDK_INT >= 26 && manager.isRequestPinAppWidgetSupported) {
-        promise.resolve(manager.requestPinAppWidget(ComponentName(context, provider), null, null))
+        val component = ComponentName(context, provider)
+        if (manager.installedProviders.none { it.provider == component }) {
+          throw IllegalStateException("系统未注册此小组件，请安装完整新版 APK 后重新打开应用")
+        }
+        val extras = Bundle().apply {
+          putParcelable(AppWidgetManager.EXTRA_APPWIDGET_PREVIEW, RemoteViews(context.packageName, R.layout.course_widget))
+        }
+        promise.resolve(manager.requestPinAppWidget(component, extras, null))
       } else promise.resolve(false)
     } catch (error: Exception) { promise.reject("WIDGET_PIN", error) }
   }

@@ -51,6 +51,9 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
+# offline voice model (>100 MB single file, GitHub rejects it; bundled into the APK instead)
+/assets/voice
+
 example
 
 # generated native folders

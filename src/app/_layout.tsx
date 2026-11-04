@@ -3,7 +3,7 @@ import { StatusBar } from "expo-status-bar";
 import { colorScheme as appColorScheme, useColorScheme } from "nativewind";
 import { useEffect } from "react";
 import { AppState } from "react-native";
-import { disposeWhaleVoice, stopWhaleVoice } from "@/services/whaleVoice";
+import { disposeWhaleVoice, stopWhaleVoice, warmWhaleVoice } from "@/services/whaleVoice";
 import { useWhaleVoice } from "@/store/useWhaleVoice";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
@@ -20,14 +20,18 @@ export default function RootLayout() {
   const isDark = colorScheme !== "light";
 
   useEffect(() => {
-    void useWhaleVoice.getState().hydrate();
+    let mounted = true;
+    void useWhaleVoice.getState().hydrate().then(() => {
+      if (mounted && useWhaleVoice.getState().on) warmWhaleVoice();
+    });
     const state = AppState.addEventListener("change", (next) => {
       if (next !== "active") stopWhaleVoice();
     });
     const unsubscribe = useWhaleVoice.subscribe((next, prev) => {
       if (!next.on && prev.on) stopWhaleVoice();
+      if (next.on && !prev.on) warmWhaleVoice();
     });
-    return () => { state.remove(); unsubscribe(); disposeWhaleVoice(); };
+    return () => { mounted = false; state.remove(); unsubscribe(); disposeWhaleVoice(); };
   }, []);
 
   // Reapply the saved theme after storage hydration, including direct web loads.
@@ -50,10 +54,15 @@ export default function RootLayout() {
           <Stack.Screen name="assistant" options={{ presentation: "modal" }} />
           <Stack.Screen name="grades" options={{ presentation: "modal" }} />
           <Stack.Screen name="settings" options={{ presentation: "modal" }} />
+          <Stack.Screen name="settings/[category]" options={{ animation: "slide_from_right" }} />
           <Stack.Screen name="whale-settings" options={{ presentation: "modal" }} />
           <Stack.Screen
             name="farm"
-            options={{ presentation: "fullScreenModal", animation: "fade" }}
+            options={{
+              presentation: "fullScreenModal",
+              animation: "none",
+              contentStyle: { backgroundColor: "#081224" },
+            }}
           />
         </Stack>
         {/* 全局导入任务悬浮层：分析进度弹窗 / 可拖动进度球，退出导入页后任务继续 */}

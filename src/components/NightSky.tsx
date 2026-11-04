@@ -21,7 +21,7 @@ import Animated, {
   withSpring,
   withTiming,
 } from "react-native-reanimated";
-import Svg, { Circle, ClipPath, Defs, G, Path, RadialGradient, Stop } from "react-native-svg";
+import Svg, { Circle, Defs, G, Path, RadialGradient, Stop } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AtlasSprite } from "@/components/AtlasSprite";
@@ -70,15 +70,24 @@ const DOTS = seededDots(56);
 
 /** 七颗可拾取的星：避开顶部标题、月亮与底部面板 */
 const SPOTS = [
-  { x: 0.15, y: 0.33, s: 26 },
-  { x: 0.31, y: 0.45, s: 22 },
-  { x: 0.47, y: 0.31, s: 28 },
-  { x: 0.63, y: 0.44, s: 23 },
-  { x: 0.23, y: 0.58, s: 24 },
-  { x: 0.42, y: 0.57, s: 27 },
-  { x: 0.73, y: 0.58, s: 24 },
+  { x: 0.17, y: 0.04, s: 26 },
+  { x: 0.38, y: 0.22, s: 22 },
+  { x: 0.63, y: 0.08, s: 28 },
+  { x: 0.81, y: 0.46, s: 23 },
+  { x: 0.55, y: 0.67, s: 24 },
+  { x: 0.27, y: 0.53, s: 27 },
+  { x: 0.22, y: 0.97, s: 24 },
 ] as const;
 
+const OWL_FLIGHT = require("../../assets/images/night-owl-flight.png");
+const OWL_BRANCH = require("../../assets/images/night-owl-branch.png");
+const FLIGHT_SIZE = 128;
+const ARRIVAL_MS = 1640;
+const DEPARTURE_MS = 1160;
+type OwlStage = "waiting" | "arriving" | "perched" | "leaving";
+
+const MOON_ATLAS = require("../../assets/images/night-moon-phases.png");
+const OWL_BUBBLE = require("../../assets/images/night-owl-bubble.png");
 const NIGHT_SPRITES = require("../../assets/images/night-sprites-v2.png");
 
 /* -------------------------------------------------------------------------- */
@@ -281,12 +290,8 @@ function Moon({
     const timer = setInterval(refresh, 30000);
     return () => clearInterval(timer);
   }, []);
-  const waxing = phase < 4;
-  const curve = Math.cos(phase * Math.PI / 4) * 36;
-  const terminator = Math.abs(curve) < 0.01 ? "L50 86" :
-    `A${Math.abs(curve)} 36 0 0 ${(waxing ? curve < 0 : curve > 0) ? 0 : 1} 50 86`;
-  const phasePath = `M50 14 ${terminator} A36 36 0 0 ${waxing ? 0 : 1} 50 14 Z`;
-  const bright = 0.35 + (lit / TOTAL_STARS) * 0.65;
+  const illumination = [0, 0.16, 0.5, 0.84, 1, 0.84, 0.5, 0.16][phase];
+  const bright = illumination * (0.45 + (lit / TOTAL_STARS) * 0.55);
 
   return (
     <Animated.View
@@ -314,24 +319,9 @@ function Moon({
           <Circle cx="50" cy="50" r="50" fill="url(#moonAtmosphere)" />
         </Svg>
       </Animated.View>
-      <Svg width={size} height={size} viewBox="0 0 100 100" accessibilityLabel={MOON_NAMES[phase]}>
-        <Defs>
-          <RadialGradient id="nightMoonLight" cx="35%" cy="30%" r="75%">
-            <Stop offset="0" stopColor="#FFF1CE" />
-            <Stop offset="1" stopColor="#AD91A0" />
-          </RadialGradient>
-          <ClipPath id="nightMoonPhase"><Path d={phasePath} /></ClipPath>
-        </Defs>
-        <Circle cx="50" cy="50" r="36" fill="#222941" stroke="#A7A4C3" strokeOpacity={0.24} />
-        {phase !== 0 ? (
-          <G clipPath={phase === 4 ? undefined : "url(#nightMoonPhase)"} opacity={0.78 + bright * 0.22}>
-            <Circle cx="50" cy="50" r="36" fill="url(#nightMoonLight)" />
-            <Path d="M21 39 Q32 24 46 31 T62 49 Q59 62 45 60 T31 68 Q20 58 21 39Z M61 64 Q74 53 83 63 Q77 78 65 82 Q57 77 61 64Z" fill="#817994" opacity={0.24} />
-            <Circle cx="37" cy="49" r="7" fill="#9E8293" opacity={0.25} />
-            <Circle cx="65" cy="38" r="4" fill="#9E8293" opacity={0.3} />
-          </G>
-        ) : null}
-      </Svg>
+      <View accessible accessibilityRole="image" accessibilityLabel={MOON_NAMES[phase]}>
+        <AtlasSprite source={MOON_ATLAS} columns={4} rows={2} column={phase % 4} row={Math.floor(phase / 4)} width={size * 0.8} />
+      </View>
     </Animated.View>
   );
 }
@@ -579,26 +569,89 @@ function ConstellationReveal({ points, width, height }: {
 /*  猫头鹰：拾满星后从月边探出头，会眨眼                                        */
 /* -------------------------------------------------------------------------- */
 
+/** Position and atlas cell share one UI-thread clock. React only handles stage changes. */
+function OwlFlight({ stage, elapsed, x, y, screenWidth, insetTop }: {
+  stage: OwlStage;
+  elapsed: ReturnType<typeof useSharedValue<number>>;
+  x: number;
+  y: number;
+  screenWidth: number;
+  insetTop: number;
+}) {
+  const flying = stage === "arriving" || stage === "leaving";
+  const leaving = stage === "leaving";
+  const flightStyle = useAnimatedStyle(() => {
+    const progress = Math.min(1, elapsed.value / (leaving ? DEPARTURE_MS : ARRIVAL_MS));
+    const t = leaving ? progress * progress * (2 - progress) : 1 - (1 - progress) ** 1.28;
+    const u = 1 - t;
+    const dx = leaving
+      ? 2 * u * t * 30 + t * t * (screenWidth - x + FLIGHT_SIZE)
+      : -u * u * (x + FLIGHT_SIZE) + 2 * u * t * 34;
+    const dy = leaving
+      ? -2 * u * t * 75 - t * t * (y - insetTop + FLIGHT_SIZE)
+      : -u * u * 70 - 2 * u * t * 125;
+    return {
+      opacity: flying ? (leaving ? Math.min(1, u * 8) : 1) : 0,
+      transform: [
+        { translateX: dx },
+        { translateY: dy },
+        { rotate: `${leaving ? -9 * Math.sin(t * Math.PI) : 10 * u}deg` },
+        { scale: leaving ? 1 - t * 0.56 : 0.74 + t * 0.26 },
+      ],
+    };
+  });
+  const frameStyle = useAnimatedStyle(() => {
+    const time = elapsed.value;
+    let frame = Math.floor(time / 54) % 4;
+    if (leaving) {
+      if (time < 100) frame = 6;
+      else if (time < 155) frame = 7;
+      else frame = 8 + Math.floor((time - 155) / 54) % 4;
+    } else if (time >= ARRIVAL_MS - 270) {
+      frame = time >= ARRIVAL_MS - 115 ? 5 : 4;
+    }
+    return { transform: [
+      { translateX: -(frame % 4) * FLIGHT_SIZE },
+      { translateY: -Math.floor(frame / 4) * FLIGHT_SIZE },
+    ] };
+  });
+
+  return (
+    <Animated.View pointerEvents="none" style={[{
+      position: "absolute",
+      left: x - FLIGHT_SIZE / 2,
+      top: y - FLIGHT_SIZE / 2,
+      width: FLIGHT_SIZE,
+      height: FLIGHT_SIZE,
+      overflow: "hidden",
+      zIndex: 6,
+    }, flightStyle]}>
+      <Animated.Image source={OWL_FLIGHT} resizeMode="stretch" fadeDuration={0} style={[{
+        position: "absolute",
+        width: FLIGHT_SIZE * 4,
+        height: FLIGHT_SIZE * 3,
+      }, frameStyle]} />
+    </Animated.View>
+  );
+}
+
 function OwlBody() {
-  const bob = useSharedValue(0);
   const blink = useSharedValue(1);
   const motion = useContext(NightMotion);
   useEffect(() => {
-    if (!motion) { bob.value = 0; blink.value = 1; return; }
-    bob.value = withRepeat(withTiming(-3, { duration: 1900, easing: Easing.inOut(Easing.sin) }), -1, true);
+    if (!motion) { blink.value = 1; return; }
     blink.value = withRepeat(withSequence(withDelay(2800, withTiming(0, { duration: 0 })), withDelay(105, withTiming(1, { duration: 0 }))), -1, false);
-    return () => { cancelAnimation(blink); cancelAnimation(bob); };
-  }, [blink, bob, motion]);
-  const body = useAnimatedStyle(() => ({ transform: [{ translateY: bob.value }] }));
+    return () => cancelAnimation(blink);
+  }, [blink, motion]);
   const closed = useAnimatedStyle(() => ({ opacity: 1 - blink.value }));
-  return <Animated.View style={[{ width: 80, height: 86 }, body]}>
+  return <View style={{ width: 80, height: 86 }}>
     <AtlasSprite source={NIGHT_SPRITES} columns={3} rows={2} column={0} row={1} width={80} height={86} />
     <Animated.View pointerEvents="none" style={[{ position: "absolute", left: 20, top: 21, width: 40, height: 17, borderRadius: 7, overflow: "hidden" }, closed]}>
       <View style={{ position: "absolute", left: -20, top: -21 }}>
         <AtlasSprite source={NIGHT_SPRITES} columns={3} rows={2} column={1} row={1} width={80} height={86} />
       </View>
     </Animated.View>
-  </Animated.View>;
+  </View>;
 }
 
 function Owl({
@@ -612,64 +665,41 @@ function Owl({
   onTap: () => void;
   hint?: string;
 }) {
-  const pop = useSharedValue(0);
-  const hop = useSharedValue(0);
-  const motion = useContext(NightMotion);
-
-  useEffect(() => {
-    if (!motion) { pop.value = 1; hop.value = 0; return; }
-    pop.value = withSpring(1, { damping: 12, stiffness: 150 });
-    return () => { cancelAnimation(pop); cancelAnimation(hop); };
-  }, [pop, hop, motion]);
-
-  const popStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: hop.value }, { scale: pop.value }],
-    opacity: Math.min(1, pop.value),
-  }));
-
-  const press = () => {
-    if (motion) hop.value = withSequence(
-      withTiming(-9, { duration: 110, easing: Easing.out(Easing.quad) }),
-      withSpring(0, { damping: 13, stiffness: 190 }),
-    );
-    onTap();
-  };
-
   return (
-    <Animated.View
-      style={[{ position: "absolute", left, top, zIndex: 6 }, popStyle]}
-    >
+    <View style={{ position: "absolute", left, top, zIndex: 6 }}>
       {hint ? (
         <View
           pointerEvents="none"
           style={{
             position: "absolute",
-            bottom: 66,
-            right: -4,
-            width: 152,
-            borderRadius: 14,
-            borderWidth: 1,
-            borderColor: "rgba(125,211,252,0.22)",
-            backgroundColor: "rgba(8,18,36,0.92)",
-            paddingHorizontal: 11,
-            paddingVertical: 8,
+            top: 4,
+            right: "100%",
+            marginRight: 10,
+            width: Math.max(72, Math.min(184, left - 22)),
+            minHeight: 64,
+            justifyContent: "center",
+            paddingLeft: 14,
+            paddingRight: 24,
+            paddingVertical: 12,
           }}
         >
+          <Image source={OWL_BUBBLE} resizeMode="stretch" fadeDuration={0}
+            style={{ position: "absolute", width: "100%", height: "100%", left: 0, top: 0 }} />
           <Text
             style={{
-              color: "rgba(186,230,253,0.95)",
-              fontSize: 10.5,
-              lineHeight: 16,
+              color: "#F2E6D6",
+              fontSize: 11,
+              lineHeight: 17,
             }}
           >
             {hint}
           </Text>
         </View>
       ) : null}
-      <Pressable onPress={press} hitSlop={16}>
+      <Pressable onPress={onTap} accessibilityRole="button" accessibilityLabel="和猫头鹰对话" hitSlop={12}>
         <OwlBody />
       </Pressable>
-    </Animated.View>
+    </View>
   );
 }
 
@@ -697,7 +727,11 @@ export function NightSky({
   const lit = picked.filter(Boolean).length;
   const [closing, setClosing] = useState(false);
   const [panelHeight, setPanelHeight] = useState(300);
-  const [seenFarm, setSeenFarm] = useState(false);
+  const [owlLanded, setOwlLanded] = useState(false);
+  const [followingOwl, setFollowingOwl] = useState(false);
+  const [farmHandoff, setFarmHandoff] = useState(false);
+  const flightClock = useSharedValue(0);
+  const travel = useSharedValue(0);
   const [owlHint, setOwlHint] = useState("");
   const owlTaps = useRef(0);
   const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -715,12 +749,31 @@ export function NightSky({
   const closingRef = useRef(false);
   const done = lit >= TOTAL_STARS;
   useEffect(() => { if (done) successHaptic(); }, [done]);
-  /** 去过星露坡的人，猫头鹰会先探出头来；没去过就得多攒一点星光 */
-  const showOwl = done || seenFarm;
+  const owlStage: OwlStage = followingOwl ? "leaving"
+    : !done ? "waiting" : owlLanded || reduceMotion ? "perched" : "arriving";
+  const landOwl = useCallback(() => setOwlLanded(true), []);
+  const travelStyle = useAnimatedStyle(() => ({ opacity: travel.value }));
+  useEffect(() => {
+    if (!done || owlLanded || reduceMotion || closingRef.current) return;
+    flightClock.value = 0;
+    flightClock.value = withDelay(340, withTiming(
+      ARRIVAL_MS,
+      { duration: ARRIVAL_MS, easing: Easing.linear },
+      (finished) => { if (finished) runOnJS(landOwl)(); },
+    ));
+  }, [done, flightClock, landOwl, owlLanded, reduceMotion]);
+
+  useEffect(() => () => {
+    cancelAnimation(flightClock);
+    cancelAnimation(travel);
+  }, [flightClock, travel]);
 
   const fadeStyle = useAnimatedStyle(() => ({ opacity: fade.value }));
   const sceneStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: reduceMotion ? 1 : 1.045 - fade.value * 0.045 }],
+    transform: [
+      { scale: reduceMotion ? 1 : 1.045 - fade.value * 0.045 + travel.value * 0.06 },
+      { translateX: reduceMotion ? 0 : -travel.value * 14 },
+    ],
   }));
   const panelStyle = useAnimatedStyle(() => ({
     opacity: Math.max(0, (fade.value - 0.2) / 0.8),
@@ -728,13 +781,13 @@ export function NightSky({
   }));
 
   useEffect(() => {
-    if (!awake) return;
+    if (closingRef.current) return;
     fade.value = withTiming(1, {
       duration: reduceMotion ? 180 : 780,
       easing: Easing.out(Easing.cubic),
     });
     return () => cancelAnimation(fade);
-  }, [fade, reduceMotion, awake]);
+  }, [fade, reduceMotion]);
 
   // 记录来访次数，让这片夜空记得你
   useEffect(() => {
@@ -747,12 +800,6 @@ export function NightSky({
         AsyncStorage.setItem(VISIT_KEY, String(next)).catch(() => {});
       })
       .catch(() => {});
-    // 农场有存档 = 曾经走过那条小径
-    AsyncStorage.getItem("dark-study-farm")
-      .then((raw) => {
-        if (alive && raw) setSeenFarm(true);
-      })
-      .catch(() => {});
     return () => {
       alive = false;
     };
@@ -762,6 +809,7 @@ export function NightSky({
     if (closingRef.current) return;
     closingRef.current = true;
     setClosing(true);
+    cancelAnimation(flightClock);
     fade.value = withTiming(
       0,
       { duration: reduceMotion ? 150 : 420, easing: Easing.inOut(Easing.cubic) },
@@ -769,27 +817,45 @@ export function NightSky({
         if (finished) runOnJS(onClose)();
       },
     );
-  }, [fade, onClose, reduceMotion]);
+  }, [fade, flightClock, onClose, reduceMotion]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => { close(); return true; });
     return () => subscription.remove();
   }, [close]);
 
+  const openFarm = useCallback(() => {
+    if (!onEnterFarm) {
+      onClose();
+      return;
+    }
+    setFarmHandoff(true);
+    onEnterFarm();
+    // Leave the opaque cover in place while the destination screen mounts.
+    fade.value = withDelay(600, withTiming(0, { duration: 0 }, (finished) => {
+      if (finished) runOnJS(onClose)();
+    }));
+  }, [fade, onClose, onEnterFarm]);
+
   const enterFarm = useCallback(() => {
     if (closingRef.current) return;
     closingRef.current = true;
     setClosing(true);
-    // 先推农场（自带淡入），夜空在下面同时溶解，形成一次交叉过渡而不是黑屏两段
-    if (onEnterFarm) onEnterFarm();
-    fade.value = withTiming(
-      0,
-      { duration: 520, easing: Easing.inOut(Easing.cubic) },
-      (finished) => {
-        if (finished) runOnJS(onClose)();
-      },
-    );
-  }, [fade, onClose, onEnterFarm]);
+    setOwlHint("");
+    setFollowingOwl(true);
+    flightClock.value = 0;
+    if (!reduceMotion) {
+      flightClock.value = withTiming(DEPARTURE_MS, {
+        duration: DEPARTURE_MS,
+        easing: Easing.linear,
+      });
+    }
+    travel.value = withDelay(reduceMotion ? 0 : DEPARTURE_MS - 190, withTiming(
+      1,
+      { duration: reduceMotion ? 150 : 430, easing: Easing.inOut(Easing.cubic) },
+      (finished) => { if (finished) runOnJS(openFarm)(); },
+    ));
+  }, [flightClock, openFarm, reduceMotion, travel]);
 
   const labels = (courseNames.some((name) => name.trim()) ? courseNames : ["", ""])
     .map((n) => n.trim())
@@ -801,14 +867,17 @@ export function NightSky({
   const moonRight = 26;
   const moonCx = w - moonRight - moonSize / 2;
   const moonCy = moonTop + moonSize / 2;
-  // Collectibles live between the header/moon and the bottom card, including short phones.
-  const skyTop = insets.top + (compact ? 148 : 188);
-  const skyBottom = Math.max(skyTop + 60, h - insets.bottom - panelHeight - (compact ? 12 : 24) - 42);
-  const starY = (y: number) => skyTop + ((y - 0.31) / 0.27) * (skyBottom - skyTop);
+  const owlLeft = Math.max(12, w - moonRight - 102);
+  const owlTop = moonTop + moonSize - 5;
+  const branchWidth = w - owlLeft + 76;
+  const skyTop = owlTop + 109;
+  // Reserve space for the achievement before the seventh star is picked.
+  const skyBottom = Math.max(skyTop + 24, h - insets.bottom - panelHeight - (done ? 0 : 38) - (compact ? 32 : 46));
+  const starY = (y: number) => skyTop + y * (skyBottom - skyTop);
   const constellation = SPOTS.filter((_, i) => picked[i]);
 
   return (
-    <NightMotion.Provider value={awake && !reduceMotion}><Animated.View
+    <NightMotion.Provider value={awake && !reduceMotion && !farmHandoff}><Animated.View
       accessibilityViewIsModal
       style={[
         {
@@ -855,7 +924,13 @@ export function NightSky({
         }}
       />
 
-      {DOTS.map((d) => (
+      <Svg pointerEvents="none" width={w} height={h} style={{ position: "absolute" }}>
+        {DOTS.filter((dot) => dot.id % 4 !== 0).map((dot) => (
+          <Circle key={dot.id} cx={dot.x * w} cy={dot.y * h} r={dot.r}
+            fill="#E0F2FE" opacity={0.16 + (dot.id % 5) * 0.10} />
+        ))}
+      </Svg>
+      {DOTS.filter((dot) => dot.id % 4 === 0).map((d) => (
         <Twinkle
           key={d.id}
           x={d.x}
@@ -937,44 +1012,30 @@ export function NightSky({
           <Burst cx={moonCx} cy={moonCy} />
         </>
       ) : null}
-      {showOwl ? (
-        <>
-          {/* 猫头鹰身下的一圈暖光，提示它是可以互动的 */}
-          <View
-            pointerEvents="none"
-            style={{
-              position: "absolute",
-              left: Math.max(12, w - moonRight - moonSize - 8) - 10,
-              top: moonTop + moonSize - 24,
-              width: 64,
-              height: 64,
-              borderRadius: 32,
-              backgroundColor: "rgba(252,211,77,0.08)",
-              borderWidth: 1,
-              borderColor: "rgba(252,211,77,0.16)",
-              zIndex: 5,
-            }}
-          />
-          <Owl
-            left={Math.max(12, w - moonRight - moonSize - 8)}
-            top={moonTop + moonSize - 14}
-            hint={owlHint || undefined}
-            onTap={() => {
-              const n = owlTaps.current + 1;
-              owlTaps.current = n;
-              // 前几次都只是对话，最后一次呼唤它才肯带路
-              if (n >= OWL_TAPS_NEEDED) {
-                thumpHaptic();
-                enterFarm();
-                return;
-              }
-              tapHaptic();
-              setOwlHint(OWL_LINES[n - 1] ?? "");
-              if (hintTimer.current) clearTimeout(hintTimer.current);
-              hintTimer.current = setTimeout(() => setOwlHint(""), 3000);
-            }}
-          />
-        </>
+      <Image source={OWL_BRANCH} pointerEvents="none" resizeMode="stretch" fadeDuration={0}
+        style={{ position: "absolute", right: 0, top: owlTop + 77 - branchWidth * 0.15, width: branchWidth, height: branchWidth / 3, zIndex: 4 }} />
+      <OwlFlight stage={reduceMotion ? "waiting" : owlStage} elapsed={flightClock}
+        x={owlLeft + 40} y={owlTop + 43} screenWidth={w} insetTop={insets.top} />
+      {owlStage === "perched" ? (
+        <Owl
+          left={owlLeft}
+          top={owlTop}
+          hint={owlHint || undefined}
+          onTap={() => {
+            const n = owlTaps.current + 1;
+            owlTaps.current = n;
+            // 前几次都只是对话，最后一次呼唤它才肯带路
+            if (n >= OWL_TAPS_NEEDED) {
+              thumpHaptic();
+              enterFarm();
+              return;
+            }
+            tapHaptic();
+            setOwlHint(OWL_LINES[n - 1] ?? "");
+            if (hintTimer.current) clearTimeout(hintTimer.current);
+            hintTimer.current = setTimeout(() => setOwlHint(""), 3000);
+          }}
+        />
       ) : null}
 
       {/* 底部信息面板 */}
@@ -1056,9 +1117,11 @@ export function NightSky({
           >
             <Text style={{ flex: 1, marginRight: 12, lineHeight: 17, color: "rgba(179,197,220,0.9)", fontSize: 11 }}>
               {done
-                ? showOwl
-                  ? "夜空已亮 · 远处有个小家伙在看你"
-                  : `拾起散落的星 · ${lit} / ${TOTAL_STARS}`
+                ? owlStage === "perched"
+                  ? "猫头鹰落在枝头，轻点它说说话"
+                  : owlStage === "leaving"
+                    ? "跟着猫头鹰，沿着夜色去星露坡"
+                    : "星光点亮了枝头 · 有个小家伙正在飞来"
                 : lit === 0
                   ? "轻点散落的星光，把它们收进口袋"
                   : `拾起散落的星 · ${lit} / ${TOTAL_STARS}`}
@@ -1090,6 +1153,10 @@ export function NightSky({
           </View>
         </View>
       </Animated.View>
+      <Animated.View pointerEvents="none" style={[{
+        position: "absolute", top: 0, right: 0, bottom: 0, left: 0,
+        backgroundColor: "#081224", zIndex: 12,
+      }, travelStyle]} />
     </Animated.View></NightMotion.Provider>
   );
 }

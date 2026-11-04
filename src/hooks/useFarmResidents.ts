@@ -4,7 +4,10 @@ import { AppState } from 'react-native';
 import { useReducedMotion } from 'react-native-reanimated';
 import { farmChat } from '@/services/farmChat';
 import { FarmResidentEngine, type ResidentEffect } from '@/utils/farmResidentAI';
-import { DEFAULT_LIFE, PRESETS, RESIDENTS, normalizeLifeSettings, normalizeLifeUsage, readLifeReply, reserveLifeRequest, restoreConversations, type LifeMode, type LifeSettings, type ResidentConversation, type ResidentId } from '@/utils/farmLife';
+import { DEFAULT_LIFE, FARM_FAMILY_CONTEXT, FARM_TOPICS, PRESETS, RESIDENTS, normalizeLifeSettings, normalizeLifeUsage, readLifeBatch, reserveLifeRequest, restoreConversations, type LifeMode, type LifeSettings, type ResidentConversation, type ResidentId } from '@/utils/farmLife';
+import { RESIDENT_PROJECTS, readResidentBatchIntent, residentReflections } from '@/utils/farmAgency';
+import { RESIDENT_OUTLOOK } from '@/utils/farmDiscussion';
+import { residentPublicTopics, type FarmMemories } from '@/utils/farmMemory';
 import type { NpcAction } from '@/utils/farmActions';
 const KEYS = {
   settings: 'dark-study-farm-life-settings',
@@ -18,12 +21,16 @@ export interface FarmResidentsOptions {
   paused: boolean;
   autonomous: boolean;
   night: boolean;
+  scene: { day: number; season: string; growing: number; ripe: number };
   apiKey: string;
+  memories: FarmMemories;
   onWork: (actor: ResidentId, action: NpcAction, id: string) => string;
 }
 /** One 500ms scheduler, no per-frame React state, no offline AI catch-up. */
 export function useFarmResidents(options: FarmResidentsOptions) {
   const [engine] = useState(() => new FarmResidentEngine(now()));
+  const { memories } = options;
+  useEffect(() => engine.setPublicTopics(residentPublicTopics(memories)), [engine, memories]);
   const [residents, setResidents] = useState(() => engine.snapshot());
   const [settings, setSettings] = useState<LifeSettings>({
     ...DEFAULT_LIFE
@@ -183,21 +190,54 @@ export function useFarmResidents(options: FarmResidentsOptions) {
       // Reserve durably before the only HTTP attempt, including failures/cancellation.
       await persist(KEYS.usage, reserved);
       if (!alive.current || token !== epoch.current || controller.signal.aborted || !engine.getConversation(event.id) || !latest.current.awake) return;
-      const [a, b] = event.pair;
+      const profiles = event.pair.map((id, index) => {
+        const project = RESIDENT_PROJECTS[id];
+        const past = residentReflections(engine.history, id);
+        return RESIDENTS[id].name + '（' + id + '）：' + RESIDENTS[id].persona + RESIDENT_OUTLOOK[id].voice +
+          '。现在心情：' + event.moods[index] + '。自己的小目标：' + project.goal + '。内心顾虑：' + project.tension +
+          (past.length ? ' 已知经历：' + past.join('') : '');
+      }).join('\n');
+      const previous = engine.getConversation(event.id)?.lines.slice(-9) ?? [];
+      const sharedTopic = event.sharedTopic;
+      const shared = sharedTopic
+        ? RESIDENTS[sharedTopic.from].name + '刚提过曾和客人聊到' + FARM_TOPICS[sharedTopic.topic].label + '。可聊这个主题，勿编造客人的原话或私事。'
+        : '';
+      const discussion = event.discussion;
+      const topic = discussion?.topic ? FARM_TOPICS[discussion.topic].label : '眼前的问题';
+      const setup = discussion?.kind === 'debate' ? '你们对' + topic + '有不同看法。允许着急或反驳，随后让对方把话说完。'
+        : discussion?.kind === 'followup' && discussion.relayedBy ? '主持者刚与' + RESIDENTS[discussion.relayedBy].name + '讨论过' + topic + '，现在来听另一种看法。'
+        : discussion ? '每个人要发表不同的看法或追问，并回应前面的人。议题：' + topic + '。' : '';
+      const direction = event.finalBatch ? '在这一段自然收尾。' : '仍有新想法就继续，避免重复开场。';
+      const length = event.natural
+        ? `额外输出布尔值 "done"。想结束时设为 true，可写 ${Math.min(2, event.rounds)}～${event.rounds} 轮，并自然道别；还想继续时设为 false，写满 ${event.rounds} 轮。`
+        : `写满 ${event.rounds} 轮。`;
+      const { day, season, growing, ripe } = current.scene;
+      const world = `现在是第 ${day} 天，${season}，${current.night ? '夜晚' : '白天'}。田里有 ${growing} 株在长，${ripe} 株可收。`;
+      const flexible = event.pair.length === 3;
+      const turnOrder = flexible
+        ? '允许接话、追问或让一个人多说，但不能连续两句都由同一人说，三个人都要至少发言一次。'
+        : '两人按 ' + event.pair.join(' → ') + ' 的顺序交替。';
+      const closingChoice = event.source === 'encounter' && (event.finalBatch || event.natural)
+        ? '只有本段是整场对话的结尾时，才可以额外选一个真实下一步，不必选。next 可为 {"actor":"在场者的ID","type":"project"}（推进自己的小目标）、{"actor":"在场者的ID","type":"rest"} 或 {"actor":"在场者的ID","type":"ask","target":"未在场家人的ID","topic":"games|fishing|music|books|math|tech|garden|pets 中的一项"}。可用人物ID：door、gu、xiaoba、yujie、weigang、chicken。没有需要就省略 next。'
+        : '';
+      const context = [
+        discussion?.question ? '客人授权带给在场家人的问题：' + JSON.stringify(discussion.question) : '',
+        previous.length ? '已发生的对白：\n' + previous.map(line => RESIDENTS[line.speaker].name + '：' + line.text).join('\n') : '',
+      ].filter(Boolean).join('\n');
       const raw = await farmChat([{
         role: 'system',
-        content: `用中文写温暖自然的农场对话。${a}：${RESIDENTS[a].persona}。${b}：${RESIDENTS[b].persona}。当前${current.night ? '夜晚' : '白天'}。只输出严格JSON：{"lines":[{"speaker":"${a}","text":"一句话"},{"speaker":"${b}","text":"回应"}]}。必须交替发言，共${event.rounds * 2}句，每句不超过32字，围绕田地、家人或眼前风景。不要旁白，不追问用户，不给任何执行指令。`
+        content: `用中文写自然的农场家庭对话。\n${FARM_FAMILY_CONTEXT}\n${profiles}\n${shared}${setup}${world}可以提出自己的疑问、拒绝建议、改主意、说没把握、记起相关经历或提出实际的小实验。遇到分歧不用强行和好或达成一致。也可以自然从日常聊到兴趣。${direction}只输出严格 JSON：{"lines":[{"speaker":"${event.pair[0]}","text":"一句话"}]}。一轮按在场人数计算句数，每句不超过24字。${turnOrder}${length}${closingChoice}没有实际发生的行动只说打算，勿冒充完成。不要旁白或向玩家提问。`
       }, {
         role: 'user',
-        content: '你们刚在农场碰面，开始这一段对话，然后结束。'
+        content: context || '你们刚在农场碰面，开始聊天。'
       }], current.apiKey, {
         signal: controller.signal,
-        timeoutMs: 12000,
+        timeoutMs: 13500,
         maxTokens: Math.min(1024, 180 + event.rounds * 130)
       });
       if (token === epoch.current && alive.current && !controller.signal.aborted) {
-        const lines = readLifeReply(raw, event.pair, event.rounds);
-        if (engine.supplyConversation(event.id, lines, true, now())) setDialogueHint(lines ? '' : '本轮使用本地对白');
+        const batch = readLifeBatch(raw, event.pair, event.rounds, event.natural, flexible);
+        if (engine.supplyConversation(event.id, batch?.lines ?? null, true, now(), batch?.done, batch && closingChoice ? readResidentBatchIntent(raw, event.pair) : undefined)) setDialogueHint(batch ? '' : '本轮使用本地对白');
       }
     } catch {
       if (!controller.signal.aborted && alive.current && token === epoch.current) {
@@ -263,9 +303,10 @@ export function useFarmResidents(options: FarmResidentsOptions) {
     ...patch,
     mode: 'custom'
   })), []);
-  const applyPreset = useCallback((mode: Exclude<LifeMode, 'custom'>) => setSettings({
-    ...PRESETS[mode]
-  }), []);
+  const applyPreset = useCallback((mode: Exclude<LifeMode, 'custom'>) => setSettings(previous => ({
+    ...PRESETS[mode],
+    shareTopics: previous.shareTopics,
+  })), []);
   return {
     residents,
     settings,

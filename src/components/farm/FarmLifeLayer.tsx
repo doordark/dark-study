@@ -1,9 +1,9 @@
-import { FarmButton, FarmPaper, FarmText as Text } from './FarmSkin';
+import { FARM_BODY_FONT, FarmText as Text } from './FarmSkin';
 import { FarmSpeechLayer } from './FarmSpeechLayer';
 import { useState } from 'react';
-import { Modal, Pressable, ScrollView, Switch, TextInput, View } from 'react-native';
+import { Image, Modal, Pressable, ScrollView, Switch, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { MODE_NAMES, PRESETS, RESIDENT_IDS, RESIDENTS, SETTING_RANGES, normalizeLifeUsage, type NumericLifeSetting, type ResidentId, type LifeMode } from '@/utils/farmLife';
+import { FARM_TOPICS, MODE_NAMES, PRESETS, RESIDENT_IDS, RESIDENTS, SETTING_RANGES, SHORT_TALK_MAX, normalizeLifeUsage, type NumericLifeSetting, type ResidentId, type LifeMode } from '@/utils/farmLife';
 import type { FarmResidentsController } from '@/hooks/useFarmResidents';
 import { FarmResident } from './FarmResident';
 const ink = '#59432E',
@@ -11,48 +11,75 @@ const ink = '#59432E',
 function Button({
   label,
   onPress,
-  selected = false
+  selected = false,
+  stepper = false,
+  accessibilityLabel
 }: {
   label: string;
   onPress: () => void;
   selected?: boolean;
+  stepper?: boolean;
+  accessibilityLabel?: string;
 }) {
-  return <FarmButton label={label} onPress={onPress} tone={selected ? 'sage' : 'paper'} />;
+  return <Pressable
+    accessibilityRole="button"
+    accessibilityLabel={accessibilityLabel ?? label}
+    accessibilityState={{ selected }}
+    onPress={onPress}
+    android_ripple={{ color: '#87916A30' }}
+    style={{
+      minHeight: 44, minWidth: 44, paddingHorizontal: stepper ? 0 : 13,
+      justifyContent: 'center', alignItems: 'center', overflow: 'hidden',
+      borderRadius: stepper ? 10 : 22, borderWidth: 1,
+      borderColor: selected ? '#A7AF89' : '#E1D5C6',
+      backgroundColor: selected ? '#DFE7CE' : '#F5EBE0',
+    }}
+  >
+    <Text style={{ fontSize: stepper ? 20 : 13, fontWeight: '700', textAlign: 'center' }}>{label}</Text>
+  </Pressable>;
 }
 function NumberSetting({
   label,
   value,
   field,
+  maxRounds,
   onChange
 }: {
   label: string;
   value: number;
   field: NumericLifeSetting;
+  maxRounds: number;
   onChange: (n: number) => void;
 }) {
   const [draft, setDraft] = useState(String(value));
-  const [min, max] = SETTING_RANGES[field];
+  const [min, ceiling] = SETTING_RANGES[field];
+  const max = field === 'rounds' ? maxRounds : ceiling;
   const step = field === 'rounds' || field === 'dailyLimit' || field === 'aiMinutes' ? 1 : field === 'conversationCooldown' ? 10 : 5;
-  return <View style={{
-    gap: 6
-  }}><Text style={{
-      color: muted,
-      fontSize: 12
-    }}>{label} · {min}～{max}</Text><View style={{
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8
-    }}><Button label="−" onPress={() => onChange(Math.max(min, value - step))} /><TextInput accessibilityLabel={label} keyboardType="number-pad" value={draft} maxLength={4} onChangeText={setDraft} onEndEditing={() => onChange(Number.isFinite(Number(draft)) ? Math.max(min, Math.min(max, Math.round(Number(draft)))) : value)} style={{
-        minHeight: 44,
-        flex: 1,
-        borderWidth: 1,
-        borderColor: '#BDA57D',
-        borderRadius: 3,
-        paddingHorizontal: 12,
-        color: ink,
-        textAlign: 'center',
-        fontSize: 15
-      }} /><Button label="+" onPress={() => onChange(Math.min(max, value + step))} /></View></View>;
+  return <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', columnGap: 12, rowGap: 6, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#ECE0D3' }}>
+    <View style={{ flexGrow: 1, flexShrink: 1, flexBasis: 120 }}>
+      <Text style={{ color: ink, fontSize: 14, fontWeight: '600' }}>{label}</Text>
+      <Text style={{ color: muted, fontSize: 12, marginTop: 3 }}>{min}～{max}</Text>
+    </View>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+      <Button stepper label="−" accessibilityLabel={'减少' + label} onPress={() => onChange(Math.max(min, value - step))} />
+      <TextInput accessibilityLabel={label} keyboardType="number-pad" value={draft}
+        maxLength={4} onChangeText={setDraft}
+        onEndEditing={({ nativeEvent }) => {
+          const next = nativeEvent.text.trim() ? Number(nativeEvent.text) : NaN;
+          const normalized = Number.isFinite(next) ? Math.max(min, Math.min(max, Math.round(next))) : value;
+          setDraft(String(normalized));
+          onChange(normalized);
+        }}
+        style={{
+          width: 62, minHeight: 44, borderRadius: 10, borderWidth: 1,
+          borderColor: '#E1D5C6', backgroundColor: '#FFFDF7',
+          fontFamily: FARM_BODY_FONT, color: ink, textAlign: 'center',
+          fontSize: 16, fontVariant: ['tabular-nums'],
+        }}
+      />
+      <Button stepper label="+" accessibilityLabel={'增加' + label} onPress={() => onChange(Math.min(max, value + step))} />
+    </View>
+  </View>;
 }
 const LABELS: Record<NumericLifeSetting, string> = {
   activitySeconds: '走动间隔（秒）',
@@ -90,6 +117,7 @@ export function FarmLifeLayer({
   const [filter, setFilter] = useState<'all' | 'encounter' | 'ai' | 'command'>('all');
   const [person, setPerson] = useState<ResidentId | 'all'>('all');
   const [count, setCount] = useState(20);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const {
     settings,
     history
@@ -97,7 +125,7 @@ export function FarmLifeLayer({
   const usage = normalizeLifeUsage(controller.usage, at);
   const records = history.filter(c => (person === 'all' || c.participants.includes(person)) && (filter === 'all' || filter === 'ai' && c.online || filter === 'encounter' && c.source === 'encounter' || filter === 'command' && c.source === 'player_command')).slice().reverse();
   return <>
-    {controller.residents.map(resident => <FarmResident key={resident.id} resident={resident} scale={scale} active={controller.awake && (controller.autonomous || Boolean(resident.task))} reducedMotion={controller.reducedMotion} onTalk={onTalk} />)}
+    {controller.residents.map(resident => <FarmResident key={resident.id} resident={resident} scale={scale} active={controller.awake && (controller.autonomous || Boolean(resident.task) || resident.conversationSize > 0)} reducedMotion={controller.reducedMotion} onTalk={onTalk} />)}
     <FarmSpeechLayer residents={controller.residents} scale={scale} />
     <Modal visible={panelOpen} transparent animationType="slide" onRequestClose={onClosePanel}>
       <View style={{
@@ -111,15 +139,18 @@ export function FarmLifeLayer({
         }} />
         <View style={{
           maxHeight: '92%',
-          backgroundColor: '#FAF2DF',
-          borderRadius: 3
+          backgroundColor: '#FFF8EF',
+          borderTopLeftRadius: 24,
+          borderTopRightRadius: 24,
+          overflow: 'hidden'
         }}>
-      <FarmPaper theme="residents" />
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{
-            padding: 18,
+            paddingHorizontal: 18,
+            paddingTop: 14,
             paddingBottom: insets.bottom + 22,
             gap: 14
           }}>
+            <Image source={require("../../../assets/images/farm-residents-orchard.png")} resizeMode="cover" fadeDuration={0} style={{ width: "100%", height: 80, borderRadius: 14 }} />
             <View style={{
               flexDirection: 'row',
               alignItems: 'center',
@@ -128,7 +159,8 @@ export function FarmLifeLayer({
                 flex: 1
               }}><Text variant="title" style={{
                   color: ink,
-                  fontSize: 20,
+                  fontFamily: FARM_BODY_FONT,
+                  fontSize: 22,
                   fontWeight: '800'
                 }}>居民生活记录</Text><Text style={{
                   color: muted,
@@ -143,17 +175,18 @@ export function FarmLifeLayer({
             <Text style={{
               color: muted,
               fontSize: 12,
-              lineHeight: 19
+              lineHeight: 20
             }}>居民在路上自然偶遇，不会被定时召集。日常生活默认使用本地对白；开启联网或选择 AI 小镇后，只有部分偶遇会请求 AI。</Text>
-            {(['roaming', 'chatter', 'online'] as const).map((key, i) => <View key={key} style={{
+            {(['roaming', 'chatter', 'online', 'longTalks', 'naturalTalks', 'shareTopics'] as const).map((key, i) => <View key={key} style={{
               flexDirection: 'row',
               justifyContent: 'space-between',
               alignItems: 'center'
             }}><Text style={{
                 color: ink,
                 fontSize: 14
-              }}>{['自主散步', '偶遇聊天', '允许 AI 居民对话'][i]}</Text><Switch disabled={!controller.ready} value={settings[key]} onValueChange={value => controller.updateSettings({
-                [key]: value
+              }}>{['自主散步', '偶遇聊天', '允许 AI 居民对话', '允许居民长谈', '聊到自然结束', '和家人分享玩家话题'][i]}</Text><Switch disabled={!controller.ready || key === 'naturalTalks' && !settings.longTalks} trackColor={{ false: "#DED3C7", true: "#B8C79F" }} thumbColor={settings[key] ? "#667F50" : "#FFF8EF"} value={settings[key]} onValueChange={value => controller.updateSettings({
+                [key]: value,
+                ...(key === 'longTalks' && value ? { rounds: Math.max(8, settings.rounds) } : {}),
               })} /></View>)}
             <Text style={{
               color: '#6F7A50',
@@ -164,9 +197,9 @@ export function FarmLifeLayer({
               color: muted,
               fontSize: 11,
               lineHeight: 18
-            }}>失败和取消也计数，每次仅请求一次。自动请求不携带我的聊天历史。个人聊天由你主动发起，与这里的额度分开。</Text>
+            }}>居民之间只分享兴趣话题的类别，比如钓鱼或唱歌。开启 AI 居民对话后，联网也只带这些类别与居民对白，一对一原文和私密彩蛋留在个人聊天。长谈可在高级设置调到 30 轮；自然结束模式由居民决定何时收尾，最多 30 轮。AI 长谈按段请求，每段占一次额度，额度不足或联网失败时接着用本地对白。</Text>
             <Button label={advanced ? '收起高级设置' : '高级自定义'} onPress={() => setAdvanced(!advanced)} />
-            {advanced ? (Object.keys(SETTING_RANGES) as NumericLifeSetting[]).map(field => <NumberSetting key={`${field}-${settings[field]}`} field={field} label={LABELS[field]} value={settings[field]} onChange={value => controller.updateSettings({
+            {advanced ? (Object.keys(SETTING_RANGES) as NumericLifeSetting[]).filter(field => field !== 'rounds' || !settings.naturalTalks).map(field => <NumberSetting key={`${field}-${settings[field]}`} field={field} label={LABELS[field]} maxRounds={settings.longTalks ? SETTING_RANGES.rounds[1] : SHORT_TALK_MAX} value={settings[field]} onChange={value => controller.updateSettings({
               [field]: value
             })} />) : null}
             <Text style={{
@@ -201,11 +234,11 @@ export function FarmLifeLayer({
               lineHeight: 20
             }}>还没有这类交流。让居民在农场逛一会儿，或在“我的聊天”里请他们帮忙。</Text> : records.slice(0, count).map(record => <View key={record.id} style={{
               padding: 14,
-              borderRadius: 3,
-              backgroundColor: '#F0E5CC',
+              borderRadius: 14,
+              backgroundColor: '#F7EDE1',
               gap: 10,
               borderWidth: 1,
-              borderColor: '#C4AE86'
+              borderColor: '#E7D8C8'
             }}>
               <Text style={{
                 color: '#8C6C3E',
@@ -218,11 +251,12 @@ export function FarmLifeLayer({
               }}>{new Date(record.startedAt).toLocaleTimeString([], {
                   hour: '2-digit',
                   minute: '2-digit'
-                })} · {record.source === 'player_command' ? '我的命令' : record.source === 'encounter' ? '偶遇' : '旧本地记录'} · {record.online ? 'AI' : '本地'}{record.endedAt === null ? ' · 进行中' : ''}</Text>
+                })} · {record.source === 'player_command' ? '我的命令' : record.source === 'encounter' ? '偶遇' : record.activity === 'project' ? '自主行动 · 小目标' : record.activity === 'rest' ? '自主行动 · 休息' : record.discussion?.kind === 'followup' ? '接着讨论' : '旧本地记录'} · {record.online ? 'AI' : '本地'}{record.endedAt === null ? ' · 进行中' : ''}{record.sharedTopic ? ' · 聊到客人：' + FARM_TOPICS[record.sharedTopic.topic].label : ''}{record.discussion?.kind === 'debate' ? ' · 有不同意见' : record.participants.length > 2 ? ' · 多人讨论' : ''}</Text>
+              {record.discussion?.question ? <Text style={{ color: muted, fontSize: 12 }}>{record.discussion.question}</Text> : null}
               {!record.lines.length ? <Text style={{
                 color: muted,
                 fontSize: 12
-              }}>{record.endedAt === null ? '正在想一句招呼…' : '这次交流已结束，还没来得及开口。'}</Text> : record.lines.map((line, index) => <View key={`${line.at}-${index}`} style={{
+              }}>{record.endedAt === null ? '正在想一句招呼…' : '这次交流已结束，还没来得及开口。'}</Text> : (expandedId === record.id ? record.lines : record.lines.slice(0, 8)).map((line, index) => <View key={`${line.at}-${index}`} style={{
                 paddingLeft: 9,
                 borderLeftWidth: 2,
                 borderColor: COLORS[RESIDENTS[line.speaker].row],
@@ -236,6 +270,7 @@ export function FarmLifeLayer({
                   fontSize: 13,
                   lineHeight: 20
                 }}>{line.text}</Text></View>)}
+              {record.lines.length > 8 ? <Button label={expandedId === record.id ? "收起对白" : `展开全部 ${record.lines.length} 句`} onPress={() => setExpandedId(expandedId === record.id ? null : record.id)} /> : null}
             </View>)}
             {records.length > count ? <Button label="再显示 20 条" onPress={() => setCount(count + 20)} /> : null}
           </ScrollView>

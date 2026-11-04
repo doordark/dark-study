@@ -1,4 +1,4 @@
-import { FarmButton, FarmPaper, FarmText as Text } from './FarmSkin';
+import { FarmButton, FarmIllustration, FarmText as Text } from './FarmSkin';
 import type { ReactNode } from "react";
 import { Modal, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -19,9 +19,9 @@ export function FarmJournalPanel({ children, visible, onClose, harvested, coins,
   return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
     <View style={{ flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.5)" }}>
       <Pressable accessibilityLabel="关闭农场手账" onPress={onClose} style={{ position: "absolute", width: "100%", height: "100%" }} />
-      <View style={{ maxHeight: "90%", borderRadius: 3, backgroundColor: "#FAF2DF", borderWidth: 1, borderColor: "#C8B28D", overflow: "hidden" }}>
-      <FarmPaper theme="journal" />
+      <View style={{ maxHeight: "90%", borderTopLeftRadius: 22, borderTopRightRadius: 22, backgroundColor: "#FFF8EF", overflow: "hidden" }}>
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20, gap: 16 }}>
+          <FarmIllustration theme="journal" />
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
             <View><Text variant="title" style={{ color: "#59432E", fontSize: 20, fontWeight: "800" }}>农场手账 · Lv.{level}</Text><Text style={{ color: "#8A785E", marginTop: 5 }}>{coins} 金币 · 累计收获 {harvested} 株</Text></View>
             <Action label="收起" onPress={onClose} />

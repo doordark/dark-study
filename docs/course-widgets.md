@@ -20,3 +20,11 @@ npx expo prebuild --platform android --no-install
 ```
 
 设备验收：分别添加三种样式；编辑课程、切换课表并回桌面；改变数量、配色；拉伸组件检查可见行数；结束应用进程后跨课程结束时间检查自动换课；检查重启、无课、学期结束、周次跳跃、点击返回课表和启动器不支持固定组件的手动添加提示。
+
+## 澎湃 OS 添加诊断
+
+设置页显示 Android AppWidgetManager 实际注册数、绑定实例数；添加请求被接受不等于已添加，应用通过绑定实例数变化确认结果。八秒未确认时显示说明，不报告成功；稍后返回应用会再次刷新数量。旧原生包不支持诊断 API 时提示安装完整新版 APK。
+
+权限入口优先打开小米应用权限管理，无法打开时回退到 Android 应用详情页。是否有「桌面快捷方式」权限以及安卓组件列表入口，取决于 ROM 版本。为不使用 previewLayout 的启动器补充 previewImage。
+
+参考：https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1584 。小米商店详情页展示经过审核的组件，本应用当前是标准 Android Widget，不添加未经完整适配及审核的 miuiWidget 标识。此改动解决静默请求及诊断缺失，不代表已完成澎湃 OS 4 真机验证。

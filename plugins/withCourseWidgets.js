@@ -59,7 +59,7 @@ function withCourseWidgets(config) {
         android:targetCellWidth="${s.x}" android:targetCellHeight="${s.y}"
         android:minResizeWidth="110dp" android:minResizeHeight="110dp"
         android:resizeMode="horizontal|vertical" android:updatePeriodMillis="1800000"
-        android:initialLayout="@layout/course_widget" android:previewLayout="@layout/course_widget"
+        android:initialLayout="@layout/course_widget" android:previewLayout="@layout/course_widget" android:previewImage="@mipmap/ic_launcher"
         android:description="@string/course_widget_description" android:widgetCategory="home_screen" />`);
     for (const [theme, bg, border] of [["dark", "#111D32", "#2C405C"], ["light", "#EDF5FF", "#CCDDEE"]]) {
       write(`res/drawable/course_widget_${theme}.xml`, `<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle"><solid android:color="${bg}"/><corners android:radius="22dp"/><stroke android:width="1dp" android:color="${border}"/></shape>`);

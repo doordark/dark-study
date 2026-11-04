@@ -1,0 +1,59 @@
+import { FARM_TOPICS, RESIDENTS, type FarmTopicId, type ResidentId, type ResidentLine } from './farmLife';
+
+export type ResidentMood = '平静' | '好奇' | '开心' | '低落' | '不服气' | '松了口气';
+
+export interface FarmDiscussion {
+  topic?: FarmTopicId;
+  question?: string;
+  relayedBy?: ResidentId;
+  kind: 'discussion' | 'debate' | 'followup';
+}
+
+export const RESIDENT_OUTLOOK: Record<ResidentId, { voice: string; approach: string; pushback: string; soften: string }> = {
+  door: { voice: '好奇时会追问依据，吵起来会试着把事实和猜测分开，偶尔因分析太久而忘了先听对方。', approach: '先说我们知道什么，再挑一个最小的办法试。', pushback: '等一下。我同意你的担心，但这个结论还差一步。', soften: '我刚才急着讲道理了。你先说完，我听着。' },
+  gu: { voice: '先看大家是不是累了、有没有被听见。体贴，但需要拍板时很果断，对 door 偶尔会直说。', approach: '我先想这会让谁为难。大家愿意做，办法才能走得长。', pushback: '你先别急着定！做这件事的人累不累，也得算进去。', soften: '我语气重了点。我们一人说一条最在意的，好不好？' },
+  xiaoba: { voice: '脑子里会冒出奇特的点子，低落时说话慢，常在被追问之后才讲自己的真实想法。', approach: '我想留一条没试过的路，先做个小版本看看。', pushback: '我知道稳妥的办法，但每次都选它，就没机会试新点子了。', soften: '我刚才有点闷。你们愿意听我把点子说完，我就好些。' },
+  yujie: { voice: '敏感时会用吐槽挡一下，发现伤人会认真补一句。讨厌空话，喜欢拿具体例子追问。', approach: '先说个具体例子吧。光听起来好听，我可不信。', pushback: '你说得倒轻巧。每次一着急，最先被跳过的就是这一步！', soften: '刚才那句太刺了。我的意思是，我其实有点担心。' },
+  weigang: { voice: '在大伙儿面前会犹豫，想通之后会很认真地说出条件和反例。被打断时容易缩回去。', approach: '我想先比两种办法，用同样的条件才看得出区别。', pushback: '我……有一点不同意。换个条件，结果可能就反过来了。', soften: '谢谢你们等我说完。我想再试一次，慢慢来。' },
+  chicken: { voice: '好奇就凑近，害怕时先退一点。靠声音、光照、吃喝和熟人的陪伴判断事情。', approach: '咕，我想先看一小会儿，大家都在我就敢试。', pushback: '咕，太急啦！我想先躲开一点。', soften: '咕，你们慢慢说，我再靠近一点。' },
+};
+
+const TOPIC_VIEWS: Record<FarmTopicId, readonly [string, string, string]> = {
+  games: ['游戏里先给人一条看得懂的路，再把秘密藏进岔路。', '但也得有人能不看攻略走过去。可以请没玩过的人试。', '好，先做一小段，记下别人在哪儿迷路。'],
+  fishing: ['我会先挑个容易到的钓位，空竿也不算白来。', '我更想换着试钓位。每处等一样久，才能比较。', '那先在岸边容易走的两个位置，各试一会儿。'],
+  music: ['先挑自己喜欢的歌，唱得出来才愿意反复练。', '碰到唱不顺的地方，我会只练一句，听听哪里换气。', '行，挑一首喜欢的，再挑其中最难的一句。'],
+  books: ['故事要让我看见角色为什么这么选，我才愿意跟下去。', '我喜欢角色做错以后还有机会改，谁都会走弯路。', '那让角色的第二次选择和第一次不一样，看看会怎样。'],
+  math: ['我会先画图，看看哪些条件有用。', '画图只看得到几个例子，最后还得解释为什么总成立。', '先用图猜规律，再找反例或把理由写出来。'],
+  tech: ['先想清楚它到底能帮人省哪一步。', '也要看出错以后能不能改回来，不能只看跑得快。', '先用一小份数据试，测时间，也试一下怎么恢复。'],
+  garden: ['我会先种容易照顾的，忙的时候也有把握。', '可以留一小块试新的，全种一样也看不出差别。', '那就一块稳稳种，另一小块试种，记下日照和用水。'],
+  pets: ['小动物愿意走过来以前，可以先坐在它看得到的地方。', '也得留条退路，它害怕时能自己回到窝里。', '那我们坐远一点，让它自己决定什么时候过来。'],
+};
+
+export function discussionLines(participants: readonly ResidentId[], discussion: FarmDiscussion): Omit<ResidentLine, 'at'>[] {
+  const topic = discussion.topic ? FARM_TOPICS[discussion.topic].label : '这件事';
+  const views = discussion.topic ? TOPIC_VIEWS[discussion.topic] : undefined;
+  const lead = participants[0];
+  const opening = discussion.question
+    ? '客人请我们一起想想：' + discussion.question.slice(0, 34)
+    : discussion.relayedBy ? RESIDENTS[discussion.relayedBy].name + '和我刚聊过' + topic + '。我还想听听你的看法。'
+      : participants.length === 3 ? RESIDENTS[participants[2]].name + '也来聊聊吧。我们正聊' + topic + '。' : '说到' + topic + '，我想听听你怎么想。';
+  return [
+    ...participants.map((speaker, index) => ({
+      speaker,
+      text: index === 0 ? opening : speaker === 'chicken' ? RESIDENT_OUTLOOK.chicken.approach :
+        index === 1 && views ? views[0] : RESIDENT_OUTLOOK[speaker].approach,
+    })),
+    ...participants.map((speaker, index) => ({
+      speaker,
+      text: discussion.kind === 'debate' && index < 2 ? RESIDENT_OUTLOOK[speaker].pushback :
+        speaker === 'chicken' ? '咕，慢一点，我听得进去了。' :
+        index === 0 && views ? views[1] : RESIDENT_OUTLOOK[speaker].approach,
+    })),
+    ...participants.map((speaker, index) => ({
+      speaker,
+      text: discussion.kind === 'debate' && index < 2 ? RESIDENT_OUTLOOK[speaker].soften :
+        speaker === 'chicken' ? '咕，我也想跟过去看看。' :
+        speaker === lead && views ? views[2] : '我听懂你的意思了。可以先试一点，再看结果。',
+    })),
+  ];
+}

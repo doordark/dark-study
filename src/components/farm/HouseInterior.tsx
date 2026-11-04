@@ -1,4 +1,4 @@
-import { FarmButton, FarmPaper, FarmText as Text } from './FarmSkin';
+import { FarmButton, FarmIllustration, FarmText as Text } from './FarmSkin';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
@@ -33,11 +33,11 @@ export function HouseInterior({ visible, night, day, clock, onClose, onSleep }: 
   };
   return <Modal visible={visible} animationType="fade" onRequestClose={close} statusBarTranslucent>
     {visible ? <View style={{ flex: 1, paddingTop: insets.top, paddingBottom: insets.bottom, backgroundColor: night ? '#29313C' : '#F5EDD8' }}>
-      <FarmPaper theme={night ? 'night' : 'house'} />
       <StatusBar style={night ? 'light' : 'dark'} />
       <View style={{ flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12 }}>
         <FarmButton onPress={close} disabled={sleeping} tone="paper" style={{ width: 44, paddingHorizontal: 0 }}><Ionicons name="chevron-back" size={20} color="#76583B" /></FarmButton>
         <View style={{ flex: 1 }}><Text variant="title" style={{ color: night ? '#F6EEDC' : '#655036', fontSize: 17, fontWeight: '800' }}>door &amp; 顾的小屋</Text><Text style={{ color: night ? '#BBC5B0' : '#8A785E', fontSize: 11, marginTop: 5 }}>第 {day} 天 · {clock} · {night ? '灯火温暖' : '阳光正好'}</Text></View>
+        <FarmIllustration theme="house" compact />
       </View>
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
         <View style={{ width: roomW, height: HOUSE_ROOM.height * scale, overflow: 'hidden', borderRadius: 2, backgroundColor: '#71472E' }}>

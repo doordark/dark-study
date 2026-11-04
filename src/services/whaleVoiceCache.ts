@@ -21,7 +21,7 @@ async function load(): Promise<Entry[]> {
     const index = new File(dir, "index.json");
     const raw: unknown = index.exists ? JSON.parse(await index.text()) : [];
     if (!Array.isArray(raw) || !raw.every((e) => e && typeof e.identity === "string" &&
-      typeof e.key === "string" && /^\d+_[0-9a-f]{16}$/.test(e.key) && e.file === `${e.key}.mp3` &&
+      typeof e.key === "string" && /^\d+_[0-9a-f]{16}$/.test(e.key) && e.file === `${e.key}.wav` &&
       Number.isFinite(e.size) && e.size > 0 && Number.isFinite(e.lastAccess))) throw new Error("Invalid index");
     entries = raw as Entry[];
     const known = new Set(entries.map((e) => e.file));
@@ -62,12 +62,12 @@ export function putCachedVoice(identity: string, bytes: Uint8Array): Promise<str
     const list = await load();
     if (!bytes.length || bytes.length > MAX_BYTES) throw new Error("Audio exceeds cache limit");
     const key = voiceCacheKey(identity);
-    const file = new File(directory(), `${key}.mp3`);
+    const file = new File(directory(), `${key}.wav`);
     const temp = new File(directory(), `${key}.tmp`);
     await temp.write(bytes);
     await temp.move(file, { overwrite: true });
     entries = list.filter((e) => e.key !== key);
-    entries.push({ key, identity, file: `${key}.mp3`, size: bytes.length, lastAccess: Date.now() });
+    entries.push({ key, identity, file: `${key}.wav`, size: bytes.length, lastAccess: Date.now() });
     let size = entries.reduce((n, e) => n + e.size, 0);
     for (const entry of [...entries].sort((a, b) => a.lastAccess - b.lastAccess)) {
       if (size <= MAX_BYTES) break;

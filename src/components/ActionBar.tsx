@@ -50,7 +50,7 @@ function TabButton({ item }: { item: ActionItem }) {
         accessibilityState={{ selected: !!item.active }}
         style={{ minWidth: 48, minHeight: 48, justifyContent: "center" }}
       >
-        {isPrimary ? (
+        {isPrimary ? item.iconNode ?? (
           /* 中间凸起主按钮 */
           <LinearGradient
             colors={["#7DD3FC", "#38BDF8", "#2DD4BF"]}
@@ -72,9 +72,7 @@ function TabButton({ item }: { item: ActionItem }) {
               // 会被光栅化成实心块（闪烁方框），光效交给渐变 + iOS 阴影
             }}
           >
-            {item.iconNode ?? (
-              <Ionicons name={item.icon} size={22} color="#FFFFFF" />
-            )}
+            <Ionicons name={item.icon} size={22} color="#FFFFFF" />
           </LinearGradient>
         ) : (
           /* 普通 tab：选中态有玻璃光晕 */

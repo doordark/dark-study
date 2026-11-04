@@ -1,8 +1,8 @@
-import { FISH_MODEL, VOICE_PROFILE_VERSION } from "./fishAudio";
+import { VOICE_MODEL, VOICE_PROFILE_VERSION } from "./whaleVoiceProfile";
 import type { Mood } from "./whaleVoiceText";
 
 export function voiceCacheIdentity(text: string, mood: Mood, referenceId: string): string {
-  return JSON.stringify([VOICE_PROFILE_VERSION, FISH_MODEL, referenceId, mood, text]);
+  return JSON.stringify([VOICE_PROFILE_VERSION, VOICE_MODEL, referenceId, mood, text]);
 }
 
 /** Two independent 32-bit accumulators; full identity is also verified on hit. */

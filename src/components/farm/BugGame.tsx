@@ -1,4 +1,4 @@
-import { FarmPaper, FarmText as Text } from './FarmSkin';
+import { FarmIllustration, FarmText as Text } from './FarmSkin';
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useEffect, useRef, useState } from "react";
 import { Modal, Pressable, View, useWindowDimensions } from "react-native";
@@ -134,7 +134,7 @@ export function BugGame({ visible, onClose, onFinish }: BugGameProps) {
             overflow: "hidden",
           }}
         >
-      <FarmPaper theme="bugs" />
+          <FarmIllustration theme="bugs" compact />
           {/* 顶部 */}
           <View
             style={{

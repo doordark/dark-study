@@ -3,9 +3,9 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import DateTimePicker, {
   DateTimePickerAndroid,
 } from "@react-native-community/datetimepicker";
-import { router } from "expo-router";
+import { Link, router } from "expo-router";
 import { colorScheme } from "nativewind";
-import React, { useState } from "react";
+import React, { useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -302,10 +302,7 @@ function PrimaryBtn({
   );
 }
 
-export function SettingsScreen() {
-  const personaName = useWhalePersona((s) => s.persona.name);
-  const apiKey = useSettings((s) => s.apiKey);
-  const setApiKey = useSettings((s) => s.setApiKey);
+function AppearanceSettings() {
   const appearance = useSettings((s) => s.appearance);
   const material = useSettings((s) => s.material);
   const setMaterial = useSettings((s) => s.setMaterial);
@@ -313,6 +310,153 @@ export function SettingsScreen() {
   const setBackgroundImage = useSettings((s) => s.setBackgroundImage);
   const setAppearance = useSettings((s) => s.setAppearance);
 
+  const applyAppearance = (a: typeof appearance) => {
+    setAppearance(a);
+    colorScheme.set(a);
+  };
+
+  return (
+    <>
+      {/* 外观 */}
+      <Animated.View entering={FadeInDown.delay(60).springify()}>
+        <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
+          <View className="px-4 py-4">
+            <Text className="mb-3 text-[14px] font-bold text-slate-800 dark:text-white">
+              外观
+            </Text>
+            <View className="flex-row gap-x-2.5">
+              {APPEARANCES.map((a) => (
+                <Pressable
+                  key={a.key}
+                  onPress={() => applyAppearance(a.key)}
+                  className={`flex-1 items-center rounded-2xl border py-3 ${
+                    appearance === a.key
+                      ? "border-sky-400/70 bg-sky-400/25"
+                      : "border-white/15 bg-white/[0.06]"
+                  }`}
+                >
+                  <Ionicons
+                    name={a.icon}
+                    size={18}
+                    color={appearance === a.key ? "#38BDF8" : "#94A3B8"}
+                  />
+                  <Text
+                    className={`mt-1 text-[11px] font-semibold ${
+                      appearance === a.key
+                        ? "text-sky-300"
+                        : "text-slate-500 dark:text-slate-400"
+                    }`}
+                  >
+                    {a.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        </GlassContainer>
+      </Animated.View>
+
+      {/* 材质 */}
+      <Animated.View
+        entering={FadeInDown.delay(90).springify()}
+        style={{ marginTop: 14 }}
+      >
+        <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
+          <View className="px-4 py-4">
+            <Text className="mb-1 text-[14px] font-bold text-slate-800 dark:text-white">
+              材质
+            </Text>
+            <Text className="mb-3 text-[11px] leading-4 text-slate-500 dark:text-slate-400">
+              柔光玻璃保留底下的纹理，沿边缘透出一圈细光。
+            </Text>
+            <View className="flex-row gap-x-2.5">
+              {MATERIALS.map((m) => (
+                <Pressable
+                  key={m.key}
+                  onPress={() => setMaterial(m.key)}
+                  accessibilityRole="radio"
+                  accessibilityLabel={`${m.label}，${m.hint}`}
+                  accessibilityState={{ checked: material === m.key }}
+                  className="flex-1"
+                >
+                  <View className={`rounded-[20px] border-2 p-0.5 ${
+                    material === m.key ? "border-sky-500 dark:border-sky-400" : "border-transparent"
+                  }`}>
+                    <GlassMaterialPreview material={m.key} />
+                  </View>
+                  <Text className={`mt-1.5 text-center text-[12px] font-semibold ${
+                    material === m.key ? "text-sky-700 dark:text-sky-300" : "text-slate-700 dark:text-slate-300"
+                  }`}>
+                    {m.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        </GlassContainer>
+      </Animated.View>
+
+      {/* 背景 */}
+      <Animated.View
+        entering={FadeInDown.delay(120).springify()}
+        style={{ marginTop: 14 }}
+      >
+        <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
+          <View className="px-4 py-4">
+            <Text className="mb-3 text-[14px] font-bold text-slate-800 dark:text-white">
+              背景
+            </Text>
+            <View className="flex-row items-center gap-x-3">
+              <View className="h-16 w-24 overflow-hidden rounded-2xl border border-white/25 dark:border-white/10">
+                {backgroundImage ? (
+                  <Image
+                    source={{ uri: backgroundImage }}
+                    style={{ width: "100%", height: "100%" }}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View className="flex-1 items-center justify-center bg-white/20 dark:bg-white/[0.05]">
+                    <Ionicons
+                      name="image-outline"
+                      size={18}
+                      color="#94A3B8"
+                    />
+                  </View>
+                )}
+              </View>
+              <View className="flex-1 gap-y-2">
+                <Pressable
+                  onPress={async () => {
+                    const img = await pickImageForBackground();
+                    if (img) setBackgroundImage(img.uri);
+                  }}
+                  className="items-center rounded-2xl bg-sky-500/85 py-2.5"
+                >
+                  <Text className="text-[12px] font-bold text-white">
+                    {backgroundImage ? "更换背景图" : "上传背景图"}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setBackgroundImage(null)}
+                  className="items-center rounded-2xl border border-white/20 bg-white/15 py-2"
+                >
+                  <Text className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                    恢复默认渐变
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+            <Text className="mt-2.5 text-[10px] text-slate-400">
+              背景图会铺满整个应用界面，扁平卡片将叠加其上
+            </Text>
+          </View>
+        </GlassContainer>
+      </Animated.View>
+    </>
+  );
+}
+
+function ScheduleSettings() {
   const schedule = useActiveSchedule();
   const schedules = useStore((s) => s.schedules);
   const activeScheduleId = useStore((s) => s.activeScheduleId);
@@ -321,11 +465,6 @@ export function SettingsScreen() {
   const removeSchedule = useStore((s) => s.removeSchedule);
   const updateScheduleMeta = useStore((s) => s.updateScheduleMeta);
   const mergeSchedule = useStore((s) => s.mergeSchedule);
-  const grades = useStore((s) => s.grades);
-  const resetToSample = useStore((s) => s.resetToSample);
-
-  const [editing, setEditing] = useState(apiKey);
-  const [saved, setSaved] = useState(false);
 
   /* ---------------- 学期日期 ---------------- */
   const [iosPicker, setIosPicker] = useState<"start" | "end" | null>(null);
@@ -429,500 +568,479 @@ export function SettingsScreen() {
     );
   };
 
-  const applyAppearance = (a: typeof appearance) => {
-    setAppearance(a);
-    colorScheme.set(a);
-  };
-
   return (
-    <View className="flex-1">
-      <Backdrop>
-        <ScrollView
-          contentContainerStyle={{
-            paddingHorizontal: 20,
-            paddingTop: 16,
-            paddingBottom: 40,
-          }}
-          showsVerticalScrollIndicator={false}
-        >
-          <Animated.View entering={FadeInDown.springify()} style={{ marginBottom: 20 }}>
-            <Pressable
-              onPress={() => router.back()}
-              className="mb-3 h-9 w-9 items-center justify-center rounded-full bg-white/20 dark:bg-white/[0.07]"
-            >
-              <Ionicons name="chevron-back" size={18} color="#94A3B8" />
-            </Pressable>
-            <Text className="text-[24px] font-extrabold text-slate-800 dark:text-white">
-              设置
+    <>
+      {/* 学期时间 */}
+      <Animated.View entering={FadeInDown.springify()}>
+        <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
+          <View className="px-4 py-4">
+            <Text className="mb-1 text-[14px] font-bold text-slate-800 dark:text-white">
+              学期时间
             </Text>
-          </Animated.View>
+            <Text className="mb-3 text-[10.5px] text-slate-500 dark:text-slate-400">
+              作用于「{schedule.name}
+              」：开学日期决定当前第几周，放假日期决定课表总周数
+            </Text>
 
-          <CourseReminderSettings />
-          <CourseWidgetSettings />
+            <DateRow
+              label="开学日期"
+              hint="第 1 周自动从所选日期所在周的周一开始"
+              value={formatDateLabel(schedule.startDate)}
+              onPress={() => openDate("start")}
+            />
+            <DateRow
+              label="放假日期"
+              hint="课程结束（课表到此为止）"
+              value={formatDateLabel(schedule.endDate)}
+              onPress={() => openDate("end")}
+            />
 
-          {/* 外观 */}
-          <Animated.View entering={FadeInDown.delay(60).springify()}>
-            <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
-              <View className="px-4 py-4">
-                <Text className="mb-3 text-[14px] font-bold text-slate-800 dark:text-white">
-                  外观
-                </Text>
-                <View className="flex-row gap-x-2.5">
-                  {APPEARANCES.map((a) => (
+            <View className="rounded-2xl bg-white/20 px-3.5 py-2.5 dark:bg-white/[0.05]">
+              <Text className="text-[11.5px] text-slate-600 dark:text-slate-300">
+                当前第 {weekIndex} 周 · 本学期共 {schedule.totalWeeks} 周
+              </Text>
+            </View>
+          </View>
+        </GlassContainer>
+      </Animated.View>
+
+      {/* 课程表管理 */}
+      <Animated.View
+        entering={FadeInDown.delay(240).springify()}
+        style={{ marginTop: 14 }}
+      >
+        <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
+          <View className="px-4 py-4">
+            <Text className="mb-1 text-[14px] font-bold text-slate-800 dark:text-white">
+              课程表
+            </Text>
+            <Text className="mb-3 text-[10.5px] text-slate-500 dark:text-slate-400">
+              可为每个学期建立一份课表，点按任意一行即可切换；其他课表可一键合并进当前课表
+            </Text>
+
+            {schedules.map((item) => {
+              const isActive = item.id === activeScheduleId;
+              return (
+                <Pressable
+                  key={item.id}
+                  onPress={() => setActiveSchedule(item.id)}
+                  className={`mb-2 flex-row items-center rounded-2xl border px-3.5 py-2.5 ${
+                    isActive
+                      ? "border-sky-400/60 bg-sky-400/15"
+                      : "border-white/20 bg-white/15 dark:border-white/10 dark:bg-white/[0.05]"
+                  }`}
+                >
+                  <View className="flex-1">
+                    <Text className="text-[13px] font-bold text-slate-800 dark:text-white">
+                      {item.name}
+                    </Text>
+                    <Text className="mt-0.5 text-[10px] text-slate-500 dark:text-slate-400">
+                      {item.courses.length} 门课 ·{" "}
+                      {formatDateLabel(item.startDate)} 起 · 共{" "}
+                      {item.totalWeeks} 周
+                    </Text>
+                  </View>
+
+                  {!isActive ? (
                     <Pressable
-                      key={a.key}
-                      onPress={() => applyAppearance(a.key)}
-                      className={`flex-1 items-center rounded-2xl border py-3 ${
-                        appearance === a.key
-                          ? "border-sky-400/70 bg-sky-400/25"
-                          : "border-white/15 bg-white/[0.06]"
-                      }`}
+                      onPress={() => confirmMerge(item)}
+                      className="h-8 w-8 items-center justify-center rounded-full bg-white/20 dark:bg-white/[0.07]"
                     >
                       <Ionicons
-                        name={a.icon}
-                        size={18}
-                        color={appearance === a.key ? "#38BDF8" : "#94A3B8"}
+                        name="git-merge-outline"
+                        size={13}
+                        color="#38BDF8"
                       />
-                      <Text
-                        className={`mt-1 text-[11px] font-semibold ${
-                          appearance === a.key
-                            ? "text-sky-300"
-                            : "text-slate-500 dark:text-slate-400"
-                        }`}
-                      >
-                        {a.label}
-                      </Text>
                     </Pressable>
-                  ))}
-                </View>
-              </View>
-            </GlassContainer>
-          </Animated.View>
-
-          {/* 材质 */}
-          <Animated.View
-            entering={FadeInDown.delay(90).springify()}
-            style={{ marginTop: 14 }}
-          >
-            <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
-              <View className="px-4 py-4">
-                <Text className="mb-1 text-[14px] font-bold text-slate-800 dark:text-white">
-                  材质
-                </Text>
-                <Text className="mb-3 text-[11px] leading-4 text-slate-500 dark:text-slate-400">
-                  柔光玻璃保留底下的纹理，沿边缘透出一圈细光。
-                </Text>
-                <View className="flex-row gap-x-2.5">
-                  {MATERIALS.map((m) => (
+                  ) : null}
+                  <Pressable
+                    onPress={() => openRename(item)}
+                    className="ml-2 h-8 w-8 items-center justify-center rounded-full bg-white/20 dark:bg-white/[0.07]"
+                  >
+                    <Ionicons name="pencil" size={13} color="#94A3B8" />
+                  </Pressable>
+                  {schedules.length > 1 ? (
                     <Pressable
-                      key={m.key}
-                      onPress={() => setMaterial(m.key)}
-                      accessibilityRole="radio"
-                      accessibilityLabel={`${m.label}，${m.hint}`}
-                      accessibilityState={{ checked: material === m.key }}
-                      className="flex-1"
+                      onPress={() => confirmDelete(item)}
+                      className="ml-2 h-8 w-8 items-center justify-center rounded-full bg-white/20 dark:bg-white/[0.07]"
                     >
-                      <View className={`rounded-[20px] border-2 p-0.5 ${
-                        material === m.key ? "border-sky-500 dark:border-sky-400" : "border-transparent"
-                      }`}>
-                        <GlassMaterialPreview material={m.key} />
-                      </View>
-                      <Text className={`mt-1.5 text-center text-[12px] font-semibold ${
-                        material === m.key ? "text-sky-700 dark:text-sky-300" : "text-slate-700 dark:text-slate-300"
-                      }`}>
-                        {m.label}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-              </View>
-            </GlassContainer>
-          </Animated.View>
-
-          {/* 背景 */}
-          <Animated.View
-            entering={FadeInDown.delay(120).springify()}
-            style={{ marginTop: 14 }}
-          >
-            <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
-              <View className="px-4 py-4">
-                <Text className="mb-3 text-[14px] font-bold text-slate-800 dark:text-white">
-                  背景
-                </Text>
-                <View className="flex-row items-center gap-x-3">
-                  <View className="h-16 w-24 overflow-hidden rounded-2xl border border-white/25 dark:border-white/10">
-                    {backgroundImage ? (
-                      <Image
-                        source={{ uri: backgroundImage }}
-                        style={{ width: "100%", height: "100%" }}
-                        resizeMode="cover"
+                      <Ionicons
+                        name="trash-outline"
+                        size={13}
+                        color="#F87171"
                       />
-                    ) : (
-                      <View className="flex-1 items-center justify-center bg-white/20 dark:bg-white/[0.05]">
-                        <Ionicons
-                          name="image-outline"
-                          size={18}
-                          color="#94A3B8"
-                        />
-                      </View>
-                    )}
-                  </View>
-                  <View className="flex-1 gap-y-2">
-                    <Pressable
-                      onPress={async () => {
-                        const img = await pickImageForBackground();
-                        if (img) setBackgroundImage(img.uri);
-                      }}
-                      className="items-center rounded-2xl bg-sky-500/85 py-2.5"
-                    >
-                      <Text className="text-[12px] font-bold text-white">
-                        {backgroundImage ? "更换背景图" : "上传背景图"}
-                      </Text>
                     </Pressable>
-                    <Pressable
-                      onPress={() => setBackgroundImage(null)}
-                      className="items-center rounded-2xl border border-white/20 bg-white/15 py-2"
-                    >
-                      <Text className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-                        恢复默认渐变
-                      </Text>
-                    </Pressable>
-                  </View>
-                </View>
-                <Text className="mt-2.5 text-[10px] text-slate-400">
-                  背景图会铺满整个应用界面，扁平卡片将叠加其上
-                </Text>
-              </View>
-            </GlassContainer>
-          </Animated.View>
-
-          {/* 学期时间 */}
-          <Animated.View
-            entering={FadeInDown.delay(180).springify()}
-            style={{ marginTop: 14 }}
-          >
-            <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
-              <View className="px-4 py-4">
-                <Text className="mb-1 text-[14px] font-bold text-slate-800 dark:text-white">
-                  学期时间
-                </Text>
-                <Text className="mb-3 text-[10.5px] text-slate-500 dark:text-slate-400">
-                  作用于「{schedule.name}
-                  」：开学日期决定当前第几周，放假日期决定课表总周数
-                </Text>
-
-                <DateRow
-                  label="开学日期"
-                  hint="第 1 周自动从所选日期所在周的周一开始"
-                  value={formatDateLabel(schedule.startDate)}
-                  onPress={() => openDate("start")}
-                />
-                <DateRow
-                  label="放假日期"
-                  hint="课程结束（课表到此为止）"
-                  value={formatDateLabel(schedule.endDate)}
-                  onPress={() => openDate("end")}
-                />
-
-                <View className="rounded-2xl bg-white/20 px-3.5 py-2.5 dark:bg-white/[0.05]">
-                  <Text className="text-[11.5px] text-slate-600 dark:text-slate-300">
-                    当前第 {weekIndex} 周 · 本学期共 {schedule.totalWeeks} 周
-                  </Text>
-                </View>
-              </View>
-            </GlassContainer>
-          </Animated.View>
-
-          {/* 课程表管理 */}
-          <Animated.View
-            entering={FadeInDown.delay(240).springify()}
-            style={{ marginTop: 14 }}
-          >
-            <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
-              <View className="px-4 py-4">
-                <Text className="mb-1 text-[14px] font-bold text-slate-800 dark:text-white">
-                  课程表
-                </Text>
-                <Text className="mb-3 text-[10.5px] text-slate-500 dark:text-slate-400">
-                  可为每个学期建立一份课表，点按任意一行即可切换；其他课表可一键合并进当前课表
-                </Text>
-
-                {schedules.map((item) => {
-                  const isActive = item.id === activeScheduleId;
-                  return (
-                    <Pressable
-                      key={item.id}
-                      onPress={() => setActiveSchedule(item.id)}
-                      className={`mb-2 flex-row items-center rounded-2xl border px-3.5 py-2.5 ${
-                        isActive
-                          ? "border-sky-400/60 bg-sky-400/15"
-                          : "border-white/20 bg-white/15 dark:border-white/10 dark:bg-white/[0.05]"
-                      }`}
-                    >
-                      <View className="flex-1">
-                        <Text className="text-[13px] font-bold text-slate-800 dark:text-white">
-                          {item.name}
-                        </Text>
-                        <Text className="mt-0.5 text-[10px] text-slate-500 dark:text-slate-400">
-                          {item.courses.length} 门课 ·{" "}
-                          {formatDateLabel(item.startDate)} 起 · 共{" "}
-                          {item.totalWeeks} 周
-                        </Text>
-                      </View>
-
-                      {!isActive ? (
-                        <Pressable
-                          onPress={() => confirmMerge(item)}
-                          className="h-8 w-8 items-center justify-center rounded-full bg-white/20 dark:bg-white/[0.07]"
-                        >
-                          <Ionicons
-                            name="git-merge-outline"
-                            size={13}
-                            color="#38BDF8"
-                          />
-                        </Pressable>
-                      ) : null}
-                      <Pressable
-                        onPress={() => openRename(item)}
-                        className="ml-2 h-8 w-8 items-center justify-center rounded-full bg-white/20 dark:bg-white/[0.07]"
-                      >
-                        <Ionicons name="pencil" size={13} color="#94A3B8" />
-                      </Pressable>
-                      {schedules.length > 1 ? (
-                        <Pressable
-                          onPress={() => confirmDelete(item)}
-                          className="ml-2 h-8 w-8 items-center justify-center rounded-full bg-white/20 dark:bg-white/[0.07]"
-                        >
-                          <Ionicons
-                            name="trash-outline"
-                            size={13}
-                            color="#F87171"
-                          />
-                        </Pressable>
-                      ) : null}
-                      {isActive ? (
-                        <Ionicons
-                          name="checkmark-circle"
-                          size={18}
-                          color="#38BDF8"
-                          style={{ marginLeft: 8 }}
-                        />
-                      ) : null}
-                    </Pressable>
-                  );
-                })}
-
-                <Pressable
-                  onPress={openCreate}
-                  className="mt-1 items-center rounded-2xl border border-white/20 bg-white/15 py-2.5 dark:border-white/10 dark:bg-white/[0.05]"
-                >
-                  <Text className="text-[12px] font-semibold text-sky-600 dark:text-sky-300">
-                    + 新建课程表
-                  </Text>
-                </Pressable>
-              </View>
-            </GlassContainer>
-          </Animated.View>
-
-          {/* DeepSeek Key */}
-          <Animated.View
-            entering={FadeInDown.delay(300).springify()}
-            style={{ marginTop: 14 }}
-          >
-            <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
-              <View className="px-4 py-4">
-                <View className="mb-3 flex-row items-center">
-                  <View className="h-9 w-9 items-center justify-center rounded-[13px] bg-sky-400/25">
-                    <Ionicons name="key" size={16} color="#38BDF8" />
-                  </View>
-                  <View className="ml-2.5 flex-1">
-                    <Text className="text-[14px] font-bold text-slate-800 dark:text-white">
-                      DeepSeek API Key
-                    </Text>
-                    <Text className="text-[10.5px] text-slate-500 dark:text-slate-400">
-                      用于课表识图、AI 助手与成绩识别
-                    </Text>
-                  </View>
-                </View>
-
-                <TextInput
-                  value={editing}
-                  onChangeText={(v) => {
-                    setEditing(v);
-                    setSaved(false);
-                  }}
-                  placeholder="sk-..."
-                  placeholderTextColor="rgba(148,163,184,0.7)"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  secureTextEntry
-                  className="rounded-2xl border border-white/25 bg-white/35 px-3.5 py-2.5 text-[12.5px] text-slate-800 dark:border-white/10 dark:bg-white/[0.05] dark:text-slate-100"
-                />
-
-                <Pressable
-                  onPress={() => {
-                    setApiKey(editing);
-                    setSaved(true);
-                  }}
-                  className="mt-2.5 items-center rounded-2xl bg-sky-500/85 py-2.5"
-                >
-                  <Text className="text-[12px] font-bold text-white">
-                    保存 Key
-                  </Text>
-                </Pressable>
-
-                {saved ? (
-                  <Text className="mt-2 text-[11px] text-emerald-300">
-                    你的小助手已获取大脑
-                  </Text>
-                ) : null}
-
-                <View className="mt-3 rounded-2xl border border-amber-300/30 bg-amber-400/12 px-3.5 py-2.5 dark:border-amber-400/30 dark:bg-amber-500/12">
-                  <Text className="text-[10px] leading-4 text-amber-700 dark:text-amber-200">
-                    安全提示：生产环境请将 API Key
-                    放在自有服务端中转，不要硬编码进客户端。
-                  </Text>
-                </View>
-              </View>
-            </GlassContainer>
-          </Animated.View>
-
-          <View style={{ marginTop: 14 }}>
-            <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
-              <Pressable accessibilityRole="button" onPress={() => router.push("/whale-settings")} className="min-h-20 flex-row items-center px-4 py-4">
-                <View className="mr-3 h-11 w-11 items-center justify-center rounded-2xl bg-sky-400/20"><Ionicons name="options" size={22} color="#38BDF8" /></View>
-                <View className="flex-1"><Text className="text-[14px] font-bold text-slate-800 dark:text-white">{personaName} · 人设与记忆</Text><Text className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">拖动性格滑条、改写人设，整理她记住的事</Text></View>
-                <Ionicons name="chevron-forward" size={17} color="#94A3B8" />
-              </Pressable>
-            </GlassContainer>
-          </View>
-
-          {/* 数据 */}
-          <Animated.View
-            entering={FadeInDown.delay(360).springify()}
-            style={{ marginTop: 14 }}
-          >
-            <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
-              <View className="px-4 py-4">
-                <Text className="mb-3 text-[14px] font-bold text-slate-800 dark:text-white">
-                  数据
-                </Text>
-                <View className="rounded-2xl bg-white/20 px-3.5 py-3 dark:bg-white/[0.05]">
-                  <Text className="text-[11.5px] text-slate-600 dark:text-slate-300">
-                    当前课表：{schedule.name} · {schedule.courses.length} 门课
-                    （共 {schedules.length} 份）
-                  </Text>
-                  <Text className="mt-1 text-[11.5px] text-slate-600 dark:text-slate-300">
-                    成绩记录：{grades.length} 条
-                  </Text>
-                </View>
-
-                <Pressable
-                  onPress={() => {
-                    resetToSample();
-                    setEditing("");
-                  }}
-                  className="mt-3 items-center rounded-2xl border border-rose-400/40 bg-rose-400/15 py-3"
-                >
-                  <Text className="text-[12.5px] font-semibold text-rose-300">
-                    重置为示例数据
-                  </Text>
-                </Pressable>
-
-              </View>
-            </GlassContainer>
-          </Animated.View>
-
-          {/* 检查更新 */}
-          <UpdateCard />
-
-          <Text className="mt-6 text-center text-[10px] text-slate-400 dark:text-slate-500">
-            dark♂study v{currentVersion()} · by door♂
-          </Text>
-        </ScrollView>
-
-        {/* iOS 日期选择 */}
-        {iosPicker ? (
-          <DateTimePicker
-            value={parseIsoDate(
-              iosPicker === "start" ? schedule.startDate : schedule.endDate,
-            )}
-            mode="date"
-            onValueChange={(_e, d) => {
-              if (d) commitDate(iosPicker, d);
-              setIosPicker(null);
-            }}
-            onDismiss={() => setIosPicker(null)}
-          />
-        ) : null}
-
-        {/* 课表命名（新建 / 重命名） */}
-        <Modal
-          visible={nameModal !== null}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setNameModal(null)}
-        >
-          <GlassTargetProvider>
-            <View className="flex-1 justify-end bg-black/45">
-              <Pressable
-                className="flex-1"
-                onPress={() => setNameModal(null)}
-              />
-              <Animated.View
-                entering={FadeInDown.springify()}
-                exiting={FadeOutDown}
-              >
-                <GlassContainer
-                  radius={32}
-                  borderOpacity={0.3}
-                  style={{ paddingBottom: 24 }}
-                >
-                  <View className="px-5 pt-5">
-                    <View className="mb-4 flex-row items-center justify-between">
-                      <Text className="text-[17px] font-bold text-slate-800 dark:text-white">
-                        {nameModal?.mode === "create" ? "新建课程表" : "重命名"}
-                      </Text>
-                      <Pressable
-                        onPress={() => setNameModal(null)}
-                        className="h-8 w-8 items-center justify-center rounded-full bg-white/20 dark:bg-white/10"
-                      >
-                        <Ionicons name="close" size={16} color="#94A3B8" />
-                      </Pressable>
-                    </View>
-
-                    <Text className="mb-1.5 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-                      课表名称
-                    </Text>
-                    <TextInput
-                      value={nameInput}
-                      onChangeText={setNameInput}
-                      placeholder="如：大二下"
-                      placeholderTextColor="rgba(148,163,184,0.7)"
-                      autoFocus
-                      className="rounded-2xl border border-white/25 bg-white/40 px-3.5 py-2.5 text-[14px] text-slate-800 dark:border-white/10 dark:bg-white/[0.07] dark:text-slate-100"
+                  ) : null}
+                  {isActive ? (
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={18}
+                      color="#38BDF8"
+                      style={{ marginLeft: 8 }}
                     />
+                  ) : null}
+                </Pressable>
+              );
+            })}
 
-                    <Pressable
-                      onPress={submitName}
-                      className="mt-4 items-center rounded-2xl bg-sky-500/85 py-2.5"
-                    >
-                      <Text className="text-[12.5px] font-bold text-white">
-                        {nameModal?.mode === "create" ? "创建" : "保存"}
-                      </Text>
-                    </Pressable>
+            <Pressable
+              onPress={openCreate}
+              className="mt-1 items-center rounded-2xl border border-white/20 bg-white/15 py-2.5 dark:border-white/10 dark:bg-white/[0.05]"
+            >
+              <Text className="text-[12px] font-semibold text-sky-600 dark:text-sky-300">
+                + 新建课程表
+              </Text>
+            </Pressable>
+          </View>
+        </GlassContainer>
+      </Animated.View>
+      {/* iOS 日期选择 */}
+      {iosPicker ? (
+        <DateTimePicker
+          value={parseIsoDate(
+            iosPicker === "start" ? schedule.startDate : schedule.endDate,
+          )}
+          mode="date"
+          onValueChange={(_e, d) => {
+            if (d) commitDate(iosPicker, d);
+            setIosPicker(null);
+          }}
+          onDismiss={() => setIosPicker(null)}
+        />
+      ) : null}
 
-                    <Text className="mt-2.5 text-[10px] text-slate-400 dark:text-slate-500">
-                      新课表会沿用当前作息时间，开学 /
-                      放假日期可在「学期时间」中调整
+      {/* 课表命名（新建 / 重命名） */}
+      <Modal
+        visible={nameModal !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setNameModal(null)}
+      >
+        <GlassTargetProvider>
+          <View className="flex-1 justify-end bg-black/45">
+            <Pressable
+              className="flex-1"
+              onPress={() => setNameModal(null)}
+            />
+            <Animated.View
+              entering={FadeInDown.springify()}
+              exiting={FadeOutDown}
+            >
+              <GlassContainer
+                radius={32}
+                borderOpacity={0.3}
+                style={{ paddingBottom: 24 }}
+              >
+                <View className="px-5 pt-5">
+                  <View className="mb-4 flex-row items-center justify-between">
+                    <Text className="text-[17px] font-bold text-slate-800 dark:text-white">
+                      {nameModal?.mode === "create" ? "新建课程表" : "重命名"}
                     </Text>
+                    <Pressable
+                      onPress={() => setNameModal(null)}
+                      className="h-8 w-8 items-center justify-center rounded-full bg-white/20 dark:bg-white/10"
+                    >
+                      <Ionicons name="close" size={16} color="#94A3B8" />
+                    </Pressable>
                   </View>
-                </GlassContainer>
-              </Animated.View>
+
+                  <Text className="mb-1.5 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                    课表名称
+                  </Text>
+                  <TextInput
+                    value={nameInput}
+                    onChangeText={setNameInput}
+                    placeholder="如：大二下"
+                    placeholderTextColor="rgba(148,163,184,0.7)"
+                    autoFocus
+                    className="rounded-2xl border border-white/25 bg-white/40 px-3.5 py-2.5 text-[14px] text-slate-800 dark:border-white/10 dark:bg-white/[0.07] dark:text-slate-100"
+                  />
+
+                  <Pressable
+                    onPress={submitName}
+                    className="mt-4 items-center rounded-2xl bg-sky-500/85 py-2.5"
+                  >
+                    <Text className="text-[12.5px] font-bold text-white">
+                      {nameModal?.mode === "create" ? "创建" : "保存"}
+                    </Text>
+                  </Pressable>
+
+                  <Text className="mt-2.5 text-[10px] text-slate-400 dark:text-slate-500">
+                    新课表会沿用当前作息时间，开学 /
+                    放假日期可在「学期时间」中调整
+                  </Text>
+                </View>
+              </GlassContainer>
+            </Animated.View>
+          </View>
+        </GlassTargetProvider>
+      </Modal>
+    </>
+  );
+}
+
+function AiSettings() {
+  const personaName = useWhalePersona((s) => s.persona.name);
+  const apiKey = useSettings((s) => s.apiKey);
+  const setApiKey = useSettings((s) => s.setApiKey);
+  const [draft, setDraft] = useState<string | null>(null);
+  const editing = draft ?? apiKey;
+  const [saved, setSaved] = useState(false);
+
+  return (
+    <>
+      {/* DeepSeek Key */}
+      <Animated.View entering={FadeInDown.springify()}>
+        <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
+          <View className="px-4 py-4">
+            <View className="mb-3 flex-row items-center">
+              <View className="h-9 w-9 items-center justify-center rounded-[13px] bg-sky-400/25">
+                <Ionicons name="key" size={16} color="#38BDF8" />
+              </View>
+              <View className="ml-2.5 flex-1">
+                <Text className="text-[14px] font-bold text-slate-800 dark:text-white">
+                  DeepSeek API Key
+                </Text>
+                <Text className="text-[10.5px] text-slate-500 dark:text-slate-400">
+                  用于课表识图、AI 助手与成绩识别
+                </Text>
+              </View>
             </View>
-          </GlassTargetProvider>
-        </Modal>
-      </Backdrop>
-    </View>
+
+            <TextInput
+              value={editing}
+              onChangeText={(v) => {
+                setDraft(v);
+                setSaved(false);
+              }}
+              placeholder="sk-..."
+              placeholderTextColor="rgba(148,163,184,0.7)"
+              autoCapitalize="none"
+              autoCorrect={false}
+              secureTextEntry
+              className="rounded-2xl border border-white/25 bg-white/35 px-3.5 py-2.5 text-[12.5px] text-slate-800 dark:border-white/10 dark:bg-white/[0.05] dark:text-slate-100"
+            />
+
+            <Pressable
+              onPress={() => {
+                setApiKey(editing);
+                setDraft(null);
+                setSaved(true);
+              }}
+              className="mt-2.5 items-center rounded-2xl bg-sky-500/85 py-2.5"
+            >
+              <Text className="text-[12px] font-bold text-white">
+                保存 Key
+              </Text>
+            </Pressable>
+
+            {saved ? (
+              <Text className="mt-2 text-[11px] text-emerald-300">
+                你的小助手已获取大脑
+              </Text>
+            ) : null}
+
+            <View className="mt-3 rounded-2xl border border-amber-300/30 bg-amber-400/12 px-3.5 py-2.5 dark:border-amber-400/30 dark:bg-amber-500/12">
+              <Text className="text-[10px] leading-4 text-amber-700 dark:text-amber-200">
+                安全提示：生产环境请将 API Key
+                放在自有服务端中转，不要硬编码进客户端。
+              </Text>
+            </View>
+          </View>
+        </GlassContainer>
+      </Animated.View>
+
+      <View style={{ marginTop: 14 }}>
+        <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
+          <Pressable accessibilityRole="button" onPress={() => router.push("/whale-settings")} className="min-h-20 flex-row items-center px-4 py-4">
+            <View className="mr-3 h-11 w-11 items-center justify-center rounded-2xl bg-sky-400/20"><Ionicons name="options" size={22} color="#38BDF8" /></View>
+            <View className="flex-1"><Text className="text-[14px] font-bold text-slate-800 dark:text-white">{personaName} · 人设与记忆</Text><Text className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">拖动性格滑条、改写人设，整理她记住的事</Text></View>
+            <Ionicons name="chevron-forward" size={17} color="#94A3B8" />
+          </Pressable>
+        </GlassContainer>
+      </View>
+    </>
+  );
+}
+
+function DataSettings() {
+  const schedule = useActiveSchedule();
+  const schedules = useStore((s) => s.schedules);
+  const grades = useStore((s) => s.grades);
+  const resetToSample = useStore((s) => s.resetToSample);
+
+  return (
+    <>
+      {/* 数据 */}
+      <Animated.View entering={FadeInDown.springify()}>
+        <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
+          <View className="px-4 py-4">
+            <Text className="mb-3 text-[14px] font-bold text-slate-800 dark:text-white">
+              数据
+            </Text>
+            <View className="rounded-2xl bg-white/20 px-3.5 py-3 dark:bg-white/[0.05]">
+              <Text className="text-[11.5px] text-slate-600 dark:text-slate-300">
+                当前课表：{schedule.name} · {schedule.courses.length} 门课
+                （共 {schedules.length} 份）
+              </Text>
+              <Text className="mt-1 text-[11.5px] text-slate-600 dark:text-slate-300">
+                成绩记录：{grades.length} 条
+              </Text>
+            </View>
+
+            <Pressable
+              onPress={resetToSample}
+              className="mt-3 items-center rounded-2xl border border-rose-400/40 bg-rose-400/15 py-3"
+            >
+              <Text className="text-[12.5px] font-semibold text-rose-300">
+                重置为示例数据
+              </Text>
+            </Pressable>
+
+          </View>
+        </GlassContainer>
+      </Animated.View>
+      <UpdateCard />
+    </>
+  );
+}
+
+function ReminderAndWidgetSettings() {
+  return (
+    <>
+      <CourseReminderSettings />
+      <CourseWidgetSettings />
+    </>
+  );
+}
+
+const SETTINGS_GROUPS = [
+  {
+    id: "schedule",
+    title: "课表与学期",
+    description: "切换课表、开学与放假日期",
+    icon: "calendar-outline",
+    Content: ScheduleSettings,
+  },
+  {
+    id: "reminders",
+    title: "提醒与小组件",
+    description: "上课提醒、桌面课表小组件",
+    icon: "notifications-outline",
+    Content: ReminderAndWidgetSettings,
+  },
+  {
+    id: "appearance",
+    title: "外观与背景",
+    description: "深浅色、卡片材质、背景图",
+    icon: "color-palette-outline",
+    Content: AppearanceSettings,
+  },
+  {
+    id: "ai",
+    title: "AI 与桌宠",
+    description: "DeepSeek API Key、人设与记忆",
+    icon: "sparkles-outline",
+    Content: AiSettings,
+  },
+  {
+    id: "data",
+    title: "数据与更新",
+    description: "数据概况、重置、检查更新",
+    icon: "settings-outline",
+    Content: DataSettings,
+  },
+] as const;
+
+function SettingsPage({
+  title,
+  children,
+  onBack,
+}: {
+  title: string;
+  children: ReactNode;
+  onBack: () => void;
+}) {
+  return (
+    <Backdrop>
+      <View className="flex-row items-center gap-3 px-5 pb-3 pt-2">
+        <Pressable
+          onPress={onBack}
+          accessibilityRole="button"
+          accessibilityLabel="返回"
+          className="h-11 w-11 items-center justify-center rounded-full bg-white/40 dark:bg-white/10"
+        >
+          <Ionicons name="chevron-back" size={21} color="#64748B" />
+        </Pressable>
+        <Text accessibilityRole="header" className="flex-1 text-2xl font-extrabold text-slate-800 dark:text-white">
+          {title}
+        </Text>
+      </View>
+      <ScrollView
+        className="flex-1"
+        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 6, paddingBottom: 40 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        {children}
+      </ScrollView>
+    </Backdrop>
+  );
+}
+
+export function SettingsScreen() {
+  return (
+    <SettingsPage
+      title="设置"
+      onBack={() => router.canGoBack() ? router.back() : router.replace("/")}
+    >
+      <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
+        {SETTINGS_GROUPS.map((group, index) => (
+          <Link
+            key={group.id}
+            href={{ pathname: "/settings/[category]", params: { category: group.id } }}
+            asChild
+          >
+            <Pressable
+              className="min-h-16 flex-row items-center gap-3 px-4 py-2.5 active:bg-sky-400/15"
+              style={index > 0 ? { borderTopWidth: 1, borderTopColor: "rgba(148,163,184,0.2)" } : undefined}
+            >
+              <View className="h-9 w-9 items-center justify-center rounded-xl bg-sky-400/20">
+                <Ionicons name={group.icon} size={19} color="#0EA5E9" />
+              </View>
+              <View className="flex-1">
+                <Text className="text-[15px] font-bold text-slate-800 dark:text-white">
+                  {group.title}
+                </Text>
+                <Text className="mt-0.5 text-[12px] text-slate-600 dark:text-slate-400">
+                  {group.description}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color="#94A3B8" />
+            </Pressable>
+          </Link>
+        ))}
+      </GlassContainer>
+      <Text className="mt-5 text-center text-[11px] text-slate-500 dark:text-slate-400">
+        Dark Study v{currentVersion()}
+      </Text>
+    </SettingsPage>
+  );
+}
+
+export function SettingsCategoryScreen({ category }: { category: string }) {
+  const group = SETTINGS_GROUPS.find((item) => item.id === category);
+  const Content = group?.Content;
+
+  return (
+    <SettingsPage
+      title={group?.title ?? "设置"}
+      onBack={() => router.canGoBack() ? router.back() : router.replace("/settings")}
+    >
+      {Content ? <Content /> : (
+        <Link href="/settings" replace className="py-3 text-sky-700 dark:text-sky-300">
+          返回设置
+        </Link>
+      )}
+    </SettingsPage>
   );
 }

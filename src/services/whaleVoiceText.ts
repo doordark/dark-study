@@ -100,11 +100,27 @@ export function splitSentences(text: string): string[] {
 }
 
 
-/** Fish reads one complete passage, without per-sentence HTTP calls. */
-export function fishSpeakable(text: string): string {
+/** Keep the existing spoken-reply length limit. */
+export function voiceSpeakable(text: string): string {
   const clean = toSpeakable(text);
   if (clean.length <= 220) return clean;
   const prefix = clean.slice(0, 220);
   const boundary = Math.max(...["。", "！", "？", "!", "?", "；", "，"].map((p) => prefix.lastIndexOf(p)));
   return boundary >= 60 ? prefix.slice(0, boundary + 1) : prefix.slice(0, 219) + "。";
+}
+
+/** Short initial phrase lowers time to first audio; punctuation keeps phrasing natural. */
+export function offlinePhrases(text: string): string[] {
+  const chunks: string[] = [];
+  let rest = text.trim();
+  while (rest) {
+    const max = chunks.length ? 64 : 28;
+    const prefix = rest.slice(0, max);
+    const boundary = prefix.search(/[。！？!?；;]/);
+    const pause = Math.max(prefix.lastIndexOf("，"), prefix.lastIndexOf(","), prefix.lastIndexOf(" "));
+    const end = boundary >= 0 ? boundary + 1 : rest.length <= max ? rest.length : pause >= 8 ? pause + 1 : max;
+    chunks.push(rest.slice(0, end).trim());
+    rest = rest.slice(end).trim();
+  }
+  return chunks;
 }

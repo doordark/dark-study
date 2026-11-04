@@ -95,14 +95,16 @@ export const FarmResident = memo(function FarmResident({
     width: 22 * scale,
     height: 28 * scale
   }, position]}>
-    <FarmText variant="label" pointerEvents="none" style={{
+    <FarmText variant="label" numberOfLines={1} pointerEvents="none" style={{
       position: 'absolute',
-      top: -14,
+      top: -17,
+      width: 76,
+      textAlign: 'center',
       alignSelf: 'center',
       color: talking ? '#755538' : '#5B5138',
-      backgroundColor: 'rgba(255,247,222,0.94)',
+      backgroundColor: 'rgba(255,247,222,0.88)',
       paddingHorizontal: 5,
-      borderRadius: 2,
+      borderRadius: 6,
       fontSize: 10
     }}>{meta.name}{taskLabel ? ` · ${taskLabel}` : talking ? ' ···' : ''}</FarmText>
     <Pressable accessibilityRole="button" accessibilityLabel={`${meta.name}，点击我的聊天`} hitSlop={5} onPress={() => onTalk(who, {

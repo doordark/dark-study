@@ -1,4 +1,4 @@
-import { FarmButton, FarmPaper, FarmText as Text } from './FarmSkin';
+import { FarmButton, FarmIllustration, FarmText as Text } from './FarmSkin';
 import { useState } from 'react';
 import { View } from 'react-native';
 import { CROP_KINDS, CROP_META, RECIPES, SEASON_NAMES, dailyOrder, craft, irrigationCost, wetDuration, marketRate, restoreEconomy, stockCount, stockValue, unitPrice, type CropKind, type Economy, type Recipe } from '@/utils/farmEconomy';
@@ -18,7 +18,7 @@ export function FarmEconomyPanel({ economy, coins, level, season, at, onSell, on
   const current = restoreEconomy(economy, at);
   const total = CROP_KINDS.reduce((n, k) => n + stockCount(current.inventory[k]), 0);
   return <View style={{ gap: 12, padding: 14, borderRadius: 3, backgroundColor: '#F8F0DE', borderWidth: 1, borderColor: '#CAB38B' }}>
-      <FarmPaper theme="market" />
+    <FarmIllustration theme="market" />
     <Text variant="title" style={{ color: '#926B35', fontWeight: '800', fontSize: 16 }}>丰收集市 · {SEASON_NAMES[season]}季</Text>
     <Text style={{ color: muted, fontSize: 12, lineHeight: 19 }}>收获先入仓，再选择出售、交订单或加工。当季播种每次多收 1 份；施肥收获为优质品，市价 +30%。</Text>
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>{([['stock', `仓库 ${total}`], ['orders', '订单'], ['kitchen', '工坊'], ['guide', '图鉴']] as const).map(([key, label]) => <Button key={key} label={`${tab === key ? '● ' : ''}${label}`} onPress={() => setTab(key)} />)}</View>

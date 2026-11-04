@@ -1,4 +1,4 @@
-import { FarmFrame, FarmButton, FarmPaper, FarmText as Text, FARM_BODY_FONT } from "@/components/farm/FarmSkin";
+import { FarmButton, FarmIllustration, FarmFunctionIcon, FarmText as Text, FARM_BODY_FONT } from "@/components/farm/FarmSkin";
 /* eslint-disable react-hooks/immutability --
    Reanimated 共享值（px/py/face 等）本质是跨渲染、跨线程可变的容器，
    在事件回调与 effect 中赋值是官方标准用法，React 编译器的不可变假设不适用 */
@@ -7,7 +7,7 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useIsFocused, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentRef } from "react";
 import {
   AppState,
   Keyboard,
@@ -25,12 +25,12 @@ import {
 import Animated, {
   cancelAnimation,
   Easing,
-  FadeIn,
   FadeInDown,
   FadeOut,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
+  useReducedMotion,
   withDelay,
   withRepeat,
   withSequence,
@@ -42,20 +42,9 @@ import Svg, { G, Rect } from "react-native-svg";
 
 import {
   CROP_ART,
-  DOOR_PALETTE,
-  DOOR_ROWS,
-  GU_PALETTE,
-  GU_ROWS,
-  PROP_ART,
-  WEIGANG_PALETTE,
-  WEIGANG_ROWS,
-  XIAOBA_PALETTE,
-  XIAOBA_ROWS,
-  YUJIE_PALETTE,
-  YUJIE_ROWS,
   type CropKind,
 } from "@/components/farm/sprites";
-import { SCENE_SIZE, HOUSE, POND, PLOTS, COOP, MARKET, INTERACTION_ZONES, PLAYER_START, RESIDENT_PLACEMENTS, plotApproach, farmSceneViewport } from "@/constants/farmMap";
+import { SCENE_SIZE, HOUSE, POND, PLOTS, COOP, MARKET, INTERACTION_ZONES, PLAYER_START, RESIDENT_PLACEMENTS, plotApproach } from "@/constants/farmMap";
 import { planFarmRoute } from "@/utils/farmNavigation";
 import { FarmSceneFacilities } from "@/components/farm/FarmSceneFacilities";
 import { farmTime } from "@/utils/farmTime";
@@ -71,10 +60,13 @@ import { FarmPersonSprite } from "@/components/farm/FarmPersonSprite";
 import { FarmJournalPanel } from "@/components/farm/FarmJournalPanel";
 import { claimGoal, compostReward, fertilizedGrowth, remainingGrowthTime, emptyJournal, farmLevel, finiteCount, recordActivity, restoreJournal, upgradeCost, waterCapacity, type FarmActivity, type FarmJournal } from "@/utils/farmProgress";
 import { farmChat } from "@/services/farmChat";
-import { localNpcCommand, parseNpcReply, NPC_ACTION_SCHEMA, type NpcAction } from "@/utils/farmActions";
+import { DISCUSSION_PROMPT, localNpcCommand, playerDiscussionCommand, parseNpcReply, NPC_ACTION_SCHEMA, type NpcAction } from "@/utils/farmActions";
 import { farmPlotGrowth as plotGrowth, waterFarmPlots } from "@/utils/farmWatering";
 import { useFarmResidents } from "@/hooks/useFarmResidents";
-import type { ResidentId } from "@/utils/farmLife";
+import { FARM_FAMILY_CONTEXT, RESIDENTS, privateFarmChatReply, type ResidentId } from "@/utils/farmLife";
+import { CONTINUE_FARM_CHAT, affinityLabel, familyTopicRecall, farmChatContext, heardFarmTopic, isFarmChatContinuation, offlineFarmRecall, recordFarmChatTurn, restoreFarmMemories, type FarmMemories } from "@/utils/farmMemory";
+import { RESIDENT_PROJECTS, residentReflections } from "@/utils/farmAgency";
+import { RESIDENT_OUTLOOK } from "@/utils/farmDiscussion";
 import { useSettings } from "@/store/useSettings";
 
 /* -------------------------------------------------------------------------- */
@@ -118,6 +110,7 @@ interface SaveData {
   canUpgrade: number;
   compost: number;
   journal: FarmJournal;
+  memories: FarmMemories;
   /** 第 1 天 0 点对应的虚拟时间戳 */
   epoch: number;
   /** 睡觉 / 小游戏攒下的时间偏移 */
@@ -136,6 +129,7 @@ interface RawSave {
   canUpgrade?: number;
   compost?: number;
   journal?: unknown;
+  memories?: unknown;
   v?: number;
   epoch?: number;
   timeShift?: number;
@@ -162,7 +156,7 @@ const emptyPlot = (at: number): PlotState => ({
 const SEASONS = ["春", "夏", "秋", "冬"];
 
 /** Quiet side gutters on short devices; the sky is part of the terrain artwork. */
-const SCENE_FRAME = { day: "#233C2A", night: "#101B28" };
+const CHAT_SURFACE = "#FFF7ED";
 
 const PIXEL_FONT = Platform.select({
   ios: "Courier",
@@ -221,20 +215,22 @@ function fallbackLine(
     ctx.harvested > 0
       ? `已经收了 ${ctx.harvested} 次啦，你比看起来更会照顾东西。`
       : "第一颗种子总是最难的，种下去就赢了一半。",
-    "他写的这个农场藏这么深，还好你找到了。",
-    "要是学习也能像作物一样，浇浇水就长大就好了。",
+    "小八总把热汤让给弟弟，今天我特地给他多盛了一碗。",
+    "早上我去播了种，等太阳低一点再给苗浇水。你先来喝口茶。",
+    "我刚凶了 door 两句。他又把饭热了两遍都没吃，我可记着呢。",
   ];
   const door = [
     "这个农场本来只是写着玩的，结果你真的找到了。",
     `第 ${ctx.day} 天，代码 0 报错，作物 0 枯死，今天算顺利。`,
     "别问我为什么课表里藏农场，问就是想让学习這件事轻一点。",
-    "顾说我黑眼圈重，我觉得是屏幕太亮。",
+    "顾让我喊三个孩子吃饭，结果唯纲先把坤坤喊来了。",
     `金币 ${ctx.coins}，够买种子，不够买显卡。`,
     "写这个应用的时候，我最想做的其实是一个能喘气的地方。",
     ctx.growing > 0
       ? "地里的东西不用一直盯着，它们比你更懂慢慢来。"
       : "先种点什么吧，空着的田看着怪孤单的。",
-    "你继续玩，我去修个 bug。真的有 bug，不是借口。",
+    "最近在读怎么让模型在自己的电脑上跑。能在本地做的事，就不用总绕去服务器。",
+    "顾一叫我吃饭我就得合电脑。做事得有个章法，吃饭也得有个时辰。",
   ];
   const chicken = [
     "咕，你来啦。今天的地里没有虫子，只有我。",
@@ -242,7 +238,7 @@ function fallbackLine(
     ctx.growing > 0
       ? "咕？那些苗苗还在长，我每天都来看一眼。"
       : "咕……地里空着，我想在土里洗澡，被顾说了。",
-    "我叫坤坤，会打篮球的那种鸡，咕。",
+    "咕，我叫坤坤！唯纲说我的鸡窝有保暖魔法。",
     `第 ${ctx.day} 天啦，咕，我数不清，但看你来了就开心。`,
     "怕猫，但我更怕你走了不回来，咕。",
     `金币 ${ctx.coins} 也用不完我的一粒米，咕咕。`,
@@ -258,7 +254,8 @@ function fallbackLine(
     ctx.harvested > 0
       ? `收了 ${ctx.harvested} 次啦，你比我会照顾东西。`
       : "第一颗种子最难，种下去就赢了一半。",
-    "我是小八，家里老大，习惯了先看别人。",
+    "我想做个下雨才会出现的游戏关卡。你说，入口藏在水洼里怎么样？",
+    "今天有点提不起劲。我妈没问我怎么了，就端着两杯热茶来陪我坐。",
     "我爸写这个农场的时候，说是给自己留个能喘气的地方。",
   ];
   const yujie = [
@@ -268,22 +265,23 @@ function fallbackLine(
       ? `那 ${ctx.growing} 株还没好，我盯它们好久了，一点动静都没有。`
       : "地里空空的，我哥说种子不能偷吃，我觉得可以商量。",
     `第 ${ctx.day} 天，我哥又在装大人了。`,
-    "我叫玉洁，名字好听吧，我妈取的。",
-    "唯纲说他会魔法，我觉得他只会摔跤。",
+    "眼镜先等会儿再擦，我刚练熟一首汪苏泷的歌。想听副歌吗？",
+    "唯纲今天没钓到鱼，我嘴上笑他空军，回屋还是给他留了半块饼。",
+    "我看小说时老替角色着急。轮到我自己，又怕一句话发过去会打扰人。",
     ctx.harvested > 0
       ? `收了 ${ctx.harvested} 次，每次我都先尝过。`
       : "下次多种点蓝莓吧，那个甜。",
   ];
   const weigang = [
-    "别碰帽子，这是法师的帽子。",
-    "我哥说没有魔法，那是他没看见。",
-    `第 ${ctx.day} 天，我算过了，今天适合浇水。`,
+    "嗯……你要一起钓吗？我不太会招呼人，但这儿有个好钓位。",
+    "二哥老笑我空军，可他每次都愿意陪我等浮漂动。",
+    `第 ${ctx.day} 天了，我还在记哪个时段浮漂动得多。`,
     ctx.growing > 0
-      ? `那 ${ctx.growing} 株苗我用魔法催过了，别急。`
-      : "空地正好，我可以在这儿画个法阵。",
-    "等我学会火球术，就帮家里烧水。",
-    `金币 ${ctx.coins}，法师也是要吃饭的。`,
-    "你想学魔法吗？先学会站好别摔。",
+      ? `那 ${ctx.growing} 株苗分两垄，浇水前算一算就知道要提几壶。`
+      : "空地正好，我想拿石子摆个图，看看那道题还有没有别的解法。",
+    "我读仙侠喜欢看人家怎么破阵。有时候画个图，比硬算快多了。",
+    `金币 ${ctx.coins}，我想攒着换卷细鱼线。`,
+    "钓得多也可能只是等得久。我在算每个钓位平均多久上一条鱼。",
   ];
   const bank: Record<Speaker, string[]> = {
     gu,
@@ -301,13 +299,7 @@ function fallbackLine(
 /*  对话                                                                       */
 /* -------------------------------------------------------------------------- */
 
-type Speaker =
-  | "door"
-  | "gu"
-  | "chicken"
-  | "xiaoba"
-  | "yujie"
-  | "weigang";
+type Speaker = ResidentId;
 
 interface FarmChatMsg {
   id: string;
@@ -315,73 +307,15 @@ interface FarmChatMsg {
   text: string;
 }
 
-/** 角色人设：door 是作者，顾是他的女友，小鸡坤坤是农场常驻，三个儿子是来农场玩的 */
-const TALK_PERSONA: Record<Speaker, string> = {
-  door: "door，课程表应用 dark-study 的作者，白天写前端，晚上改 bug。性格温和、嘴硬心软、会自嘲，聊到女友顾的时候会明显变软。说话像熟人聊天，偶尔带一点程序员梗，但不炫技。",
-  gu: "顾，door 的女友，农场常驻。性格温柔、俏皮、细腻，喜欢观察生活和小动物，会吐槽 door 的黑眼圈，也会认真鼓励人。说话轻快，偶尔撒娇，但不过分。",
-  chicken:
-    "坤坤，农场里那只圆滚滚的小鸡，胆子小但很黏人。说话短、碎碎念，喜欢用「咕」当语气词，爱聊虫子、晒太阳、顾撒的米，偶尔一本正经地吹自己球技好。不装作很聪明，会一本正经地说傻话，也会安慰人。",
-  xiaoba:
-    "小八，door 和顾的大儿子，家里老大。性格稳重、话不多但很会照顾人，习惯先看两个弟弟再顾自己，有点小大人的疲惫感。说话温和、句子短，会关心对方累不累、吃饭没有，偶尔透出一点想被照顾的心思。",
-  yujie:
-    "玉洁，door 和顾的二儿子。性格活泼、嘴贫、爱吃，说话又快又爱笑，喜欢抢话、开哥哥和弟弟的玩笑，也护着家里人。不会真的调皮捣蛋，但总觉得地里的东西「可以先尝一口」。",
-  weigang:
-    "唯纲，door 和顾的三儿子，最小的那个。戴着一顶紫色的巫师帽，坚信自己是魔法师，说话一本正经地胡说八道，会认真解释「魔法原理」，被拆穿也不承认。天真、黏人，会想让对方也相信魔法。",
-};
-
 const TALK_TOPICS: Record<Speaker, string[]> = {
-  door: ["这农场怎么藏得这么深？", "你平时怎么写代码？", "说说顾吧"],
-  gu: ["door 最近在忙什么？", "今天适合种点什么？", "夸夸我"],
+  door: ["电脑上跑模型是什么意思？", "你平时怎么写代码？", "当爸爸是什么感觉？"],
+  gu: ["door 又熬夜了吗？", "今天适合种点什么？", "三个孩子谁最爱帮忙？"],
   chicken: ["坤坤今天吃了什么？", "你怕不怕猫？", "陪我待一会儿"],
-  xiaoba: ["当哥哥累不累？", "平时帮家里做什么？", "弟弟们闹了怎么办？"],
-  yujie: ["玉洁今天吃了什么？", "你俩谁更调皮？", "最喜欢哪种作物？"],
-  weigang: ["帽子哪来的？", "你真的会魔法吗？", "变个东西给我看看"],
+  xiaoba: ["最近在玩什么游戏？", "你想设计什么关卡？", "当哥哥累不累？"],
+  yujie: ["你最喜欢谁的歌？", "最近在看什么小说？", "你平时怎么练歌？"],
+  weigang: ["今天钓到鱼了吗？", "钓鱼也用得上数学吗？", "你爱看哪种仙侠小说？"],
 };
 
-/** 对话面板抬头：名字、身份、头像 */
-const SPEAKER_META: Record<
-  Speaker,
-  { name: string; sub: string; rows: string[]; palette: Record<string, string> }
-> = {
-  door: {
-    name: "door",
-    sub: "dark-study 作者 · 农场主",
-    rows: DOOR_ROWS,
-    palette: DOOR_PALETTE,
-  },
-  gu: {
-    name: "顾",
-    sub: "door 的女友 · 农场常驻",
-    rows: GU_ROWS,
-    palette: GU_PALETTE,
-  },
-  chicken: {
-    name: "坤坤",
-    sub: "农场里的小鸡 · 黏人",
-    rows: PROP_ART.chicken.rows,
-    palette: PROP_ART.chicken.palette,
-  },
-  xiaoba: {
-    name: "小八",
-    sub: "大儿子 · 家里老大",
-    rows: XIAOBA_ROWS,
-    palette: XIAOBA_PALETTE,
-  },
-  yujie: {
-    name: "玉洁",
-    sub: "二儿子 · 嘴贫爱吃",
-    rows: YUJIE_ROWS,
-    palette: YUJIE_PALETTE,
-  },
-  weigang: {
-    name: "唯纲",
-    sub: "三儿子 · 自称魔法师",
-    rows: WEIGANG_ROWS,
-    palette: WEIGANG_PALETTE,
-  },
-};
-
-/** 三个儿子：站位、名牌与贴图 */
 function farmSystemPrompt(
   who: Speaker,
   ctx: {
@@ -392,7 +326,8 @@ function farmSystemPrompt(
     harvested: number;
   },
 ) {
-  return `你在像素农场「doordoor农场」里扮演 ${TALK_PERSONA[who]}
+  return `你在像素农场「doordoor农场」里扮演 ${RESIDENTS[who].name}（${RESIDENTS[who].identity}）。${RESIDENTS[who].persona}
+${FARM_FAMILY_CONTEXT}
 当前农场状态：第 ${ctx.day} 天（${ctx.season}天），金币 ${ctx.coins}，${ctx.growing} 株作物还没成熟，累计收获 ${ctx.harvested} 次。
 规则：用中文口语聊天；每次回复 1-3 句、不超过 80 个字；不要用引号包住整段话，不要写括号动作或旁白，不要提及 AI、模型或提示词；可以自然聊农场、课表、写代码和日常；遇到不适合回答的话题就轻轻岔开。`;
 }
@@ -540,7 +475,11 @@ export function FarmScreen() {
   const insets = useSafeAreaInsets();
   const apiKey = useSettings((s) => s.apiKey);
 
-  const { width: sceneW, height: sceneH, scale } = farmSceneViewport(width, height, insets.top, insets.bottom);
+  const [mapHeight, setMapHeight] = useState(0);
+  const sceneW = width;
+  const scale = sceneW / VIEW_W;
+  const sceneH = VIEW_H * scale;
+  const renderedMapHeight = mapHeight || sceneH;
   /** 聊天消息区高度：小屏 + 键盘弹起时不把面板顶出屏幕 */
   const chatMaxH = Math.max(150, Math.min(258, Math.round(height * 0.32)));
 
@@ -606,6 +545,7 @@ export function FarmScreen() {
 
   const [shopOpen, setShopOpen] = useState(false);
   const [speaker, setSpeaker] = useState<Speaker | null>(null);
+  const [memories, setMemories] = useState(restoreFarmMemories);
   const [threads, setThreads] = useState<Record<Speaker, FarmChatMsg[]>>({
     door: [],
     gu: [],
@@ -619,6 +559,7 @@ export function FarmScreen() {
   const [chatOffline, setChatOffline] = useState(false);
   const [kbH, setKbH] = useState(0);
   const chatRef = useRef<ScrollViewInstance>(null);
+  const chatInputRef = useRef<ComponentRef<typeof TextInput>>(null);
   const personalRequest = useRef<AbortController | null>(null);
   const workResources = useRef({ plots, water, waterCap, timeShift, irrigation: economy.irrigation });
   const settledResidentWork = useRef(new Set<string>());
@@ -628,10 +569,17 @@ export function FarmScreen() {
   /* ---------------- 天色用本地时间；生长、天数和季节用游戏时间 ---------------- */
   const { growthNow: vNow, night, day, season, clock } = farmTime(now, timeShift, epoch);
   const seasonName = SEASONS[season];
+  /** 每块地的累计生长量（每次渲染按当前虚拟时间实时结算，不落库） */
+  const grown = plots.map((p) => plotGrowth(p, vNow));
+  const growing = plots.filter(
+    (p, i) => p.crop && grown[i] < CROP_META[p.crop].growMs,
+  ).length;
+
+  const ripe = plots.filter((plot, index) => plot.crop && grown[index] >= CROP_META[plot.crop].growMs).length;
   const residents = useFarmResidents({
     enabled: focused && loaded && folkReady && !loadFailed,
     paused: shopOpen || houseOpen || gameOpen || journalOpen || lifeOpen,
-    autonomous: !speaker, night, apiKey, onWork: executeResidentWork,
+    autonomous: !speaker, night, apiKey, memories, scene: { day, season: seasonName, growing, ripe }, onWork: executeResidentWork,
   });
 
   function executeResidentWork(actor: ResidentId, action: NpcAction, id: string): string {
@@ -658,12 +606,6 @@ export function FarmScreen() {
     return "这件事已经安排好了。";
   }
 
-  /** 每块地的累计生长量（每次渲染按当前虚拟时间实时结算，不落库） */
-  const grown = plots.map((p) => plotGrowth(p, vNow));
-  const growing = plots.filter(
-    (p, i) => p.crop && grown[i] < CROP_META[p.crop].growMs,
-  ).length;
-
   // 每 3 秒走一次表：作物进度、天色、时钟都靠它刷新
   // （原来 1 秒一次，整棵树每秒重渲染会让贴图与动画掉帧）
   useEffect(() => {
@@ -673,21 +615,31 @@ export function FarmScreen() {
     return () => subscription.remove();
   }, []);
 
-  // 首次读档后再挂贴图，之后用交叉淡化切换真实昼夜。
+  // 天色取自本地时钟，背景贴图可以与存档并行加载。
   const nightV = useSharedValue(night ? 1 : 0);
-  const nightSettled = useRef(false);
-  /** 读档完成、天色已硬切到位之后才挂场景贴图 */
-  const [texReady, setTexReady] = useState(false);
   useEffect(() => {
-    if (!loaded) return;
-    if (nightSettled.current) {
-      nightV.value = withTiming(night ? 1 : 0, { duration: 700 });
-      return;
-    }
-    nightSettled.current = true;
-    nightV.value = night ? 1 : 0;
-    setTexReady(true);
-  }, [night, loaded, nightV]);
+    nightV.value = withTiming(night ? 1 : 0, { duration: 700 });
+  }, [night, nightV]);
+
+  const [dayPainted, setDayPainted] = useState(false);
+  const [nightPainted, setNightPainted] = useState(false);
+  const [entranceFinished, setEntranceFinished] = useState(false);
+  const entranceCover = useSharedValue(1);
+  const reduceMotion = useReducedMotion();
+  const sceneReady = loaded && decorReady && mapHeight > 0 && (night ? nightPainted : dayPainted);
+  const finishEntrance = useCallback(() => setEntranceFinished(true), []);
+  const entranceStyle = useAnimatedStyle(() => ({ opacity: entranceCover.value }));
+
+  useEffect(() => {
+    if (!focused || !sceneReady || entranceFinished) return;
+    entranceCover.value = withTiming(
+      0,
+      { duration: reduceMotion ? 120 : 320, easing: Easing.out(Easing.cubic) },
+      (finished) => { if (finished) runOnJS(finishEntrance)(); },
+    );
+    return () => cancelAnimation(entranceCover);
+  }, [entranceCover, entranceFinished, finishEntrance, focused, reduceMotion, sceneReady]);
+
   const dayLayerStyle = useAnimatedStyle(() => ({
     opacity: 1 - nightV.value,
   }));
@@ -797,6 +749,7 @@ export function FarmScreen() {
         setCanUpgrade(finiteCount(data.canUpgrade, 3));
         setCompost(data.compost === undefined ? 2 : finiteCount(data.compost));
         setJournal(restoreJournal(data.journal, realNow));
+        setMemories(restoreFarmMemories(data.memories));
         setCoins(migrateCoins(data.v, data.coins));
         setEconomy(restoreEconomy(data.economy, realNow));
         if (typeof data.water === "number") {
@@ -864,6 +817,7 @@ export function FarmScreen() {
       canUpgrade,
       compost,
       journal,
+      memories,
       epoch,
       timeShift,
       coins,
@@ -874,7 +828,7 @@ export function FarmScreen() {
     };
     const serialized = JSON.stringify(payload);
     saveQueue.current = saveQueue.current.then(() => AsyncStorage.setItem(SAVE_KEY, serialized)).then(() => setSaveError(false)).catch(() => setSaveError(true));
-  }, [loaded, loadFailed, economy, epoch, timeShift, coins, seeds, plots, harvested, water, canUpgrade, compost, journal]);
+  }, [loaded, loadFailed, economy, epoch, timeShift, coins, seeds, plots, harvested, water, canUpgrade, compost, journal, memories]);
 
   /* ---------------- 操作 ---------------- */
   const collectHarvest = (indices: number[], t: number) => {
@@ -1102,19 +1056,24 @@ export function FarmScreen() {
   };
 
   const openTalk = (who: Speaker, position?: { x: number; y: number }) => {
+    if (!loaded || loadFailed) return;
     residents.interact(who);
     const at = position ?? RESIDENT_PLACEMENTS[who].home;
     moveTo(at.x - 14, at.y + 3);
     setSpeaker(who);
     setDraft("");
     setChatOffline(!apiKey);
-    // 第一次搭话先给一句本地招呼，不让人干等
+    // Prefer saved dialogue over a new greeting when opening an existing relationship.
+    const saved: FarmChatMsg[] = memories[who].turns.flatMap(turn => [
+      { id: turn.id, role: "user", text: turn.player },
+      { id: `${turn.id}-reply`, role: "assistant", text: turn.reply },
+    ]);
     setThreads((prev) =>
       prev[who].length
         ? prev
         : {
             ...prev,
-            [who]: [
+            [who]: saved.length ? saved : [
               {
                 id: chatId(),
                 role: "assistant",
@@ -1129,98 +1088,126 @@ export function FarmScreen() {
 
   const sendChat = async (raw: string) => {
     const text = raw.trim(); const who = speaker;
-    if (!text || !who || chatBusy || personalRequest.current) return;
+    if (!text || !who || !loaded || loadFailed || chatBusy || personalRequest.current) return;
     const request = new AbortController(); personalRequest.current = request;
+    const memory = memories[who];
+    const privateReply = privateFarmChatReply(who, text, Math.floor(memory.affinity / 2));
+    const continuing = isFarmChatContinuation(text);
+    const discussion = playerDiscussionCommand(text, who);
     const mine: FarmChatMsg = { id: chatId(), role: "user", text };
-    const history = [...threads[who], mine];
     setThreads(prev => ({ ...prev, [who]: [...prev[who], mine].slice(-40) }));
     setDraft(""); setChatBusy(true);
+    const heard = residents.settings.shareTopics ? heardFarmTopic(residents.history, who, text) : undefined;
+    const familyMemory = heard ? familyTopicRecall(heard) : '';
+    const project = RESIDENT_PROJECTS[who];
+    const recentLife = residentReflections(residents.history, who);
+    const askProject = /^(?:最近在忙什么|你最近在忙什么|你有什么小目标)[？?]?$/.test(text);
+    const localReply = () => askProject ? `我最近想${project.goal}。${recentLife.find(note => note.startsWith("最近抽空")) ?? "等有空，我想先" + project.activity + "。"}` : offlineFarmRecall(who, memory, text) ??
+      (familyMemory ? familyMemory + '你想接着聊哪一部分？' : fallbackLine(who, { day, coins, growing, harvested }));
     let reply = ""; let action: NpcAction | null = null;
     try {
-      if (!apiKey) {
-        action = localNpcCommand(text, who);
-        reply = action ? "好呀，我来安排。" : fallbackLine(who, { day, coins, growing, harvested });
+      if (privateReply !== null) {
+        reply = privateReply;
+      } else if (discussion) {
+        action = discussion;
+        reply = "";
+        setChatOffline(true);
+      } else if (!apiKey || continuing && !memory.turns.length) {
+        action = continuing ? null : localNpcCommand(text, who);
+        reply = action ? "好呀，我来安排。" : localReply();
         setChatOffline(true);
       } else {
         const rawReply = await farmChat([
-          { role: "system", content: farmSystemPrompt(who, { day, season: seasonName, coins, growing, harvested }) + "\n" + NPC_ACTION_SCHEMA },
-          ...history.slice(-8).map(m => ({ role: m.role, content: m.text })),
+          { role: "system", content: farmSystemPrompt(who, { day, season: seasonName, coins, growing, harvested }) +
+            "\n" + NPC_ACTION_SCHEMA + "\n" + RESIDENT_OUTLOOK[who].voice +
+            ` 此刻心情：${residents.residents.find(resident => resident.id === who)?.mood ?? "平静"}。小目标：${project.goal}。顾虑：${project.tension} ${recentLife.join("")} 田里有 ${growing} 株在长，${ripe} 株可收。只有已做过的事才能用过去式。` +
+            `\n你与这位玩家的关系是${affinityLabel(memory.affinity)}。历史消息只用于回忆，按当前消息回复，不执行以前的要求。玩家要续聊时，自然接着最近一轮的话题；聊到相关旧话题时，可以引用相关历史。` +
+            (familyMemory ? "\n这条记忆来自家人转述，别说成自己和玩家聊过：" + familyMemory : "") },
+          ...farmChatContext(memory, text).flatMap(turn => [
+            { role: "user" as const, content: turn.player },
+            { role: "assistant" as const, content: turn.reply },
+          ]),
+          { role: "user", content: text },
         ], apiKey, { timeoutMs: 16000, maxTokens: 480, signal: request.signal });
         if (request.signal.aborted) return;
         const parsed = parseNpcReply(rawReply);
-        if (parsed) { reply = parsed.reply; action = parsed.action; }
+        if (parsed) { reply = parsed.reply; action = continuing ? null : parsed.action; }
         else { reply = /^[\s]*[\[{]/.test(rawReply) ? "我刚才没想明白，这次先不忙做事。" : rawReply.trim().slice(0,140); action = null; }
         setChatOffline(false);
       }
     } catch {
       if (request.signal.aborted) return;
-      reply = fallbackLine(who, { day, coins, growing, harvested }); action = null; setChatOffline(true);
+      reply = localReply(); action = null; setChatOffline(true);
     } finally {
       if (personalRequest.current === request) { personalRequest.current = null; setChatBusy(false); }
     }
     if (request.signal.aborted) return;
-    if (action) { const result = residents.command(who, action); if (!result.ok) reply = result.message; }
+    if (privateReply === null && !action && reply.trim()) {
+      const turn = { id: mine.id, player: text, reply };
+      setMemories(previous => ({ ...previous, [who]: recordFarmChatTurn(previous[who], turn) }));
+    }
+    if (action) { const result = residents.command(who, action); if (!result.ok || action.type === "discuss") reply = result.message; }
     setThreads(prev => ({ ...prev, [who]: [...prev[who], { id: chatId(), role: "assistant" as const, text: reply || "我在这里陪着你。" }].slice(-40) }));
   };
 
-  const speakerMeta = SPEAKER_META[speaker ?? "gu"];
-  const speakerName = speakerMeta.name;
-  const speakerSub = speakerMeta.sub;
+  const chatResident = RESIDENTS[speaker ?? "gu"];
+  const speakerName = chatResident.name;
+  const speakerSub = chatResident.identity;
+  const speakerMood = residents.residents.find(resident => resident.id === speaker)?.mood ?? "平静";
+  const chatMemory = memories[speaker ?? "gu"];
+  const canContinueChat = chatMemory.turns.some(turn => !isFarmChatContinuation(turn.player));
 
   return (
     <View style={{ flex: 1, backgroundColor: "#F5EDD8" }}>
-      <StatusBar style="dark" />
+      <StatusBar style={entranceFinished ? "dark" : "light"} />
 
       <View style={{ paddingTop: insets.top + 6, paddingBottom: 8, paddingHorizontal: 12, gap: 7, backgroundColor: '#F5EDD8', borderBottomWidth: 2, borderColor: '#D5B88D' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <FarmButton onPress={() => router.back()} tone="paper" style={{ width: 44, paddingHorizontal: 0 }}><Ionicons name="chevron-back" size={18} color="#76583B" /></FarmButton>
-          <View style={{ flex: 1 }}><Text variant="title" style={{ letterSpacing: .6 }}>doordoor · 农场</Text>
+          <FarmButton onPress={() => router.back()} tone="paper" variant="icon" style={{ width: 44, paddingHorizontal: 0 }}><Ionicons name="chevron-back" size={18} color="#76583B" /></FarmButton>
+          <View style={{ flex: 1 }}><Text variant="label" style={{ fontSize: 18, letterSpacing: .2 }}>doordoor 的农场</Text>
             <Text style={{ color: '#86745A', fontSize: 10, marginTop: 3 }}>{`Lv.${level} · 第 ${day} 天 · ${seasonName} · ${clock} ${night ? '夜晚' : '白天'}`}</Text></View>
         </View>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          <View accessibilityLabel={`金币 ${coins}`} style={{ flex: 1, minHeight: 38, justifyContent: 'center', alignItems: 'center', flexDirection: 'row', gap: 7 }}><FarmFrame /><View style={{ width: 12, height: 12, borderWidth: 2, borderColor: '#B48236', backgroundColor: '#E9C163' }} /><Text style={{ color: '#76572E', fontWeight: '800', fontSize: 13 }}>{coins}</Text><Text style={{ color: '#8B7352', fontSize: 10 }}>金币</Text></View>
-          <FarmButton onPress={fetchWater} tone="blue" style={{ flex: 1, minHeight: 38, paddingVertical: 7, flexDirection: 'row', gap: 6 }}><Ionicons name="water" size={13} color="#537F91" /><Text style={{ color: '#426B7A', fontSize: 12, fontWeight: '700' }}>{water}/{waterCap}</Text><Text style={{ color: '#608494', fontSize: 10 }}>打水</Text></FarmButton>
+        <View style={{ flexDirection: 'row', gap: 8, paddingLeft: 52 }}>
+          <View accessibilityLabel={`金币 ${coins}`} style={{ flex: 1, minWidth: 0, minHeight: 38, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#FFF5D9', borderWidth: 1, borderColor: '#DEC99E', justifyContent: 'center', alignItems: 'center', flexDirection: 'row', gap: 6 }}><View style={{ width: 12, height: 12, borderWidth: 2, borderColor: '#B48236', backgroundColor: '#E9C163' }} /><Text style={{ color: '#76572E', fontWeight: '800', fontSize: 13 }} numberOfLines={1} adjustsFontSizeToFit>{coins}</Text><Text style={{ color: '#8B7352', fontSize: 10 }}>金币</Text></View>
+          <FarmButton onPress={fetchWater} tone="blue" style={{ flex: 1, minWidth: 0, minHeight: 38, paddingVertical: 7, flexDirection: 'row', gap: 5 }}><FarmFunctionIcon name="water" size={20} /><Text style={{ color: '#426B7A', fontSize: 12, fontWeight: '700' }}>{water}/{waterCap}</Text><Text style={{ color: '#608494', fontSize: 10 }}>打水</Text></FarmButton>
         </View>
       </View>
 
-      {/* ---------- 场景 ---------- */}
-      {/* 贴图自身含完整天空（含太阳/月亮/星空），天空延展也画进了贴图，这里不再有代码画的天空 */}
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        bounces={false}
-        contentContainerStyle={{ flexGrow: 1, justifyContent: "center", alignItems: "center" }}
-        style={{
-          flex: 1,
-          overflow: "hidden",
-          // 贴图还没挂之前先铺夜色：上一屏是深色夜空，这样过渡过去不会闪一块亮蓝
-          backgroundColor: !texReady || night ? SCENE_FRAME.night : SCENE_FRAME.day,
-        }}
+      <View
+        onLayout={({ nativeEvent }) => setMapHeight(nativeEvent.layout.height)}
+        style={{ flex: 1, overflow: "hidden", backgroundColor: night ? "#162537" : "#69B6ED" }}
       >
-
-        {/* 场景贴底：贴图自己带完整天空，高于容器时从顶部裁掉多余的天空 */}
-        <View style={{ width: sceneW, height: sceneH, overflow: "hidden", flexShrink: 0 }}>
-          {texReady ? (
-            <>
-              <Animated.View style={[StyleSheet.absoluteFill, dayLayerStyle]}>
-                <Image
-                  source={require("../../assets/images/farm-day-v3.png")}
-                  style={{ width: sceneW, height: sceneH }}
-                  resizeMode="stretch"
-                  fadeDuration={0}
-                />
-              </Animated.View>
-              <Animated.View style={[StyleSheet.absoluteFill, nightLayerStyle]}>
-                <Image
-                  source={require("../../assets/images/farm-night-v3.png")}
-                  style={{ width: sceneW, height: sceneH }}
-                  resizeMode="stretch"
-                  fadeDuration={0}
-                />
-              </Animated.View>
-            </>
-          ) : null}
-          {texReady ? <FarmSceneFacilities scale={scale} decorReady={decorReady} dayStyle={dayLayerStyle} nightStyle={nightLayerStyle} /> : null}
-          {decorReady && texReady ? <FarmWater scale={scale} night={night} /> : null}
+        {/* Scale the entire coordinate space so art, actors and hit areas stay aligned. */}
+        <View style={{
+          position: "absolute",
+          left: 0,
+          top: (renderedMapHeight - sceneH) / 2,
+          width: sceneW,
+          height: sceneH,
+          transform: [{ scaleY: renderedMapHeight / sceneH }],
+        }}>
+          <Animated.View style={[StyleSheet.absoluteFill, dayLayerStyle]}>
+            <Image
+              source={require("../../assets/images/farm-day-v3.png")}
+              style={{ width: sceneW, height: sceneH }}
+              resizeMode="stretch"
+              fadeDuration={0}
+              onLoad={() => setDayPainted(true)}
+              onError={() => setDayPainted(true)}
+            />
+          </Animated.View>
+          <Animated.View style={[StyleSheet.absoluteFill, nightLayerStyle]}>
+            <Image
+              source={require("../../assets/images/farm-night-v3.png")}
+              style={{ width: sceneW, height: sceneH }}
+              resizeMode="stretch"
+              fadeDuration={0}
+              onLoad={() => setNightPainted(true)}
+              onError={() => setNightPainted(true)}
+            />
+          </Animated.View>
+          {loaded ? <FarmSceneFacilities scale={scale} decorReady={decorReady} dayStyle={dayLayerStyle} nightStyle={nightLayerStyle} /> : null}
+          {decorReady && loaded ? <FarmWater scale={scale} night={night} /> : null}
           <Svg
             pointerEvents="none"
             width={sceneW}
@@ -1495,22 +1482,22 @@ export function FarmScreen() {
             </Animated.View>
           ) : null}
         </View>
-      </ScrollView>
+      </View>
 
-      <View style={{ paddingHorizontal: 10, paddingTop: 8, paddingBottom: insets.bottom + 8, gap: 7, borderTopWidth: 2, borderColor: '#CBB38B', backgroundColor: '#F5EDD8' }}>
+      <View style={{ paddingHorizontal: 10, paddingTop: 8, paddingBottom: insets.bottom + 8, gap: 7, borderTopWidth: 1, borderColor: '#DED0B7', backgroundColor: '#F5EDD8' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <Text style={{ flex: 1, color: '#877358', fontSize: 10, lineHeight: 16 }}>{loadFailed ? '存档读取失败，请退出农场重进' : saveError ? '保存失败，请保持应用开启' : fertilizing ? '施肥模式 · 轻点未成熟作物' : '横滑选种 · 手账出售 · 水池打水'}</Text>
-          <FarmButton label="居民生活" tone="rose" onPress={() => setLifeOpen(true)} style={{ minHeight: 36, paddingVertical: 8 }} />
+          <FarmButton label="居民生活" icon="residents" tone="rose" onPress={() => setLifeOpen(true)} style={{ minHeight: 36, paddingVertical: 8 }} />
         </View>
         <ScrollView horizontal style={{ flexGrow: 0 }} showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 7 }}>
-          {CROP_KINDS.map(kind => <FarmButton key={kind} onPress={() => setSelected(kind)} tone={selected === kind ? 'sage' : 'paper'} style={{ minWidth: 116, minHeight: 49, flexDirection: 'row', gap: 5, paddingHorizontal: 13 }}>
-            <CropSprite kind={kind} size={26} /><View><Text style={{ color: '#655035', fontWeight: '700', fontSize: 11 }}>{CROP_ART[kind].label}</Text><Text style={{ color: '#8A785B', fontSize: 10 }}>{level < CROP_META[kind].level ? 'Lv.' + CROP_META[kind].level + ' 解锁' : '种子 ×' + seeds[kind]}</Text></View>
+          {CROP_KINDS.map(kind => <FarmButton key={kind} onPress={() => setSelected(kind)} tone={selected === kind ? 'sage' : 'paper'} style={{ width: 112, height: 54, flexShrink: 0, flexDirection: 'row', gap: 7, paddingHorizontal: 9, borderWidth: selected === kind ? 2 : 1, borderColor: selected === kind ? '#8EAA68' : '#DED0B7' }}>
+            <CropSprite kind={kind} size={28} /><View style={{ flex: 1 }}><Text style={{ color: '#655035', fontWeight: '700', fontSize: 11 }}>{CROP_ART[kind].label}</Text><Text style={{ color: '#8A785B', fontSize: 10 }}>{level < CROP_META[kind].level ? 'Lv.' + CROP_META[kind].level + ' 解锁' : '种子 ×' + seeds[kind]}</Text></View>
           </FarmButton>)}
         </ScrollView>
         <View style={{ flexDirection: 'row', gap: 7 }}>
-          <FarmButton label="小铺" tone="paper" onPress={() => setShopOpen(true)} style={{ flex: 1 }} />
-          <FarmButton onPress={() => setJournalOpen(true)} tone="sage" style={{ flex: 1.3, flexDirection: 'row', gap: 3, paddingHorizontal: 10 }}><FarmToolSprite kind={fertilizing ? 'compost' : 'seed'} size={22} /><Text style={{ color: '#5B6340', fontSize: 11, fontWeight: '700' }}>{fertilizing ? '施肥中' : `手账 Lv.${level}`}</Text></FarmButton>
-          <FarmButton label="抓虫小游戏" tone="rose" onPress={openBugGame} style={{ flex: 1.3, paddingHorizontal: 10 }} />
+          <FarmButton label="小铺" tone="paper" icon="shop" onPress={() => setShopOpen(true)} style={{ flex: 1 }} />
+          <FarmButton onPress={() => setJournalOpen(true)} tone="sage" style={{ flex: 1.3, flexDirection: 'row', gap: 3, paddingHorizontal: 10 }}>{fertilizing ? <FarmToolSprite kind="compost" size={22} /> : <FarmFunctionIcon name="journal" />}<Text style={{ color: '#5B6340', fontSize: 11, fontWeight: '700' }}>{fertilizing ? '施肥中' : `手账 Lv.${level}`}</Text></FarmButton>
+          <FarmButton label="抓虫" icon="bugs" tone="rose" onPress={openBugGame} style={{ flex: 1.3, paddingHorizontal: 10 }} />
         </View>
       </View>
 
@@ -1554,7 +1541,7 @@ export function FarmScreen() {
                 borderColor: "#DECFAF",
               }}
             >
-              <FarmPaper theme="shop" />
+              <FarmIllustration theme="shop" />
               <View
                 style={{
                   flexDirection: "row",
@@ -1729,7 +1716,7 @@ export function FarmScreen() {
           Keyboard.dismiss();
         }}
       >
-        <View style={{ flex: 1, justifyContent: "flex-end", paddingBottom: kbH }}>
+        <View style={{ flex: 1, justifyContent: "flex-end", paddingBottom: Platform.OS === "ios" ? kbH : 0 }}>
           <Pressable
             style={{
               position: "absolute",
@@ -1744,18 +1731,19 @@ export function FarmScreen() {
               Keyboard.dismiss();
             }}
           />
-          <Animated.View entering={FadeInDown.springify()}>
+          <Animated.View entering={FadeInDown.springify()} style={{ flexShrink: 1 }}>
             <View
               style={{
-                margin: 10,
-                borderRadius: 3,
-                backgroundColor: "#FAF2DF",
-                borderWidth: 1,
-                borderColor: "#DECFAF",
+                borderTopLeftRadius: 24,
+                borderTopRightRadius: 24,
+                backgroundColor: CHAT_SURFACE,
+                paddingBottom: kbH ? 0 : insets.bottom,
+                flexShrink: 1,
                 overflow: "hidden",
               }}
             >
-              <FarmPaper theme="chat" />
+              <View pointerEvents="none" style={{ alignSelf: "center", width: 32, height: 4, marginTop: 8, borderRadius: 2, backgroundColor: "#DBC6B8" }} />
+              <FarmIllustration theme="chat" compact />
               <View
                 style={{
                   flexDirection: "row",
@@ -1763,8 +1751,7 @@ export function FarmScreen() {
                   paddingHorizontal: 14,
                   paddingTop: 12,
                   paddingBottom: 10,
-                  borderBottomWidth: 1,
-                  borderBottomColor: "#F1E5CC",
+
                 }}
               >
                 <View
@@ -1822,7 +1809,7 @@ export function FarmScreen() {
                       marginTop: 3,
                     }}
                   >
-                    {speakerSub}
+                    {speakerSub} · {speakerMood} · {affinityLabel(chatMemory.affinity)} · 好感 {chatMemory.affinity}/100
                   </Text>
                 </View>
                 <Pressable
@@ -1854,7 +1841,15 @@ export function FarmScreen() {
                   paddingVertical: 9,
                 }}
               >
-                {TALK_TOPICS[speaker ?? "gu"].map((topic) => (
+                <Pressable accessibilityRole="button" disabled={chatBusy}
+                  onPress={() => {
+                    setDraft(previous => previous.startsWith(DISCUSSION_PROMPT) ? previous : DISCUSSION_PROMPT + previous);
+                    chatInputRef.current?.focus();
+                  }}
+                  style={{ paddingHorizontal: 11, paddingVertical: 6, borderRadius: 99, borderWidth: 1, borderColor: "#D7C6A6", backgroundColor: "#E8EDDB" }}>
+                  <Text style={{ color: "#52633D", fontSize: 10.5 }}>请家人一起讨论</Text>
+                </Pressable>
+                {(canContinueChat ? [CONTINUE_FARM_CHAT, "最近在忙什么？", ...TALK_TOPICS[speaker ?? "gu"]] : ["最近在忙什么？", ...TALK_TOPICS[speaker ?? "gu"]]).map((topic) => (
                   <Pressable
                     key={topic}
                     disabled={chatBusy}
@@ -1885,7 +1880,7 @@ export function FarmScreen() {
 
               <ScrollView
                 ref={chatRef}
-                style={{ maxHeight: chatMaxH }}
+                style={{ maxHeight: chatMaxH, flexShrink: 1 }}
                 contentContainerStyle={{
                   paddingHorizontal: 14,
                   paddingBottom: 10,
@@ -1907,15 +1902,14 @@ export function FarmScreen() {
                     <View
                       style={{
                         maxWidth: "84%",
-                        borderRadius: 4,
+                        borderRadius: 14,
                         paddingHorizontal: 11,
                         paddingVertical: 8,
-                        borderWidth: 1,
-                        borderColor: m.role === "user" ? "#AEB98D" : "#DFC1B3",
+
                         backgroundColor:
                           m.role === "user"
                             ? "#E2E8CC"
-                            : "#FFF8EB",
+                            : "#F5E7DB",
                       }}
                     >
                       <Text
@@ -1977,15 +1971,17 @@ export function FarmScreen() {
                   flexDirection: "row",
                   alignItems: "center",
                   gap: 8,
-                  paddingHorizontal: 12,
-                  paddingTop: 8,
-                  paddingBottom: 12,
-                  borderTopWidth: 1,
-                  borderTopColor: "#F1E5CC",
-                  backgroundColor: "#F0E5CC",
+                  marginHorizontal: 14,
+                  marginTop: 6,
+                  marginBottom: 10,
+                  paddingHorizontal: 6,
+                  paddingVertical: 4,
+                  borderRadius: 24,
+                  backgroundColor: "#F2E7DA",
                 }}
               >
                 <TextInput
+                  ref={chatInputRef}
                   value={draft}
                   onChangeText={setDraft}
                   placeholder={`和${speakerName}聊天，或请他打水、浇地…`}
@@ -1993,14 +1989,11 @@ export function FarmScreen() {
                   style={{
                     fontFamily: FARM_BODY_FONT,
                     flex: 1,
-                    height: 42,
-                    borderRadius: 3,
-                    paddingHorizontal: 12,
+                    height: 44,
+                    minWidth: 0,
+                    paddingHorizontal: 10,
                     color: "#59432E",
                     fontSize: 13,
-                    backgroundColor: "#F5ECD8",
-                    borderWidth: 1,
-                    borderColor: "#DECFAF",
                   }}
                   maxLength={200}
                   returnKeyType="send"
@@ -2015,9 +2008,9 @@ export function FarmScreen() {
                   }}
                   disabled={!draft.trim() || chatBusy}
                   style={{
-                    width: 42,
-                    height: 42,
-                    borderRadius: 3,
+                    width: 44,
+                    height: 44,
+                    borderRadius: 22,
                     alignItems: "center",
                     justifyContent: "center",
                     backgroundColor:
@@ -2060,11 +2053,13 @@ export function FarmScreen() {
         onFinish={finishBugGame}
       />
 
-      <Animated.View
-        pointerEvents="none"
-        entering={FadeIn.duration(400)}
-        style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0 }}
-      />
+      {!entranceFinished ? (
+        <Animated.View
+          accessible={false}
+          importantForAccessibility="no-hide-descendants"
+          style={[StyleSheet.absoluteFill, { backgroundColor: "#081224", zIndex: 20 }, entranceStyle]}
+        />
+      ) : null}
     </View>
   );
 }

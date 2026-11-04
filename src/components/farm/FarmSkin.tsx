@@ -1,8 +1,8 @@
+import { AtlasSprite } from '@/components/AtlasSprite';
 import type { ReactNode } from 'react';
-import { Image, Platform, Pressable, StyleSheet, Text, View, type StyleProp, type TextProps, type ViewStyle } from 'react-native';
+import { Image, Platform, Pressable, StyleSheet, Text, type StyleProp, type TextProps, type ViewStyle } from 'react-native';
 
 export type FarmTone = 'paper' | 'sage' | 'rose' | 'blue';
-const rows: Record<FarmTone, number> = { paper: 0, sage: 1, rose: 2, blue: 3 };
 export const FARM_INK = '#59432E';
 export const FARM_BODY_FONT = Platform.select({ ios: 'System', android: 'sans-serif', web: 'system-ui' });
 const headingFont = Platform.select({ ios: 'Georgia', android: 'serif', web: 'Georgia, serif' });
@@ -18,36 +18,39 @@ const typography = StyleSheet.create({
   label: { fontSize: 11, fontWeight: '700', letterSpacing: .25 },
 });
 
-const paper = {
-  shop: require('../../../assets/images/farm-paper-shop.png'),
-  journal: require('../../../assets/images/farm-paper-journal.png'),
-  market: require('../../../assets/images/farm-paper-market.png'),
-  residents: require('../../../assets/images/farm-paper-residents.png'),
-  chat: require('../../../assets/images/farm-paper-chat.png'),
-  bugs: require('../../../assets/images/farm-paper-bugs.png'),
-  house: require('../../../assets/images/farm-paper-house.png'),
-  night: require('../../../assets/images/farm-paper-night.png'),
+const covers = {
+  shop: require('../../../assets/images/farm-cover-shop.png'),
+  journal: require('../../../assets/images/farm-cover-journal.png'),
+  market: require('../../../assets/images/farm-cover-market.png'),
+  chat: require('../../../assets/images/farm-cover-chat.png'),
+  bugs: require('../../../assets/images/farm-cover-bugs.png'),
+  house: require('../../../assets/images/farm-cover-house.png'),
 };
 
-export function FarmPaper({ theme }: { theme: keyof typeof paper }) {
-  return <View pointerEvents="none" accessible={false} style={StyleSheet.absoluteFill}>
-    <Image source={paper[theme]} resizeMode="stretch" fadeDuration={0} style={{ width: '100%', height: '100%' }} />
-  </View>;
+export function FarmIllustration({ theme, compact = false }: { theme: keyof typeof covers; compact?: boolean }) {
+  return <Image
+    accessible={false}
+    source={covers[theme]}
+    resizeMode="contain"
+    fadeDuration={0}
+    style={{ width: compact ? 90 : '100%', aspectRatio: 150 / 44, maxWidth: 306, alignSelf: 'center', borderRadius: 8 }}
+  />;
 }
 
-/** One shared atlas, no SVG furniture or animated mounts for the interface. */
-export function FarmFrame({ tone = 'paper' }: { tone?: FarmTone }) {
-  return <View pointerEvents="none" style={[StyleSheet.absoluteFill, { overflow: 'hidden', borderRadius: 3 }]}>
-    <Image source={require('../../../assets/images/farm-ui-v3.png')} resizeMode="stretch" style={{ position: 'absolute', width: '100%', height: '400%', top: `${-rows[tone] * 100}%` }} />
-  </View>;
+const iconColumns = { shop: 0, journal: 1, bugs: 2, residents: 3, water: 4, chat: 5, market: 6, house: 7 };
+
+export function FarmFunctionIcon({ name, size = 22 }: { name: keyof typeof iconColumns; size?: number }) {
+  return <AtlasSprite source={require('../../../assets/images/farm-function-icons.png')} columns={8} rows={1} column={iconColumns[name]} row={0} width={size} />;
 }
 
-export function FarmButton({ children, label, onPress, disabled, tone = 'sage', style }: {
-  children?: ReactNode; label?: string; onPress: () => void; disabled?: boolean; tone?: FarmTone; style?: StyleProp<ViewStyle>;
+export function FarmButton({ children, label, onPress, disabled, tone = 'sage', variant = 'soft', icon, style }: {
+  children?: ReactNode; label?: string; onPress: () => void; disabled?: boolean; tone?: FarmTone; variant?: 'soft' | 'icon'; icon?: keyof typeof iconColumns; style?: StyleProp<ViewStyle>;
 }) {
+  const fills = { paper: '#FFF7E5', sage: '#E1E8CF', rose: '#F4DFDF', blue: '#DDECF0' };
   return <Pressable accessibilityRole="button" disabled={disabled} accessibilityState={{ disabled: !!disabled }} onPress={onPress}
-    style={({ pressed }) => [{ minHeight: 44, paddingHorizontal: 16, paddingVertical: 10, alignItems: 'center', justifyContent: 'center', opacity: disabled ? .48 : pressed ? .75 : 1, transform: [{ translateY: pressed ? 1 : 0 }] }, style]}>
-    <FarmFrame tone={tone} />
-    {children ?? <FarmText variant="label" style={{ fontSize: 12, textAlign: 'center' }}>{label}</FarmText>}
+    android_ripple={{ color: '#B9A58130' }}
+    style={[{ minHeight: 44, minWidth: 44, paddingHorizontal: 12, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: fills[tone], borderWidth: 1, borderColor: '#CFBE9E', borderBottomWidth: 2, borderRadius: variant === 'icon' ? 22 : 10, overflow: 'hidden', opacity: disabled ? .48 : 1 }, style]}>
+    {icon ? <FarmFunctionIcon name={icon} /> : null}
+    {children ?? <FarmText variant="label" numberOfLines={1} style={{ fontSize: 12, textAlign: 'center' }}>{label}</FarmText>}
   </Pressable>;
 }

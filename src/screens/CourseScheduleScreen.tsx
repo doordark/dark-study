@@ -291,7 +291,7 @@ export function CourseScheduleScreen({
       label: "助手",
       primary: true,
       onPress: onAssistant,
-      iconNode: whaleMode ? <WhaleAvatar size={44} variant="button" /> : undefined,
+      iconNode: whaleMode ? <WhaleAvatar size={44} variant="dock" /> : undefined,
     },
     { key: "grades", icon: "school", label: "成绩", onPress: onGrades },
     { key: "settings", icon: "options", label: "设置", onPress: onSettings },

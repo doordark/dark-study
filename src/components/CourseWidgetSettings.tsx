@@ -1,8 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useForegroundClock } from "@/hooks/useForegroundClock";
-import { Alert, Platform, Pressable, Text, View } from "react-native";
+import { Alert, AppState, Platform, Pressable, Text, View } from "react-native";
 import { GlassContainer } from "@/components/GlassContainer";
-import { courseWidgetsAvailable, pinCourseWidget, syncCourseWidgets } from "@/services/courseWidget";
+import { courseWidgetsAvailable, getCourseWidgetStatus, openWidgetPermissions, pinCourseWidget, syncCourseWidgets, type WidgetStatus } from "@/services/courseWidget";
 import { useActiveSchedule } from "@/store/useStore";
 import { useWidgetSettings } from "@/store/useWidgetSettings";
 import { upcomingWidgetCourses, widgetDayLabel, WIDGET_SHAPES } from "@/utils/courseWidget";
@@ -16,6 +16,18 @@ export function CourseWidgetSettings() {
   const setTheme = useWidgetSettings((s) => s.setTheme);
   const setCount = useWidgetSettings((s) => s.setCount);
   const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<WidgetStatus | null>(null);
+  const [message, setMessage] = useState("");
+  useEffect(() => {
+    let active = true;
+    const refresh = () => { void getCourseWidgetStatus().then((value) => { if (active) setStatus(value); }).catch(() => {}); };
+    refresh();
+    const sub = AppState.addEventListener("change", (state) => { if (state === "active") refresh(); });
+    return () => { active = false; sub.remove(); };
+  }, []);
+  const help = () => Alert.alert("澎湃 OS 添加说明", "长按桌面 → 添加小组件，查找「安卓小组件」（有些版本在搜索页面或底部）→ dark-study。\n\n若应用内添加无反应：打开应用权限设置，检查「桌面快捷方式」或「创建桌面快捷方式」权限（以手机显示的选项为准），允许后返回重试。", [
+    { text: "知道了" }, { text: "打开权限设置", onPress: () => { void openWidgetPermissions().catch(() => Alert.alert("无法打开", "请从系统设置 → 应用管理 → dark-study 打开权限设置。")); } },
+  ]);
   const now = useForegroundClock();
   const selected = WIDGET_SHAPES.find((s) => s.key === shape) ?? WIDGET_SHAPES[0];
   const courses = useMemo(() => upcomingWidgetCourses(schedule, now), [schedule, now]);
@@ -25,10 +37,29 @@ export function CourseWidgetSettings() {
   const muted = dark ? "#A5B4CF" : "#536783";
   const add = async () => {
     setBusy(true);
+    setMessage("正在检查系统中的小组件…");
     try {
+      const before = await getCourseWidgetStatus();
+      setStatus(before);
+      if (before && before.registered !== 3) {
+        setMessage(`系统仅识别 ${before.registered}/3 种小组件。请覆盖安装包含原生组件的完整新版 APK，再打开应用。`);
+        return;
+      }
       await syncCourseWidgets(schedule, count, theme);
-      if (!await pinCourseWidget(shape)) Alert.alert("手动添加小组件", "长按手机桌面空白处 → 小组件 → Dark Study，选择正方形、长方形或大卡片并拖到桌面。");
-    } catch { Alert.alert("添加失败", "请稍后重试，也可以长按桌面，从小组件列表添加 Dark Study。"); }
+      if (!await pinCourseWidget(shape)) {
+        setMessage("当前桌面不支持应用内添加，请使用安卓小组件列表。"); help(); return;
+      }
+      setMessage("请求已发送，请在桌面确认添加。正在检查添加结果…");
+      if (before) {
+        for (let i = 0; i < 8; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          const after = await getCourseWidgetStatus();
+          setStatus(after);
+          if (after && after.installed > before.installed) { setMessage("已检测到新添加的小组件，可以返回桌面查看。"); return; }
+        }
+      }
+      setMessage("尚未检测到新增组件。若没有出现系统确认，请查看下方澎湃 OS 添加说明；也可在桌面继续确认。");
+    } catch (error) { setMessage(`添加未完成：${error instanceof Error ? error.message : "请检查系统权限后重试"}`); }
     finally { setBusy(false); }
   };
   return (
@@ -37,6 +68,11 @@ export function CourseWidgetSettings() {
         <View className="px-4 py-4">
           <Text className="text-[14px] font-bold text-slate-800 dark:text-white">桌面课表小组件</Text>
           <Text className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">显示正在上和接下来的课程 · 跟随当前课表</Text>
+          {Platform.OS === "android" && <>
+            <Text className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">{status ? `系统识别 ${status.registered}/3 种 · 已添加 ${status.installed} 个` : "安装最新完整 APK 后可检查系统注册状态"}</Text>
+            {!!message && <Text accessibilityLiveRegion="polite" className="mt-2 text-[12px] text-sky-700 dark:text-sky-200">{message}</Text>}
+            <Pressable onPress={help} accessibilityRole="button" className="mt-2 rounded-xl bg-sky-400/20 px-3 py-3"><Text className="text-[12px] font-bold text-sky-700 dark:text-sky-200">澎湃 OS：找不到组件 / 添加无反应</Text></Pressable>
+          </>}
           <View className="mt-3 flex-row gap-2">{WIDGET_SHAPES.map((item) => (
             <Pressable key={item.key} onPress={() => setShape(item.key)} accessibilityRole="radio" accessibilityState={{ selected: shape === item.key }} className={`flex-1 items-center rounded-xl py-3 ${shape === item.key ? "bg-sky-400/25" : "bg-slate-400/10"}`}>
               <View style={{ width: item.key === "square" ? 22 : 34, height: item.key === "rectangle" ? 15 : 22, borderWidth: 1.5, borderColor: shape === item.key ? "#38BDF8" : "#94A3B8", borderRadius: 5, marginBottom: 6 }} />

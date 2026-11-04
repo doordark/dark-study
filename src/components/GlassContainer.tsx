@@ -7,7 +7,6 @@ import React, {
   useId,
 } from "react";
 import { Platform, StyleSheet, View as RNView, type ViewProps } from "react-native";
-import { requireNativeView, requireOptionalNativeModule } from "expo";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import { useColorScheme } from "nativewind";
@@ -36,17 +35,13 @@ export function useGlassTarget(): GlassTargetRef | undefined {
 }
 
 const DEPTH = {
-  surface: { blur: 18, dark: [0.15, 0.24], light: [0.20, 0.10] },
-  floating: { blur: 25, dark: [0.18, 0.30], light: [0.27, 0.14] },
+  surface: { blur: 28, dark: [0.12, 0.22], light: [0.13, 0.06] },
+  floating: { blur: 32, dark: [0.16, 0.28], light: [0.18, 0.09] },
   sheet: { blur: 42, dark: [0.55, 0.68], light: [0.67, 0.55] },
 } as const;
 
 const isAndroid = Platform.OS === "android";
 const androidVersion = Number(Platform.Version);
-const refractionModule = "DarkStudyGlassRefraction";
-const RefractionView = isAndroid && androidVersion >= 33 && requireOptionalNativeModule(refractionModule)
-  ? requireNativeView<PropsWithChildren<ViewProps & { radius: number }>>(refractionModule)
-  : null;
 
 export interface GlassContainerProps extends ViewProps {
   intensity?: number;
@@ -113,9 +108,9 @@ export function GlassContainer({
     <BlurView
       style={StyleSheet.absoluteFill}
       blurMethod="dimezisBlurViewSdk31Plus"
-      blurReductionFactor={5}
+      blurReductionFactor={4}
       blurTarget={glassTarget}
-      intensity={Math.max(1, Math.min(100, intensity == null ? depth.blur : intensity * 0.5))}
+      intensity={Math.max(1, Math.min(100, intensity == null ? depth.blur : intensity * 0.65))}
       tint={isAndroid && !darkGlass ? "default" : tint ?? (darkGlass ? "dark" : "light")}
     />
   ) : null;
@@ -150,15 +145,11 @@ export function GlassContainer({
           importantForAccessibility="no-hide-descendants"
           style={[StyleSheet.absoluteFill, !canBlur && { backgroundColor: fallback }]}
         >
-          {blur && RefractionView ? (
-            <RefractionView style={StyleSheet.absoluteFill} radius={innerRadius}>
-              {blur}
-            </RefractionView>
-          ) : blur}
+          {blur}
           <LinearGradient
             colors={darkGlass
               ? [`rgba(45,60,85,${wash[0]})`, `rgba(8,14,29,${wash[1]})`]
-              : [`rgba(255,255,255,${wash[0]})`, `rgba(235,245,255,${wash[1]})`]}
+              : [`rgba(255,255,255,${wash[0]})`, `rgba(255,255,255,${wash[1]})`]}
             start={{ x: 0, y: 0 }}
             end={{ x: 0.85, y: 1 }}
             style={StyleSheet.absoluteFill}
@@ -175,7 +166,7 @@ export function GlassContainer({
             <SvgGradient id={rimId} x1="0%" y1="0%" x2="75%" y2="100%">
               <Stop offset="0" stopColor="#F5FCFF" stopOpacity={rim * (highlight ? 1 : 0.35)} />
               <Stop offset="0.43" stopColor="#CBE5FD" stopOpacity={rim * 0.22} />
-              <Stop offset="0.72" stopColor="#557294" stopOpacity={rim * 0.20} />
+              <Stop offset="0.72" stopColor="#D5E6F2" stopOpacity={rim * 0.10} />
               <Stop offset="1" stopColor="#E7F6FF" stopOpacity={rim * (highlight ? 0.58 : 0.28)} />
             </SvgGradient>
           </Defs>

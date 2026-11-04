@@ -39,4 +39,13 @@ for (const invalid of ["not json", "null", reply([]), reply([...lines, lines[0]]
 for (const scene of p.LOCAL_SCENES) {
   assert.ok(p.readLifeReply(reply(scene.pair.map((speaker, i) => ({ speaker, text: scene.lines[i] }))), scene.pair), "all local dialogue follows the same validation");
 }
+const reveal = p.privateFarmChatReply;
+assert.equal(reveal("xiaoba", "你最近在玩什么游戏？", 9), null);
+assert.doesNotMatch(reveal("xiaoba", "阿绿是谁？", 4), /阿绿|分开/);
+assert.doesNotMatch(reveal("xiaoba", "我听过阿绿这个名字。", 5), /阿绿|分开/);
+assert.doesNotMatch(reveal("xiaoba", "我听过阿绿，你今天好吗？", 5), /阿绿|分开/);
+assert.match(reveal("xiaoba", "你以前喜欢过谁？", 5), /阿绿.*分开/);
+assert.match(reveal("xiaoba", "聊聊阿绿", 5), /阿绿.*分开/);
+assert.doesNotMatch(reveal("gu", "阿绿是谁？", 10), /阿绿|分开/);
+assert.doesNotMatch(JSON.stringify([p.RESIDENTS, p.FARM_FAMILY_CONTEXT, p.LOCAL_SCENES]), /阿绿/);
 console.log("Farm life checks passed: offline default, persistent cap, cooldown, date reset, clock rollback and strict two-line replies.");
