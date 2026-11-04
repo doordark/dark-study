@@ -1,9 +1,12 @@
 const {
   withAppBuildGradle,
+  withDangerousMod,
   withGradleProperties,
   withProjectBuildGradle,
   withSettingsGradle,
 } = require("@expo/config-plugins");
+const fs = require("node:fs");
+const path = require("node:path");
 
 /**
  * 本地构建签名插件（CNG 工作流）：
@@ -47,6 +50,18 @@ const MIRRORS = [
   "https://maven.aliyun.com/repository/central",
   "https://mirrors.cloud.tencent.com/nexus/repository/maven-public/",
 ];
+
+/** R8 规则：Room 生成的 *_Impl 靠反射按类名创建，混淆后会导致 androidx.work 启动崩溃 */
+const PROGUARD_RULES = `
+# androidx.work / Room: R8 会重命名 Room 生成的 *_Impl，反射按类名找不到后启动崩溃
+-keep class * extends androidx.room.RoomDatabase { *; }
+-keep class androidx.work.impl.WorkDatabase_Impl { *; }
+-keep class androidx.work.impl.WorkDatabase { *; }
+
+# sherpa-onnx / onnxruntime: JNI 通过字段名反射读取 Java 配置对象，混淆后会 fid == null 崩溃
+-keep class com.k2fsa.sherpa.onnx.** { *; }
+-keep class ai.onnxruntime.** { *; }
+`;
 
 const mirrorLines = (indent) =>
   MIRRORS.map((u) => `${indent}maven { url '${u}' }\n`).join("");
@@ -150,7 +165,15 @@ function withReleaseSigning(config) {
     return cfg;
   });
 
-  return config;
+  return withDangerousMod(config, ["android", async (cfg) => {
+    const file = path.join(cfg.modRequest.platformProjectRoot, "app/proguard-rules.pro");
+    if (!fs.existsSync(file)) return cfg;
+    const contents = fs.readFileSync(file, "utf8");
+    if (!contents.includes("androidx.room.RoomDatabase")) {
+      fs.writeFileSync(file, `${contents.replace(/\s*$/, "")}\n${PROGUARD_RULES}`);
+    }
+    return cfg;
+  }]);
 }
 
 module.exports = withReleaseSigning;

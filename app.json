@@ -2,7 +2,7 @@
   "expo": {
     "name": "dark-study",
     "slug": "dark-study",
-    "version": "1.8.5",
+    "version": "1.8.6",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "dark-study",
@@ -11,7 +11,7 @@
     },
     "android": {
       "package": "com.darkstudy.app",
-      "versionCode": 29,
+      "versionCode": 30,
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO"
       ],
