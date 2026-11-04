@@ -1,6 +1,7 @@
+import { FarmText } from './FarmSkin';
 import { memo, useEffect } from 'react';
-import { Pressable, Text, View } from 'react-native';
-import Animated, { cancelAnimation, Easing, useAnimatedReaction, useAnimatedStyle, useSharedValue, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
+import { Pressable } from 'react-native';
+import Animated, { cancelAnimation, Easing, useAnimatedReaction, useAnimatedStyle, useSharedValue, withDelay, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
 import { RESIDENTS, type ResidentId } from '@/utils/farmLife';
 import { remainingResidentMotion, type ResidentModel } from '@/utils/farmResidentAI';
 import { FarmPersonSprite } from './FarmPersonSprite';
@@ -42,14 +43,14 @@ export const FarmResident = memo(function FarmResident({
     x.set(remaining.start.x);
     y.set(remaining.start.y);
     if (remaining.steps.length) {
-      x.set(withSequence(...remaining.steps.map(s => withTiming(s.point.x, {
+      x.set(withDelay(Math.max(0, motion.startedAt - Date.now()), withSequence(...remaining.steps.map(s => withTiming(s.point.x, {
         duration: s.duration,
         easing: Easing.linear
-      }))));
-      y.set(withSequence(...remaining.steps.map(s => withTiming(s.point.y, {
+      })))));
+      y.set(withDelay(Math.max(0, motion.startedAt - Date.now()), withSequence(...remaining.steps.map(s => withTiming(s.point.y, {
         duration: s.duration,
         easing: Easing.linear
-      }))));
+      })))));
     }
     return () => {
       cancelAnimation(x);
@@ -86,7 +87,6 @@ export const FarmResident = memo(function FarmResident({
   }));
   const talking = resident.state === 'talking';
   const walking = Boolean(motion) && active && !reducedMotion;
-  const right = resident.logicalPosition.x > 100;
   const taskLabel = resident.task ? resident.task.action.type === 'fetch_water' ? '打水' : resident.task.action.type === 'water_crops' ? '浇水' : resident.task.action.type === 'talk_to' ? '找人' : resident.task.action.type === 'go_home' ? '回家' : resident.task.action.type === 'rest' ? '休息' : '散心' : '';
   return <Animated.View style={[{
     position: 'absolute',
@@ -95,35 +95,16 @@ export const FarmResident = memo(function FarmResident({
     width: 22 * scale,
     height: 28 * scale
   }, position]}>
-    {resident.bubble ? <View pointerEvents="none" style={{
-      position: 'absolute',
-      bottom: 31 * scale,
-      ...(right ? {
-        right: 0
-      } : {
-        left: 0
-      }),
-      width: 136,
-      padding: 8,
-      borderRadius: 10,
-      borderWidth: 1,
-      borderColor: '#91A76B',
-      backgroundColor: 'rgba(20,35,26,0.96)'
-    }}><Text style={{
-        color: '#F6EEDC',
-        fontSize: 11,
-        lineHeight: 17
-      }}>{resident.bubble.text}</Text></View> : null}
-    <Text pointerEvents="none" style={{
+    <FarmText variant="label" pointerEvents="none" style={{
       position: 'absolute',
       top: -14,
       alignSelf: 'center',
-      color: talking ? '#FFE6A1' : '#F6EEDC',
-      backgroundColor: 'rgba(15,28,20,0.8)',
+      color: talking ? '#755538' : '#5B5138',
+      backgroundColor: 'rgba(255,247,222,0.94)',
       paddingHorizontal: 5,
-      borderRadius: 5,
+      borderRadius: 2,
       fontSize: 10
-    }}>{meta.name}{taskLabel ? ` · ${taskLabel}` : talking ? ' ···' : ''}</Text>
+    }}>{meta.name}{taskLabel ? ` · ${taskLabel}` : talking ? ' ···' : ''}</FarmText>
     <Pressable accessibilityRole="button" accessibilityLabel={`${meta.name}，点击我的聊天`} hitSlop={5} onPress={() => onTalk(who, {
       x: x.get(),
       y: y.get()

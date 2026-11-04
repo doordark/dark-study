@@ -1,4 +1,4 @@
-export type Mood = "tender" | "happy" | "excited" | "sleepy" | "sad";
+export type Mood = "normal" | "happy" | "excited" | "sleepy" | "comfort";
 
 export interface Prosody {
   pitch: number;
@@ -7,11 +7,11 @@ export interface Prosody {
 
 /** 音高贴近自然人声，只在 ±10% 内做情绪差分 */
 export const PROSODY: Record<Mood, Prosody> = {
-  tender: { pitch: 1.03, rate: 0.9 },
+  normal: { pitch: 1.03, rate: 0.9 },
   happy: { pitch: 1.07, rate: 0.94 },
   excited: { pitch: 1.1, rate: 1.0 },
   sleepy: { pitch: 0.98, rate: 0.82 },
-  sad: { pitch: 0.97, rate: 0.84 },
+  comfort: { pitch: 0.97, rate: 0.84 },
 };
 
 /** 单段最长字数，太长会一口气念到底没有换气感 */
@@ -22,16 +22,16 @@ const MAX_TOTAL = 180;
 /** 按语气挑一档：先匹配更极端的情绪，再回落到温柔 */
 const MOOD_RULES: { mood: Mood; re: RegExp }[] = [
   { mood: "sleepy", re: /困|睡觉|晚安|眯|打哈欠|呼…/ },
-  { mood: "sad", re: /呜|委屈|难过|对不起|忘了我|想哭|没关系/ },
+  { mood: "comfort", re: /呜|委屈|难过|对不起|忘了我|想哭|没关系/ },
   { mood: "excited", re: /哇|好棒|太厉害|冲呀|耶|嗷呜|！！/ },
-  { mood: "happy", re: /嘿嘿|开心|喜欢|高兴|陪你|好呀/ },
+  { mood: "happy", re: /嘿嘿|开心|喜欢|高兴|好呀/ },
 ];
 
 export function detectMood(text: string): Mood {
   for (const rule of MOOD_RULES) {
     if (rule.re.test(text)) return rule.mood;
   }
-  return "tender";
+  return "normal";
 }
 
 /** TTS 只需要人话：去掉动作说明、颜文字、表情、Markdown 与多余的续符号 */
@@ -39,6 +39,8 @@ export function toSpeakable(text: string): string {
   const plain = text
     .replace(/https?:\/\/[^\s]+/gi, " ")
     .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`[^`\n]*`/g, " ")
+    .replace(/(?<!\*)\*[^*\n]+\*(?!\*)/g, " ")
     .replace(/（[^）]*）/g, " ")
     .replace(/\([^)]*\)/g, " ")
     .replace(/【[^】]*】/g, " ")

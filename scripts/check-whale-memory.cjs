@@ -108,7 +108,7 @@ async function run() {
   response = { reply: "阿顾，草莓给你留着。", actions: [], action: "wave", memoryUpdates: updates };
   await ai.askWhalePet([user], "test-key");
   assert.match(calls.at(-1)[0].content, /泡泡/);
-  assert.match(calls.at(-1)[0].content, /傲娇 99\/100/);
+  assert.match(calls.at(-1)[0].content, /嘴硬|反话/);
   assert.equal(store.getState().facts.length, 2);
   const followup = { id: "user-2", role: "user", content: "你还记得我爱吃什么吗？", timestamp: 200 };
   store.getState().setMessages([followup]);
@@ -120,7 +120,6 @@ async function run() {
   assert.ok(calls.at(-1).some((m) => m.role === "user" && m.content === followup.content));
   await ai.askAssistant([followup], { ...ctx, persona: undefined }, "test-key");
   assert.doesNotMatch(calls.at(-1)[0].content, /用户喜欢吃草莓/, "ordinary assistant does not receive private whale memories");
-
   // Cancellation race across an asynchronous model call.
   store.getState().clearMemory();
   store.getState().setPetMessages([user]);

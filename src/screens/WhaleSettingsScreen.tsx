@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
 import { useState, type ReactNode } from "react";
 import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Switch, Text, TextInput, View } from "react-native";
@@ -7,6 +7,7 @@ import { GlassContainer } from "@/components/GlassContainer";
 import { PersonaSlider } from "@/components/PersonaSlider";
 import { WhaleAvatar } from "@/components/WhaleAvatar";
 import { WhaleVoiceSettings } from "@/components/WhaleVoiceSettings";
+import { DesktopPetSettings } from "@/components/DesktopPetSettings";
 import { useWhalePersona } from "@/store/useWhalePersona";
 import { useWhaleMemory } from "@/store/useWhaleMemory";
 import { DEFAULT_WHALE_PERSONA, normalizeWhalePersona, WHALE_PRESETS, WHALE_TRAITS, type WhalePersona } from "@/utils/whalePersona";
@@ -66,7 +67,7 @@ function PersonaEditor({ persona }: { persona: WhalePersona }) {
       <Field label="角色背景与说话习惯" value={draft.description} onChange={(description) => update({ description })} maxLength={1500} multiline placeholder="例如：嘴上傲娇但行动很温柔。叫我阿顾；我烦恼时先听我说，不急着给建议。少用括号动作。" />
       <View className="mt-3 rounded-2xl bg-sky-400/10 p-3">
         <Text className="text-[11px] font-bold text-sky-600 dark:text-sky-300">当前设定概览</Text>
-        <Text className="mt-1 text-[12px] leading-5 text-slate-700 dark:text-slate-200">{draft.name.trim() || "大肥鱼"} · 称呼你为「{draft.userName.trim() || "大爹"}」</Text>
+        <Text className="mt-1 text-[12px] leading-5 text-slate-700 dark:text-slate-200">{draft.name.trim() || DEFAULT_WHALE_PERSONA.name} · 称呼你为「{draft.userName.trim() || DEFAULT_WHALE_PERSONA.userName}」</Text>
         <Text className="mt-1 text-[11px] leading-5 text-slate-500 dark:text-slate-400">{WHALE_TRAITS.map((t) => `${t.label} ${draft.traits[t.key]}`).join(" · ")}</Text>
       </View>
       <Pressable accessibilityRole="button" onPress={() => { save(draft); setDraft(normalizeWhalePersona(draft)); setSaved(true); }} className="mt-4 min-h-12 items-center justify-center rounded-2xl bg-sky-500">
@@ -150,21 +151,22 @@ export function WhaleSettingsScreen() {
   const persona = useWhalePersona((s) => s.persona);
   const personaHydrated = useWhalePersona((s) => s.hydrated);
   const memoryHydrated = useWhaleMemory((s) => s.hydrated);
-  const [tab, setTab] = useState<"persona" | "memory" | "voice">("persona");
+  const [tab, setTab] = useState<"persona" | "memory" | "voice" | "pet">("persona");
   return <View className="flex-1"><Backdrop>
     <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
       <View className="flex-row items-center px-5 pb-3 pt-3">
         <Pressable accessibilityRole="button" accessibilityLabel="返回" onPress={() => router.back()} className="mr-3 h-11 w-11 items-center justify-center rounded-full bg-white/20 dark:bg-white/[0.07]"><Ionicons name="chevron-back" size={20} color="#94A3B8" /></Pressable>
-        <View><Text className="text-[22px] font-extrabold text-slate-800 dark:text-white">人设与记忆</Text><Text className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">属于你的大肥鱼</Text></View>
+        <View><Text className="text-[22px] font-extrabold text-slate-800 dark:text-white">人设与记忆</Text><Text className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">属于你的{persona.name}</Text></View>
       </View>
       <View className="mx-5 mb-4 flex-row rounded-2xl bg-white/20 p-1 dark:bg-white/[0.05]">
-        {([{ key: "persona", label: "捏捏性格" }, { key: "memory", label: "记忆小本本" }, { key: "voice", label: "声音" }] as const).map((t) => <Pressable key={t.key} accessibilityRole="tab" accessibilityState={{ selected: tab === t.key }} aria-selected={tab === t.key} onPress={() => setTab(t.key)} className={`min-h-11 flex-1 items-center justify-center rounded-xl ${tab === t.key ? "bg-sky-400/25" : ""}`}><Text className={`text-[13px] font-bold ${tab === t.key ? "text-sky-600 dark:text-sky-300" : "text-slate-500 dark:text-slate-400"}`}>{t.label}</Text></Pressable>)}
+        {([{ key: "persona", label: "捏捏性格" }, { key: "memory", label: "记忆小本本" }, { key: "voice", label: "声音" }, { key: "pet", label: "桌宠" }] as const).map((t) => <Pressable key={t.key} accessibilityRole="tab" accessibilityState={{ selected: tab === t.key }} aria-selected={tab === t.key} onPress={() => setTab(t.key)} className={`min-h-11 flex-1 items-center justify-center rounded-xl ${tab === t.key ? "bg-sky-400/25" : ""}`}><Text className={`text-[13px] font-bold ${tab === t.key ? "text-sky-600 dark:text-sky-300" : "text-slate-500 dark:text-slate-400"}`}>{t.label}</Text></Pressable>)}
       </View>
       <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 40 }}>
         {personaHydrated && memoryHydrated ? <>
           <View style={{ display: tab === "persona" ? "flex" : "none" }}><PersonaEditor persona={persona} /></View>
           <View style={{ display: tab === "memory" ? "flex" : "none" }}><MemoryEditor /></View>
           {tab === "voice" ? <WhaleVoiceSettings /> : null}
+          {tab === "pet" ? <DesktopPetSettings /> : null}
         </> : <Text className="py-6 text-center text-slate-500">正在翻开小本本…</Text>}
       </ScrollView>
     </KeyboardAvoidingView>

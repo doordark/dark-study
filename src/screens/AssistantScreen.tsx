@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { router, useIsFocused } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -47,6 +47,7 @@ import {
 import { speakWhale, stopWhaleVoice } from "@/services/whaleVoice";
 import { useSettings } from "@/store/useSettings";
 import { useWhaleMemory } from "@/store/useWhaleMemory";
+import { renderPersonaText } from "@/utils/whalePersona";
 import { useWhalePersona } from "@/store/useWhalePersona";
 import { useWhalePet } from "@/store/useWhalePet";
 import { useWhaleVoice } from "@/store/useWhaleVoice";
@@ -75,7 +76,7 @@ const SUGGESTIONS = [
   "给周四加一门晚上 7 点的《人工智能导论》",
 ];
 
-/** 大爹专属：大肥鱼的额外玩法，普通课表助手没有这些入口 */
+/** 用户专属：大肥鱼的额外玩法，普通课表助手没有这些入口 */
 const WHALE_SUGGESTIONS = [
   "出来陪我",
   "帮我看看今日运势",
@@ -98,7 +99,7 @@ const AVATAR_TAPS = [
   "呜，我可是会记仇的（假装）",
   "再戳？再戳我就从屏幕里爬出来找你",
   "……好啦，其实我也想一直陪着你",
-  "那我出来啦，大爹别把我收回去呀",
+  "那我出来啦，{{user}}别把我收回去呀",
 ];
 
 /** 按回复情绪挑表情包：优先匹配情绪，否则小概率随机来一张 */
@@ -140,7 +141,8 @@ export function AssistantScreen() {
   const messages = useWhaleMemory((s) => s.messages);
   const setMessages = useWhaleMemory((s) => s.setMessages);
   const whale = useWhaleMemory((s) => s.active);
-  const personaName = useWhalePersona((s) => s.persona.name);
+  const persona = useWhalePersona((s) => s.persona);
+  const personaName = persona.name;
   const setWhale = useWhaleMemory((s) => s.setActive);
   const archiveMemory = useWhaleMemory((s) => s.archive);
   const restoreMemory = useWhaleMemory((s) => s.restore);
@@ -209,7 +211,7 @@ export function AssistantScreen() {
   const localMsg = (content: string): ChatMessage => ({
     id: uid(),
     role: "assistant",
-    content,
+    content: renderPersonaText(content, useWhalePersona.getState().persona),
     timestamp: nowTs(),
   });
 
@@ -276,7 +278,7 @@ export function AssistantScreen() {
     if (n < 3) return;
     tapHaptic();
     const idx = Math.min(n - 3, AVATAR_TAPS.length - 1);
-    flashReaction(AVATAR_TAPS[idx]);
+    flashReaction(renderPersonaText(AVATAR_TAPS[idx], useWhalePersona.getState().persona));
     if (idx === AVATAR_TAPS.length - 1) {
       taps.current.count = 0;
       thumpHaptic();
@@ -339,17 +341,17 @@ export function AssistantScreen() {
 
   const summonWhale = () => {
     if (whale) {
-      pushLocal("人家一直都在呀，大爹 (￣▽￣) 说吧，今天想让鱼做什么？");
+      pushLocal("人家一直都在呀，{{user}} (￣▽￣) 说吧，今天想让鱼做什么？");
       return;
     }
     enterWhale(
-      "（一团蓝色的影子从屏幕边游出来，尾巴轻轻拍了下你的手）\n大爹！你终于想起我啦 (๑•̀ㅂ•́)و✧ 课表我都有好好看着……大概。要不要让我算运势、夸夸你，或者报个白饭菜单？",
+      "（一团蓝色的影子从屏幕边游出来，尾巴轻轻拍了下你的手）\n{{user}}！你终于想起我啦 (๑•̀ㅂ•́)و✧ 课表我都有好好看着……大概。要不要让我算运势、夸夸你，或者报个白饭菜单？",
     );
   };
 
   const dismissWhale = () => {
     if (!whale) return;
-    leaveWhale("呜……那我先变回正经的课表助手。大爹下次记得再叫我呀。");
+    leaveWhale("呜……那我先变回正经的课表助手。{{user}}下次记得再叫我呀。");
   };
 
   /** 聊天框最上方的声音按钮：静音 / 开启鱼语（桌宠也一起静音） */
@@ -357,7 +359,7 @@ export function AssistantScreen() {
     const next = !voiceOn;
     tapHaptic();
     toggleVoiceStore();
-    if (next) speakWhale(`声音开好啦，${useWhalePersona.getState().persona.userName}。`);
+    if (next) speakWhale(renderPersonaText("声音开好啦，{{user}}。", useWhalePersona.getState().persona));
     else stopWhaleVoice();
   };
 
@@ -381,7 +383,7 @@ export function AssistantScreen() {
   const send = async (text: string) => {
     const content = text.trim();
     if (!content || busy) return;
-    // 大爹开口时先让鱼闭嘴，免得两边同时说话
+    // 用户开口时先让鱼闭嘴，免得两边同时说话
     stopWhaleVoice();
 
     // 精确口令走本地快捷通道（零延迟、不消耗额度）；其余说法交给模型按语义判断
@@ -446,7 +448,7 @@ export function AssistantScreen() {
       if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
 
       const scheduleActions = result.actions.filter(isScheduleAction);
-      // 收回人格的那一句不执行任何大爹专属操作
+      // 收回人格的那一句不执行任何用户专属操作
       const whaleActions =
         whale && result.intent !== "dismiss"
           ? result.actions.filter(isWhaleAction)
@@ -479,7 +481,7 @@ export function AssistantScreen() {
         leaveWhale();
       }
 
-      // 大爹权限自动执行：改口令 / 改背景 / 生图 / 联网
+      // 用户权限自动执行：改口令 / 改背景 / 生图 / 联网
       if (whaleActions.length) {
         await runWhaleActions(whaleActions, content);
       }
@@ -496,7 +498,7 @@ export function AssistantScreen() {
     }
   };
 
-  /** 执行大爹专属操作：改口令 / 改背景 / 生图 / 联网，全程自动 */
+  /** 执行用户专属操作：改口令 / 改背景 / 生图 / 联网，全程自动 */
   async function runWhaleActions(actions: WhaleAction[], userText: string) {
     const memoryEpoch = useWhaleMemory.getState().epoch;
     for (const action of actions) {
@@ -508,7 +510,7 @@ export function AssistantScreen() {
         if (phrase.length < 2) {
           setMessages((prev) => [
             ...prev,
-            localMsg("这个口令太短啦，换一个 2-12 个字的吧，大爹。"),
+            localMsg("这个口令太短啦，换一个 2-12 个字的吧，{{user}}。"),
           ]);
           continue;
         }
@@ -526,7 +528,7 @@ export function AssistantScreen() {
         setMessages((prev) => [
           ...prev,
           localMsg(
-            `（把背景调成了「${BACKGROUND_PRESETS[tint].label}」）大爹看看，喜不喜欢？`,
+            `（把背景调成了「${BACKGROUND_PRESETS[tint].label}」）{{user}}看看，喜不喜欢？`,
           ),
         ]);
       } else if (action.type === "generate_image") {
@@ -534,7 +536,7 @@ export function AssistantScreen() {
         setMessages((prev) => [
           ...prev,
           {
-            ...localMsg("画好啦，大爹收好。"),
+            ...localMsg("画好啦，{{user}}收好。"),
             imageUri: uri,
             imageAspect: imageAspect(action.size),
           },
@@ -562,7 +564,7 @@ export function AssistantScreen() {
           setMessages((prev) => [
             ...prev,
             localMsg(
-              `呜，网线被海浪打断了……「${query}」没查到，大爹等会儿再让我试试？`,
+              `呜，网线被海浪打断了……「${query}」没查到，{{user}}等会儿再让我试试？`,
             ),
           ]);
         }
@@ -578,13 +580,13 @@ export function AssistantScreen() {
         hidePet();
         setMessages((prev) => [
           ...prev,
-          localMsg("（尾巴一摆，乖乖缩回水里）那我先回去啦，大爹想我就再叫一声。"),
+          localMsg("（尾巴一摆，乖乖缩回水里）那我先回去啦，{{user}}想我就再叫一声。"),
         ]);
       } else if (action.type === "forget_memory") {
         clearMemory();
         exitSelect();
         setMessages(() => [
-          localMsg("（歪了歪头）好，之前聊的我都不记得啦……大爹，我们重新认识一下？"),
+          localMsg("（歪了歪头）好，之前聊的我都不记得啦……{{user}}，我们重新认识一下？"),
         ]);
       }
     }
@@ -620,7 +622,7 @@ export function AssistantScreen() {
           style={{ paddingBottom: kbHeight }}
         >
           {/* 头部 */}
-          <View className="px-5 pb-2 pt-2">
+          <View className="px-5 pb-2 pt-2" style={whale ? { borderBottomWidth: 1, borderBottomColor: "rgba(151,195,229,0.22)", backgroundColor: "rgba(172,205,238,0.08)" } : undefined}>
             <Animated.View entering={FadeInDown.springify()}>
               <View className="flex-row items-center">
                 <Pressable
@@ -637,7 +639,7 @@ export function AssistantScreen() {
                     {whale ? (
                       <View className="ml-2 rounded-full border border-sky-400/35 bg-sky-400/15 px-2 py-0.5">
                         <Text className="text-[9px] font-bold text-sky-600 dark:text-sky-300">
-                          大爹专属
+                          {persona.userName}专属
                         </Text>
                       </View>
                     ) : null}
@@ -659,6 +661,7 @@ export function AssistantScreen() {
                       </Pressable>
                     ) : null}
                   </View>
+                  {whale ? <Text style={{ color: "#7696B5", fontSize: 10, marginTop: 2, letterSpacing: 0.4 }}>✦ 一起漂浮在小小鲸海里</Text> : null}
                 </View>
                 {whale ? (
                   <Pressable accessibilityRole="button" accessibilityLabel="人设与记忆" onPress={() => router.push("/whale-settings")} className="mr-2 h-11 w-11 items-center justify-center rounded-full bg-sky-400/15">
@@ -760,11 +763,11 @@ export function AssistantScreen() {
                         )}
                       </View>
                       <Text className="mt-3 text-[15px] font-bold text-slate-700 dark:text-slate-200">
-                        {whale ? "大肥鱼上线啦" : "试试对我说"}
+                        {whale ? `${personaName}上线啦` : "试试对我说"}
                       </Text>
                       {whale ? (
                         <Text className="mt-1 text-center text-[10.5px] text-slate-500 dark:text-slate-400">
-                          大爹，今天想让我做点什么？下面直接说就行。
+                          {renderPersonaText("{{user}}，今天想让我做点什么？下面直接说就行。", persona)}
                         </Text>
                       ) : null}
                       {whale ? null : (
@@ -782,7 +785,7 @@ export function AssistantScreen() {
                   </GlassContainer>
                 </Animated.View>
               ) : (
-                <View className="gap-y-3 pt-2">
+                <View className="gap-y-4 pt-2">
                   {messages.map((m) => {
                     const isUser = m.role === "user";
                     const checked = selectedIds.includes(m.id);
@@ -845,16 +848,17 @@ export function AssistantScreen() {
                             </View>
                           ) : null}
                           <View
-                          className={`max-w-[78%] rounded-[20px] px-3.5 py-2.5 ${
+                          className={`max-w-[78%] overflow-hidden rounded-[22px] px-4 py-3 ${
                             isUser
-                              ? "rounded-br-md bg-sky-500/85"
+                              ? "rounded-br-md bg-sky-600/85"
                               : whale
-                                ? "rounded-bl-md border border-sky-300/40 bg-sky-400/15 dark:border-sky-300/20 dark:bg-sky-400/10"
+                                ? "rounded-bl-md border border-sky-200/70 bg-white/80 dark:border-sky-300/25 dark:bg-sky-400/15"
                                 : "rounded-bl-md border border-white/20 bg-white/35 dark:border-white/10 dark:bg-white/[0.08]"
                           }`}
                         >
+                          {whale ? <Image pointerEvents="none" source={require("../../assets/stickers/bubble.png")} resizeMode="contain" style={{ position: "absolute", width: 38, height: 38, right: -4, top: -6, opacity: isUser ? 0.13 : 0.18 }} /> : null}
                           <Text
-                            className={`text-[12.5px] leading-5 ${
+                            className={`text-[13px] leading-[21px] ${
                               isUser
                                 ? "text-white"
                                 : whale
@@ -948,7 +952,7 @@ export function AssistantScreen() {
                         <ActivityIndicator size="small" color="#38BDF8" />
                         {whale ? (
                           <Text className="ml-2 text-[11px] text-sky-700 dark:text-sky-200">
-                            大肥鱼正在嚼白饭…
+                            {personaName}正在嚼白饭…
                           </Text>
                         ) : null}
                       </View>
@@ -984,7 +988,7 @@ export function AssistantScreen() {
             </ScrollView>
           </View>
 
-          {/* 大爹专属：大肥鱼的额外玩法快捷入口 */}
+          {/* 用户专属：大肥鱼的额外玩法快捷入口 */}
           {whale ? (
             <View className="pb-1.5">
               <ScrollView
@@ -1012,7 +1016,8 @@ export function AssistantScreen() {
             onChangeText={setInput}
             onSend={() => send(input)}
             busy={busy}
-            placeholder={whale ? "跟大肥鱼说点什么吧，大爹…" : undefined}
+            whaleTheme={whale}
+            placeholder={whale ? renderPersonaText("跟{{char}}说点什么吧，{{user}}…", persona) : undefined}
             bottomInset={kbHeight > 0 ? 10 : undefined}
           />
         </Animated.View>

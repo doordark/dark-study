@@ -7,6 +7,8 @@ import { disposeWhaleVoice, stopWhaleVoice } from "@/services/whaleVoice";
 import { useWhaleVoice } from "@/store/useWhaleVoice";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
+import { CourseReminderSync } from "@/components/CourseReminderSync";
+import { CourseWidgetSync } from "@/components/CourseWidgetSync";
 import { ImportTaskOverlay } from "@/components/ImportTaskOverlay";
 import { WhalePet } from "@/components/WhalePet";
 import { useSettings } from "@/store/useSettings";
@@ -23,7 +25,7 @@ export default function RootLayout() {
       if (next !== "active") stopWhaleVoice();
     });
     const unsubscribe = useWhaleVoice.subscribe((next, prev) => {
-      if ((!next.on && prev.on) || next.referenceId !== prev.referenceId || next.engine !== prev.engine) stopWhaleVoice();
+      if (!next.on && prev.on) stopWhaleVoice();
     });
     return () => { state.remove(); unsubscribe(); disposeWhaleVoice(); };
   }, []);
@@ -55,6 +57,8 @@ export default function RootLayout() {
           />
         </Stack>
         {/* 全局导入任务悬浮层：分析进度弹窗 / 可拖动进度球，退出导入页后任务继续 */}
+        <CourseReminderSync />
+        <CourseWidgetSync />
         <ImportTaskOverlay />
         {/* 大肥鱼桌宠：从对话里叫出来后常驻在所有页面之上 */}
         <WhalePet />

@@ -1,6 +1,7 @@
 import type { Mood } from "./whaleVoiceText";
 
-export const FISH_MODEL = "s2.1-pro-free";
+export const FISH_MODEL = "s2.1-pro";
+export const FISH_VOICE_ID = "627dbb2dd0944f46bbd354270ac4d847";
 export const FISH_ENDPOINT = "https://api.fish.audio/v1/tts";
 export const VOICE_PROFILE_VERSION = 1;
 export const FISH_TIMEOUT_MS = 12_000;
@@ -8,11 +9,11 @@ export const FISH_TIMEOUT_MS = 12_000;
 // S2 bracket cues, from Fish's official Emotion Control reference.
 // Only these application-owned cues can reach the TTS control channel.
 const DIRECTIONS: Record<Mood, string> = {
-  tender: "[relaxed][soft tone]",
+  normal: "[relaxed][soft tone]",
   happy: "[happy]",
   excited: "[excited]",
   sleepy: "[calm][soft tone]",
-  sad: "[empathetic][soft tone]",
+  comfort: "[empathetic][soft tone]",
 };
 
 export class FishAudioError extends Error {}
@@ -31,7 +32,7 @@ export async function generateFishSpeech({ text, referenceId, apiKey, mood, sign
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", model: FISH_MODEL },
       body: JSON.stringify({ text: `${DIRECTIONS[mood]} ${text}`, reference_id: referenceId, format: "mp3",
-        prosody: { speed: mood === "sleepy" ? 0.9 : mood === "sad" ? 0.95 : 1 } }),
+        prosody: { speed: mood === "sleepy" ? 0.9 : mood === "comfort" ? 0.95 : 1 } }),
       signal: controller.signal,
     });
     if (!response.ok) {

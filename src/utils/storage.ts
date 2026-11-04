@@ -17,7 +17,11 @@ export function migratingStorage(legacyKey: string): StateStorage {
       if (!server) await AsyncStorage.setItem(name, value);
     },
     removeItem: async (name) => {
-      if (!server) await AsyncStorage.removeItem(name);
+      if (!server) {
+        // Otherwise the next read resurrects the legacy data after a reset.
+        await AsyncStorage.removeItem(legacyKey);
+        if (name !== legacyKey) await AsyncStorage.removeItem(name);
+      }
     },
   };
 }

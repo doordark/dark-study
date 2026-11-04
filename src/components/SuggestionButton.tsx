@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import React from "react";
 import { Pressable, Text } from "react-native";
 import Animated, {
@@ -40,10 +40,10 @@ export function SuggestionButton({
   }));
 
   const rowSurface = cute
-    ? "border-sky-300/45 bg-sky-400/12 dark:border-sky-300/25 dark:bg-sky-400/12"
+    ? "border-indigo-200/60 bg-white/60 dark:border-indigo-300/25 dark:bg-indigo-300/10"
     : "border-white/30 bg-white/45 dark:border-white/12 dark:bg-white/[0.07]";
   const pillSurface = cute
-    ? "border-sky-300/40 bg-sky-400/10 dark:border-sky-300/20 dark:bg-sky-400/10"
+    ? "border-indigo-200/60 bg-white/65 dark:border-indigo-300/25 dark:bg-indigo-300/10"
     : "border-white/25 bg-white/35 dark:border-white/10 dark:bg-white/[0.06]";
 
   return (
@@ -60,9 +60,9 @@ export function SuggestionButton({
         }`}
       >
         <Ionicons
-          name="sparkles"
+          name={cute ? "heart" : "sparkles"}
           size={variant === "row" ? 13 : 10}
-          color={cute ? "#38BDF8" : "#64748B"}
+          color={cute ? "#9A8CC4" : "#64748B"}
         />
         <Text
           className={`${

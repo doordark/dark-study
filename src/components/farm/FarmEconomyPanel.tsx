@@ -1,14 +1,15 @@
+import { FarmButton, FarmPaper, FarmText as Text } from './FarmSkin';
 import { useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { View } from 'react-native';
 import { CROP_KINDS, CROP_META, RECIPES, SEASON_NAMES, dailyOrder, craft, irrigationCost, wetDuration, marketRate, restoreEconomy, stockCount, stockValue, unitPrice, type CropKind, type Economy, type Recipe } from '@/utils/farmEconomy';
 import { CROP_ART } from './sprites';
 import { CropSprite } from './CropSprite';
 
 function Button({ label, onPress, disabled = false }: { label: string; onPress: () => void; disabled?: boolean }) {
-  return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={{ minHeight: 44, paddingHorizontal: 12, justifyContent: 'center', borderRadius: 12, backgroundColor: disabled ? '#304233' : '#D6B96D' }}><Text style={{ color: disabled ? '#99AC98' : '#253020', fontWeight: '700', fontSize: 12 }}>{label}</Text></Pressable>;
+  return <FarmButton label={label} onPress={onPress} disabled={disabled} tone="sage" />;
 }
-const ink = '#F6EEDC';
-const muted = '#A8B8A5';
+const ink = '#59432E';
+const muted = '#8A785E';
 export function FarmEconomyPanel({ economy, coins, level, season, at, onSell, onOrder, onCraft, onKitchen, onRescue, onIrrigation }: {
   economy: Economy; coins: number; level: number; season: number; at: number;
   onSell: (kind: CropKind) => void; onOrder: (kind: CropKind) => void; onCraft: (recipe: Recipe) => void; onKitchen: () => void; onRescue: () => void; onIrrigation: () => void;
@@ -16,8 +17,9 @@ export function FarmEconomyPanel({ economy, coins, level, season, at, onSell, on
   const [tab, setTab] = useState<'stock' | 'orders' | 'kitchen' | 'guide'>('stock');
   const current = restoreEconomy(economy, at);
   const total = CROP_KINDS.reduce((n, k) => n + stockCount(current.inventory[k]), 0);
-  return <View style={{ gap: 12, padding: 14, borderRadius: 18, backgroundColor: '#1D3023', borderWidth: 1, borderColor: '#45513A' }}>
-    <Text style={{ color: '#E9CC85', fontWeight: '800', fontSize: 16 }}>丰收集市 · {SEASON_NAMES[season]}季</Text>
+  return <View style={{ gap: 12, padding: 14, borderRadius: 3, backgroundColor: '#F8F0DE', borderWidth: 1, borderColor: '#CAB38B' }}>
+      <FarmPaper theme="market" />
+    <Text variant="title" style={{ color: '#926B35', fontWeight: '800', fontSize: 16 }}>丰收集市 · {SEASON_NAMES[season]}季</Text>
     <Text style={{ color: muted, fontSize: 12, lineHeight: 19 }}>收获先入仓，再选择出售、交订单或加工。当季播种每次多收 1 份；施肥收获为优质品，市价 +30%。</Text>
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>{([['stock', `仓库 ${total}`], ['orders', '订单'], ['kitchen', '工坊'], ['guide', '图鉴']] as const).map(([key, label]) => <Button key={key} label={`${tab === key ? '● ' : ''}${label}`} onPress={() => setTab(key)} />)}</View>
     {tab === 'stock' && <>
@@ -39,10 +41,10 @@ export function FarmEconomyPanel({ economy, coins, level, season, at, onSell, on
     {tab === 'kitchen' && <>
       <Text style={{ color: ink, fontWeight: '700' }}>土壤保水 · {current.irrigation}/3 级</Text>
       <Text style={{ color: muted, fontSize: 12 }}>浇水后湿润 {wetDuration(current.irrigation) / 60000} 分钟。每级增加 15 分钟，适合长周期作物，下次浇水生效。</Text>
-      {current.irrigation < 3 ? <Button label={`改良 · Lv.${current.irrigation + 2} · ${irrigationCost(current.irrigation)} 金币`} disabled={level < current.irrigation + 2 || coins < irrigationCost(current.irrigation)} onPress={onIrrigation} /> : <Text style={{ color: '#E9CC85' }}>保水改良已完成</Text>}
+      {current.irrigation < 3 ? <Button label={`改良 · Lv.${current.irrigation + 2} · ${irrigationCost(current.irrigation)} 金币`} disabled={level < current.irrigation + 2 || coins < irrigationCost(current.irrigation)} onPress={onIrrigation} /> : <Text style={{ color: '#926B35' }}>保水改良已完成</Text>}
       <Text style={{ color: ink, fontWeight: '700' }}>农场厨房</Text>
       <Text style={{ color: muted, fontSize: 12 }}>投入食材和加工费，制成料理直接出售。优先消耗普通品，优质作物也可直接卖出。</Text>
-      {!current.kitchen ? <Button label="建造厨房 · Lv.3 · 280 金币" disabled={level < 3 || coins < 280} onPress={onKitchen} /> : RECIPES.map(recipe => <View key={recipe.id} style={{ gap: 6, borderTopWidth: 1, borderColor: '#3A4C38', paddingTop: 10 }}><Text style={{ color: ink, fontWeight: '700' }}>{recipe.label}</Text><Text style={{ color: muted, fontSize: 11 }}>{Object.entries(recipe.inputs).map(([k, n]) => `${CROP_ART[k as CropKind].label} ×${n}`).join(' + ')} · 加工费 {recipe.fee}</Text><Button label={`制作并出售 ${recipe.sell} · 扣费后 +${recipe.sell - recipe.fee}`} disabled={!craft(current.inventory, recipe, coins)} onPress={() => onCraft(recipe)} /></View>)}
+      {!current.kitchen ? <Button label="建造厨房 · Lv.3 · 280 金币" disabled={level < 3 || coins < 280} onPress={onKitchen} /> : RECIPES.map(recipe => <View key={recipe.id} style={{ gap: 6, borderTopWidth: 1, borderColor: '#D7C6A6', paddingTop: 10 }}><Text style={{ color: ink, fontWeight: '700' }}>{recipe.label}</Text><Text style={{ color: muted, fontSize: 11 }}>{Object.entries(recipe.inputs).map(([k, n]) => `${CROP_ART[k as CropKind].label} ×${n}`).join(' + ')} · 加工费 {recipe.fee}</Text><Button label={`制作并出售 ${recipe.sell} · 扣费后 +${recipe.sell - recipe.fee}`} disabled={!craft(current.inventory, recipe, coins)} onPress={() => onCraft(recipe)} /></View>)}
     </>}
     {tab === 'guide' && CROP_KINDS.map(k => {
       const meta = CROP_META[k];

@@ -8,9 +8,6 @@ interface WhaleVoiceState {
   on: boolean;
   /** 是否已经从本地读过一次 */
   loaded: boolean;
-  engine: "auto" | "fish" | "system";
-  referenceId: string;
-  configure: (engine: "auto" | "fish" | "system", referenceId: string) => void;
   hydrate: () => Promise<void>;
   toggle: () => void;
 }
@@ -19,22 +16,12 @@ let hydration: Promise<void> | null = null;
 export const useWhaleVoice = create<WhaleVoiceState>((set, get) => ({
   on: true,
   loaded: false,
-  engine: "auto",
-  referenceId: "",
-  configure: (engine, referenceId) => {
-    referenceId = referenceId.trim();
-    set({ engine, referenceId });
-    AsyncStorage.setItem(`${VOICE_KEY}-config`, JSON.stringify({ engine, referenceId })).catch(() => {});
-  },
   hydrate: async () => {
     if (get().loaded) return;
     if (!hydration) hydration = (async () => {
       try {
-        const [raw, config] = await Promise.all([AsyncStorage.getItem(VOICE_KEY), AsyncStorage.getItem(`${VOICE_KEY}-config`)]);
-        const parsed = config ? JSON.parse(config) : {};
-        set({ on: raw !== "0", loaded: true,
-          engine: ["fish", "system"].includes(parsed?.engine) ? parsed.engine : "auto",
-          referenceId: typeof parsed?.referenceId === "string" ? parsed.referenceId : "" });
+        const raw = await AsyncStorage.getItem(VOICE_KEY);
+        set({ on: raw !== "0", loaded: true });
       } catch { set({ loaded: true }); }
     })();
     await hydration;

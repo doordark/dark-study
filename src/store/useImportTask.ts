@@ -92,7 +92,7 @@ export const useImportTask = create<ImportTaskState>((set, get) => ({
           : next < 70
             ? s.kind === "grades"
               ? "正在提取课程、学分与成绩…"
-              : "大肥鱼工作ing…"
+              : "正在处理导入内容…"
             : s.kind === "grades"
               ? "正在整理成绩数据…"
               : "正在整理结构化数据…";

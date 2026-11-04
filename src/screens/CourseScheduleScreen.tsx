@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import React, { useMemo, useState } from "react";
 import {
   Modal,
@@ -35,6 +35,7 @@ import { WhaleAvatar } from "@/components/WhaleAvatar";
 import { WeekGrid } from "@/components/WeekGrid";
 import { GravityBadge, GravityCard } from "@/components/ZeroG";
 import { WEEKDAY_LABELS } from "@/constants/palette";
+import { useForegroundClock } from "@/hooks/useForegroundClock";
 import { useActiveSchedule, useStore } from "@/store/useStore";
 import { useWhaleMemory } from "@/store/useWhaleMemory";
 import { useWhalePet } from "@/store/useWhalePet";
@@ -84,10 +85,8 @@ export function CourseScheduleScreen({
   const removeCourse = useStore((s) => s.removeCourse);
   const removeCourseOnce = useStore((s) => s.removeCourseOnce);
 
-  const dateInfo = useMemo(
-    () => getDateInfo(schedule.startDate),
-    [schedule.startDate],
-  );
+  const now = useForegroundClock();
+  const dateInfo = getDateInfo(schedule.startDate, now);
 
   const [weekIndex, setWeekIndex] = useState(dateInfo.weekIndex);
   const [weekday, setWeekday] = useState(dateInfo.weekday);
@@ -97,7 +96,6 @@ export function CourseScheduleScreen({
   const [editing, setEditing] = useState<Course | undefined>(undefined);
   const [editorToken, setEditorToken] = useState(0);
   const [switcherOpen, setSwitcherOpen] = useState(false);
-  const [now, setNow] = useState(() => new Date());
   const [nightOpen, setNightOpen] = useState(false);
 
   // 第二个彩蛋：同样是静默触发，不给任何提示
@@ -145,12 +143,6 @@ export function CourseScheduleScreen({
     },
     [],
   );
-
-  // 每 30 秒刷新一次时钟，保持「进行中」状态准确
-  React.useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 30_000);
-    return () => clearInterval(t);
-  }, []);
 
   const totalWeeks = Math.max(1, schedule.totalWeeks ?? 18);
   const activeWeek = Math.min(Math.max(weekIndex, 1), totalWeeks);

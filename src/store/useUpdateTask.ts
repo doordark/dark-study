@@ -42,7 +42,7 @@ const errMsg = (e: unknown) =>
 
 /** 模块级下载句柄与取消标记（不放进 zustand，避免闭包陈旧） */
 let activeCancel: (() => void) | null = null;
-let cancelRequested = false;
+let downloadGeneration = 0;
 
 export const useUpdateTask = create<UpdateState>()((set, get) => ({
   phase: "idle",
@@ -77,13 +77,14 @@ export const useUpdateTask = create<UpdateState>()((set, get) => ({
   download: async () => {
     const { phase, info } = get();
     if (phase !== "available" || !info) return;
-    cancelRequested = false;
+    const generation = ++downloadGeneration;
+    const current = () => generation === downloadGeneration;
     set({ phase: "downloading", progress: 0, message: "" });
     /** 进度按整数百分比去重上报，避免高频 setState 抖动渲染 */
     let lastPercent = -1;
     const { promise, cancel } = createApkDownload(info.apkUrl, (p) => {
       const percent = Math.floor(p * 100);
-      if (percent !== lastPercent) {
+      if (current() && percent !== lastPercent) {
         lastPercent = percent;
         set({ progress: p });
       }
@@ -91,13 +92,14 @@ export const useUpdateTask = create<UpdateState>()((set, get) => ({
     activeCancel = cancel;
     try {
       const uri = await promise;
+      if (!current()) return;
       activeCancel = null;
       if (get().phase === "downloading") {
         set({ phase: "downloaded", fileUri: uri, progress: 1 });
       }
     } catch (e) {
+      if (!current()) return;
       activeCancel = null;
-      if (cancelRequested) return; // 用户主动取消，cancelDownload 已复位状态
       if (get().phase === "downloading") {
         set({ phase: "error", message: `下载失败：${errMsg(e)}` });
       }
@@ -105,7 +107,7 @@ export const useUpdateTask = create<UpdateState>()((set, get) => ({
   },
 
   cancelDownload: () => {
-    cancelRequested = true;
+    downloadGeneration += 1;
     activeCancel?.();
     activeCancel = null;
     if (get().phase === "downloading") {

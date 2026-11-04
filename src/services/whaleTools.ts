@@ -160,7 +160,7 @@ export async function answerFromSearch(
       },
       {
         role: "user",
-        content: `大爹的问题：${question}\n\n搜索结果：\n${brief}`,
+        content: `用户的问题：${question}\n\n搜索结果：\n${brief}`,
       },
     ],
     apiKey,

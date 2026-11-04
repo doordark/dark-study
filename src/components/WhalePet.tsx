@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { useEffect, useRef, useState } from "react";
 import {
   Keyboard,
@@ -23,7 +23,6 @@ import Animated, {
   useFrameCallback,
   useReducedMotion,
   useSharedValue,
-  withDelay,
   withRepeat,
   withSequence,
   withSpring,
@@ -35,7 +34,10 @@ import { useColorScheme } from "nativewind";
 import { ChatImage } from "@/components/ChatImage";
 import { PetAnimation, type PetAnimationKind } from "@/components/PetAnimation";
 import { useAnimationActive } from "@/hooks/useAnimationActive";
+import { useDesktopPetSync } from "@/hooks/useDesktopPetSync";
+import { useDesktopPet } from "@/store/useDesktopPet";
 import { ChatInputBar } from "@/components/ChatInputBar";
+import { WhaleAvatar } from "@/components/WhaleAvatar";
 import { BACKGROUND_PRESETS, resolveTint } from "@/constants/backgrounds";
 import { askWhalePet } from "@/services/ai";
 import { applyScheduleActions } from "@/services/assistantSchedule";
@@ -52,6 +54,7 @@ import { useWhalePet } from "@/store/useWhalePet";
 import type { WhaleCare } from "@/store/useWhalePet";
 import { useWhaleVoice } from "@/store/useWhaleVoice";
 import { useWhaleMemory } from "@/store/useWhaleMemory";
+import { renderPersonaText } from "@/utils/whalePersona";
 import { useWhalePersona } from "@/store/useWhalePersona";
 import { bumpHaptic, successHaptic, tapHaptic, warnHaptic } from "@/utils/haptics";
 import type {
@@ -89,39 +92,39 @@ const MAX_THROW_SPEED = 3600;
 
 /** 被戳的时候随口说的话 */
 const POKE_LINES = [
-  "戳我干嘛呀，大爹～",
+  "戳我干嘛呀，{{user}}～",
   "在呢在呢，别急。",
   "摸头可以，摸肚子不行！",
   "再戳我就变成鲸鱼气球飘走咯。",
-  "大爹今天有没有好好吃饭？",
+  "{{user}}今天有没有好好吃饭？",
   "陪你待着挺好的，就是有点想白饭。",
   "你学习，我看着你，不吵。",
 ];
 
 /** 饿的时候的抱怨 */
 const HUNGRY_LINES = [
-  "肚子空空的…大爹有没有白饭？",
+  "肚子空空的…{{user}}有没有白饭？",
   "呜，我好像饿扁了一点点…",
   "再不吃东西，尾巴都没力气摆了。",
 ];
 
 /** 长时间没人理她 */
 const LONELY_LINES = [
-  "……大爹是不是把我忘了。",
+  "……{{user}}是不是把我忘了。",
   "我自己在这儿游了好久啦。",
   "没关系，你忙你的，我不吵…",
 ];
 
 /** 好感很高时才会说 */
 const CLOSE_LINES = [
-  "大爹在的地方，我就想待着。",
+  "{{user}}在的地方，我就想待着。",
   "今天也一起加油吧，我陪着你。",
   "嘿嘿，能出来陪你真好。",
 ];
 
 /** 没人理的时候自己嘀咕 */
 const AMBIENT_LINES = [
-  "大爹，写累了就歇会儿。",
+  "{{user}}，写累了就歇会儿。",
   "我不占地方，就在边上待着。",
   "这屏幕好亮啊，眼睛会疼的。",
   "要不要摸一下我的头？",
@@ -130,13 +133,13 @@ const AMBIENT_LINES = [
 
 /** 各动作随口说的话 */
 const ACTION_LINES: Record<PetActionKind, string> = {
-  dance: "♪ 扭一扭～大爹看好了！",
+  dance: "♪ 扭一扭～{{user}}看好了！",
   spin: "转圈圈——晕了晕了…",
   eat: "团子！嗷呜——好吃！",
   study: "我陪你写，不吵你。",
   sleep: "那我也眯一小会儿…",
   jump: "嘿咻！",
-  wave: "大爹～我在这儿呢",
+  wave: "{{user}}～我在这儿呢",
 };
 
 /** 小对话框里的快捷动作 */
@@ -158,7 +161,7 @@ const LOCAL_ACTIONS: { re: RegExp; action: PetActionKind; reply: string }[] = [
   },
   { re: /睡|困|晚安|休息/, action: "sleep", reply: "那我也眯一会儿…你也别熬太晚。" },
   { re: /蹦|跳一下|跳跳/, action: "jump", reply: "嘿咻！" },
-  { re: /打招呼|招手|^hi$|^hello$/i, action: "wave", reply: "大爹～我在这儿呢" },
+  { re: /打招呼|招手|^hi$|^hello$/i, action: "wave", reply: "{{user}}～我在这儿呢" },
 ];
 
 type PetMsg = ChatMessage;
@@ -166,7 +169,7 @@ type PetMsg = ChatMessage;
 const petMsg = (role: PetMsg["role"], text: string): PetMsg => ({
   id: uid(),
   role,
-  content: text.replaceAll("大爹", useWhalePersona.getState().persona.userName),
+  content: role === "assistant" ? renderPersonaText(text, useWhalePersona.getState().persona) : text,
   timestamp: Date.now(),
 });
 
@@ -226,12 +229,14 @@ function careHint(care: WhaleCare): string {
  * - 回复带情绪表情包，开了语音就会念出来
  */
 export function WhalePet() {
+  useDesktopPetSync();
+  const onDesktop = useDesktopPet((s) => s.running);
   const visible = useWhalePet((s) => s.visible);
   const hydrateVoice = useWhaleVoice((s) => s.hydrate);
   useEffect(() => {
     hydrateVoice();
   }, [hydrateVoice]);
-  if (!visible) return null;
+  if (!visible || onDesktop) return null;
   // 每次被叫出来都重新挂载：气泡、表情与睡眠计时自然重置
   return <WhalePetLayer />;
 }
@@ -272,7 +277,11 @@ function WhalePetLayer() {
   const bob = useSharedValue(0);
   const breathEnergy = useSharedValue(1);
   const lift = useSharedValue(0);
-  const scale = useSharedValue(0.5);
+  const scale = useSharedValue(1);
+  const appear = useSharedValue(0);
+  const lastBoundaryHit = useSharedValue(-1400);
+  const boundaryClock = useSharedValue(0);
+  const lastPainAt = useRef(0);
   /** 本次抛掷是否已经触发过落地反馈 */
   const landed = useSharedValue(0);
   const dragStartX = useSharedValue(0);
@@ -290,8 +299,9 @@ function WhalePetLayer() {
     frameRef.current = next;
     setFrameState(next);
   };
+  const personaName = useWhalePersona((s) => s.persona.name);
   const [bubble, setBubble] = useState<string | null>(
-    "大爹，我出来啦～拖我、戳我都行，点三下能说话",
+    renderPersonaText("{{user}}，我出来啦～拖我、戳我都行，点三下能说话", useWhalePersona.getState().persona),
   );
   const [bubbleBelow, setBubbleBelow] = useState(false);
   const [nearRight, setNearRight] = useState(true);
@@ -319,6 +329,7 @@ function WhalePetLayer() {
 
   /** 只在开着语音时开口，且两次朗读之间留点空隙 */
   const say = (text: string) => {
+    text = renderPersonaText(text, useWhalePersona.getState().persona);
     if (!useWhaleVoice.getState().on) return;
     const now = nowMs();
     if (now - lastSpoke.current < 1800) return;
@@ -336,7 +347,7 @@ function WhalePetLayer() {
   /** 冒一句话：自动分页、按当前位置决定朝左还是朝右、贴顶时翻到下方 */
   const showBubble = (text: string, ms = 2800) => {
     clearBubble();
-    bubblePages.current = splitPages(text);
+    bubblePages.current = splitPages(renderPersonaText(text, useWhalePersona.getState().persona));
     bubblePage.current = 0;
     setBubble(bubblePages.current[0] ?? null);
     setNearRight(boxX.value > width / 2);
@@ -393,7 +404,7 @@ function WhalePetLayer() {
     armIdle();
   };
 
-  // 登场：从屏幕正中蹦出来，弹一下落到中间偏下的位置
+  // 登场保持原比例，只淡入并轻轻上浮，避免弹簧放大和二次下坠。
   useEffect(() => {
     lastInteraction.current = nowMs();
     const lo = insets.top + 48;
@@ -404,23 +415,10 @@ function WhalePetLayer() {
     maxY.value = hi;
     const restY = Math.min(Math.max(height * 0.56, lo), hi);
     boxX.value = Math.max(EDGE, (width - SIZE) / 2);
-    boxY.value = restY + 30;
-    // 先缩成一小团，再弹出来（轻微超出再落回），跟着向上跳一下
-    scale.value = withSequence(
-      withTiming(0.12, { duration: 0 }),
-      withSpring(1.08, { damping: 8, stiffness: 230 }),
-      withSpring(1, { damping: 14, stiffness: 200 }),
-    );
-    boxY.value = withDelay(
-      70,
-      withSequence(
-        withTiming(restY - 52, {
-          duration: 190,
-          easing: Easing.out(Easing.cubic),
-        }),
-        withSpring(restY, { damping: 8, stiffness: 220 }),
-      ),
-    );
+    scale.value = 1;
+    appear.value = withTiming(1, { duration: reducedMotion ? 120 : 280 });
+    boxY.value = reducedMotion ? restY : restY + 12;
+    boxY.value = withTiming(restY, { duration: reducedMotion ? 0 : 320, easing: Easing.out(Easing.cubic) });
     bubbleTimer.current = setTimeout(() => setBubble(null), 4600);
     armIdle();
     return () => {
@@ -647,28 +645,46 @@ function WhalePetLayer() {
   const onFloorHit = (impact: number) => {
     // 冲击越大压得越狠：300px/s 轻落，1500px/s 重砸
     const t = clampNumber((impact - 300) / 1200, 0, 1);
-    squash(0.8 - 0.26 * t);
-    if (impact > 1100) {
-      showBubble("呜哇——摔成鱼饼了！", 1800);
-    }
+    if (!reducedMotion) squash(0.98 - 0.035 * t);
+  };
+
+  const onBoundaryHit = (impact: number, edge: string) => {
+    const now = nowMs();
+    if (impact < 550 || now - lastPainAt.current < 1400) return;
+    lastPainAt.current = now;
+    if (frameTimer.current) clearTimeout(frameTimer.current);
+    if (idleTimer.current) clearTimeout(idleTimer.current);
+    if (sleepTimer.current) clearTimeout(sleepTimer.current);
+    setFrame("hurt");
+    const line = impact > 1200 ? "呜……撞疼了，{{user}}轻一点嘛。" : `哎哟，撞到${edge}了！`;
+    showBubble(line, 2200);
+    say(line);
+    if (!reducedMotion) bumpHaptic();
+    // The existing shared conversation remembers the event without an AI request.
+    setChatMsgs((prev) => [...prev, petMsg("assistant", `（刚才撞到了屏幕${edge}）${line}`)]);
+    frameTimer.current = setTimeout(() => {
+      frameTimer.current = null;
+      if (frameRef.current === "hurt") setFrame("idle");
+      if (phase.value === 0) armIdle();
+    }, 850);
   };
 
   const onLandRest = () => {
-    setFrame("idle");
+    if (frameRef.current !== "hurt") setFrame("idle");
     landed.value = 0;
     armIdle();
   };
 
   const onThrowStart = () => {
-    stopAction();
+    if (frameRef.current !== "hurt") stopAction();
     wake();
     landed.value = 0;
-    clearBubble();
-    setBubble(null);
+    if (frameRef.current !== "hurt") { clearBubble(); setBubble(null); }
   };
 
   const onDragStart = () => {
     stopAction();
+    if (frameRef.current === "hurt") setFrame("idle");
     wake();
     cancelAnimation(boxX);
     cancelAnimation(boxY);
@@ -685,6 +701,7 @@ function WhalePetLayer() {
   };
 
   const physicsClock = useFrameCallback((info) => {
+    boundaryClock.value = info.timestamp;
     if (phase.value !== 2) return;
     const dt = Math.min(
       Math.max((info.timeSincePreviousFrame ?? 16) / 1000, 0.001),
@@ -695,6 +712,8 @@ function WhalePetLayer() {
     let vx = velocityX.value;
     let vy = velocityY.value;
     let floorHit = 0;
+    let boundaryImpact = 0;
+    let edge = "";
 
     // 一帧位移超过 8px 就拆步，避免高速时跳过落地 / 反弹
     const travel = Math.hypot(vx, vy) * dt;
@@ -706,16 +725,20 @@ function WhalePetLayer() {
       x += vx * stepDt;
       y += vy * stepDt;
       if (x < minX.value) {
+        if (Math.abs(vx) > boundaryImpact) { boundaryImpact = Math.abs(vx); edge = "左边框"; }
         x = minX.value;
         vx = Math.abs(vx) * 0.78;
       } else if (x > maxX.value) {
+        if (Math.abs(vx) > boundaryImpact) { boundaryImpact = Math.abs(vx); edge = "右边框"; }
         x = maxX.value;
         vx = -Math.abs(vx) * 0.78;
       }
       if (y < minY.value) {
+        if (Math.abs(vy) > boundaryImpact) { boundaryImpact = Math.abs(vy); edge = "上边框"; }
         y = minY.value;
         vy = Math.abs(vy) * 0.78;
       } else if (y > maxY.value) {
+        if (Math.abs(vy) > boundaryImpact) { boundaryImpact = Math.abs(vy); edge = "下边框"; }
         floorHit = Math.max(floorHit, Math.abs(vy));
         y = maxY.value;
         vx *= Math.max(0, 1 - 2.5 * stepDt);
@@ -729,6 +752,10 @@ function WhalePetLayer() {
     velocityY.value = vy;
     tilt.value = Math.max(-14, Math.min(14, vx * 0.012));
     if (Math.abs(vx) > 80) face.value = vx > 0 ? 1 : -1;
+    if (boundaryImpact >= 550 && boundaryClock.value - lastBoundaryHit.value >= 1400) {
+      lastBoundaryHit.value = boundaryClock.value;
+      runOnJS(onBoundaryHit)(boundaryImpact, edge);
+    }
 
     if (floorHit > 260 && landed.value === 0) {
       landed.value = 1;
@@ -761,6 +788,15 @@ function WhalePetLayer() {
       runOnJS(onDragStart)();
     })
     .onUpdate((e) => {
+      const targetX = dragStartX.value + e.translationX;
+      const targetY = dragStartY.value + e.translationY;
+      const horizontal = (targetX < minX.value && boxX.value > minX.value) || (targetX > maxX.value && boxX.value < maxX.value);
+      const vertical = (targetY < minY.value && boxY.value > minY.value) || (targetY > maxY.value && boxY.value < maxY.value);
+      const impact = Math.max(horizontal ? Math.abs(e.velocityX) : 0, vertical ? Math.abs(e.velocityY) : 0);
+      if (impact >= 550 && boundaryClock.value - lastBoundaryHit.value >= 1400) {
+        lastBoundaryHit.value = boundaryClock.value;
+        runOnJS(onBoundaryHit)(impact, horizontal ? targetX < minX.value ? "左边框" : "右边框" : targetY < minY.value ? "上边框" : "下边框");
+      }
       tilt.value = withSpring(Math.max(-12, Math.min(12, e.velocityX * 0.015)), {
         damping: 18,
         stiffness: 150,
@@ -797,6 +833,7 @@ function WhalePetLayer() {
     });
 
   const wrapperStyle = useAnimatedStyle(() => ({
+    opacity: appear.value,
     transform: [
       { translateX: boxX.value },
       {
@@ -888,7 +925,7 @@ function WhalePetLayer() {
     if (sleepTimer.current) clearTimeout(sleepTimer.current);
     if (chatMsgs.length === 0) {
       setChatMsgs([
-        petMsg("assistant", "大爹叫我？想聊什么，还是想看我跳舞呀～"),
+        petMsg("assistant", "{{user}}叫我？想聊什么，还是想看我跳舞呀～"),
       ]);
     }
   };
@@ -942,7 +979,7 @@ function WhalePetLayer() {
     playAction("eat");
   };
 
-  /** 大爹专属操作：改口令 / 改背景 / 生图 / 联网，权限与助手页一致 */
+  /** 用户专属操作：改口令 / 改背景 / 生图 / 联网，权限与助手页一致 */
   const runWhaleActions = async (
     actions: WhaleAction[],
     userText: string,
@@ -975,7 +1012,7 @@ function WhalePetLayer() {
         if (action.effect === "aurora" || action.effect === "plain") {
           setBackgroundEffect(action.effect);
         }
-        const line = `（把背景调成了「${BACKGROUND_PRESETS[tint].label}」）大爹看看，喜不喜欢？`;
+        const line = `（把背景调成了「${BACKGROUND_PRESETS[tint].label}」）{{user}}看看，喜不喜欢？`;
         setChatMsgs((prev) =>
           [...prev, petMsg("assistant", line)].slice(-200),
         );
@@ -986,7 +1023,7 @@ function WhalePetLayer() {
           [
             ...prev,
             {
-              ...petMsg("assistant", "画好啦，大爹收好。"),
+              ...petMsg("assistant", "画好啦，{{user}}收好。"),
               imageUri: uri,
               imageAspect: imageAspect(action.size),
             },
@@ -1049,7 +1086,7 @@ function WhalePetLayer() {
       ].slice(-200),
     );
     showBubble(summary, 2800);
-    say("改好啦，大爹。");
+    say("改好啦，{{user}}。");
   };
 
   /** 发一句话：动作口令 / 喂饭 / 摸头走本地，日常闲聊交给模型 */
@@ -1086,12 +1123,12 @@ function WhalePetLayer() {
 
     // 想让她回去：桌宠自己收起来
     if (/^(请|你)?(回去|退下|收起来|藏起来|走吧|变回去|别陪我)(吧|啦|了|休息吧)?[。！!～~]*$/.test(content)) {
-      reply("呜…那我先回水里啦，大爹记得再叫我。");
+      reply("呜…那我先回水里啦，{{user}}记得再叫我。");
       setTimeout(() => dismiss(), 900);
       return;
     }
     if (!apiKey && !looksLikeSchedule && /^(喂你|给你|吃饭|吃点|吃个|吃吧)/.test(content)) {
-      pushReply("白饭！嗷呜——好吃，谢谢大爹。");
+      pushReply("白饭！嗷呜——好吃，谢谢{{user}}。");
       playAction("eat");
       return;
     }
@@ -1111,7 +1148,7 @@ function WhalePetLayer() {
     }
 
     if (!apiKey) {
-      reply("大爹没喂我 Key，我只能自己玩玩…去设置里填一下，我就能陪你聊天啦。");
+      reply("{{user}}没喂我 Key，我只能自己玩玩…去设置里填一下，我就能陪你聊天啦。");
       return;
     }
 
@@ -1312,54 +1349,61 @@ function WhalePetLayer() {
             top: panelTop,
             width: PANEL_W,
             zIndex: 30,
-            borderRadius: 22,
-            paddingTop: 10,
-            paddingBottom: 2,
+            borderRadius: 24,
+            paddingTop: 12,
+            paddingBottom: 4,
             overflow: "hidden",
             backgroundColor: isDark
-              ? "rgba(10,18,34,0.96)"
-              : "rgba(255,255,255,0.97)",
+              ? "rgba(17,28,47,0.98)"
+              : "rgba(244,250,255,0.98)",
             borderWidth: 1,
             borderColor: isDark
-              ? "rgba(125,211,252,0.3)"
-              : "rgba(56,189,248,0.35)",
+              ? "rgba(125,211,252,0.22)"
+              : "rgba(125,211,252,0.55)",
           }}
         >
           <View
             style={{
               flexDirection: "row",
               alignItems: "center",
-              paddingHorizontal: 12,
+              paddingHorizontal: 14,
             }}
           >
             <View
               style={{
-                width: 6,
-                height: 6,
-                borderRadius: 3,
-                marginRight: 6,
-                backgroundColor: "#38BDF8",
+                width: 36,
+                height: 36,
+                borderRadius: 13,
+                marginRight: 9,
+                alignItems: "center",
+                justifyContent: "center",
+                overflow: "hidden",
+                backgroundColor: "rgba(56,189,248,0.18)",
               }}
-            />
+            ><WhaleAvatar size={32} /></View>
+            <View style={{ flex: 1 }}>
             <Text
               style={{
-                flex: 1,
-                fontSize: 11.5,
+                fontSize: 14,
                 fontWeight: "700",
                 color: isDark ? "#E2F2FF" : "#0C4A6E",
               }}
             >
-              大肥鱼
+              {personaName}
             </Text>
+            <Text style={{ marginTop: 2, fontSize: 10, color: isDark ? "#94A3B8" : "#64748B" }}>在这里陪着你</Text>
+            </View>
             <Pressable
               onPress={() => {
                 const next = !voiceOn;
                 toggleVoice();
-                if (next) speakWhale(`声音开好啦，${useWhalePersona.getState().persona.userName}。`);
+                if (next) speakWhale(renderPersonaText("声音开好啦，{{user}}。", useWhalePersona.getState().persona));
                 else stopWhaleVoice();
               }}
               hitSlop={8}
-              style={{ marginRight: 10 }}
+              accessibilityRole="button"
+              accessibilityLabel={voiceOn ? "关闭鱼语" : "开启鱼语"}
+              style={{ width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(56,189,248,0.1)", marginRight: 6 }}
             >
               <Ionicons
                 name={voiceOn ? "volume-high" : "volume-mute"}
@@ -1367,7 +1411,7 @@ function WhalePetLayer() {
                 color={voiceOn ? "#38BDF8" : isDark ? "#64748B" : "#94A3B8"}
               />
             </Pressable>
-            <Pressable onPress={closeChat} hitSlop={8}>
+            <Pressable onPress={closeChat} hitSlop={8} accessibilityRole="button" accessibilityLabel="关闭聊天" style={{ width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: isDark ? "rgba(255,255,255,0.06)" : "rgba(148,163,184,0.12)" }}>
               <Ionicons
                 name="close"
                 size={15}
@@ -1382,7 +1426,7 @@ function WhalePetLayer() {
               flexDirection: "row",
               gap: 8,
               paddingHorizontal: 12,
-              paddingTop: 9,
+              paddingTop: 12,
             }}
           >
             <CareBar
@@ -1435,8 +1479,8 @@ function WhalePetLayer() {
 
           <ScrollView
             ref={chatRef}
-            style={{ maxHeight: 96, marginTop: 9 }}
-            contentContainerStyle={{ paddingHorizontal: 10, gap: 6 }}
+            style={{ maxHeight: 96, marginTop: 10, marginHorizontal: 10, borderRadius: 16, backgroundColor: isDark ? "rgba(255,255,255,0.035)" : "rgba(255,255,255,0.65)" }}
+            contentContainerStyle={{ padding: 8, gap: 7 }}
             showsVerticalScrollIndicator={false}
             onContentSizeChange={() =>
               chatRef.current?.scrollToEnd({ animated: true })
@@ -1457,9 +1501,11 @@ function WhalePetLayer() {
                 <View
                   style={{
                     maxWidth: "92%",
-                    borderRadius: 12,
-                    paddingHorizontal: 9,
-                    paddingVertical: 6,
+                    borderRadius: 16,
+                    borderBottomRightRadius: m.role === "user" ? 5 : 16,
+                    borderBottomLeftRadius: m.role === "user" ? 16 : 5,
+                    paddingHorizontal: 11,
+                    paddingVertical: 8,
                     backgroundColor:
                       m.role === "user"
                         ? "rgba(56,189,248,0.82)"
@@ -1470,7 +1516,8 @@ function WhalePetLayer() {
                 >
                   <Text
                     style={{
-                      fontSize: 11,
+                    fontSize: 11.5,
+                    lineHeight: 17,
                       color:
                         m.role === "user"
                           ? "#FFFFFF"
@@ -1503,15 +1550,7 @@ function WhalePetLayer() {
             ))}
           </ScrollView>
 
-          <View
-            style={{
-              flexDirection: "row",
-              flexWrap: "wrap",
-              gap: 6,
-              paddingHorizontal: 10,
-              paddingTop: 8,
-            }}
-          >
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingHorizontal: 12, paddingTop: 9 }}>
             {PET_CHIPS.map((label) => (
               <Pressable
                 key={label}
@@ -1539,7 +1578,7 @@ function WhalePetLayer() {
                 </Text>
               </Pressable>
             ))}
-          </View>
+          </ScrollView>
 
           <ChatInputBar
             value={input}

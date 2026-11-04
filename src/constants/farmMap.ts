@@ -4,7 +4,7 @@ export interface FarmRect extends FarmPoint { w: number; h: number }
 export const SCENE_SIZE = { width: 200, height: 330 } as const;
 /** Fit the four zones above the persistent controls on short portrait phones. */
 export function farmSceneViewport(width: number, height: number, topInset = 0, bottomInset = 0) {
-  const controls = width < 360 ? 248 : 212;
+  const controls = 264; // Two compact HUD rows plus the seed/action tray.
   const sceneWidth = Math.min(width, 520, Math.max(200, (height - topInset - bottomInset - controls) * SCENE_SIZE.width / SCENE_SIZE.height));
   const scale = sceneWidth / SCENE_SIZE.width;
   return { width: sceneWidth, height: SCENE_SIZE.height * scale, scale };

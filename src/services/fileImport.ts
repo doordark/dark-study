@@ -103,20 +103,7 @@ export async function pickImageFromCamera(): Promise<PickedImage | null> {
   });
   if (result.canceled || !result.assets?.length) return null;
 
-  const asset = result.assets[0];
-  if (!asset.base64) {
-    const bytes = new Uint8Array(await new File(asset.uri).arrayBuffer());
-    return {
-      base64: bytesToBase64(bytes),
-      mimeType: asset.mimeType ?? "image/jpeg",
-      uri: asset.uri,
-    };
-  }
-  return {
-    base64: asset.base64,
-    mimeType: asset.mimeType ?? "image/jpeg",
-    uri: asset.uri,
-  };
+  return toPickedImage(result.assets[0]);
 }
 
 const TEXT_EXTENSIONS = [

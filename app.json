@@ -2,7 +2,7 @@
   "expo": {
     "name": "dark-study",
     "slug": "dark-study",
-    "version": "1.7.8",
+    "version": "1.8.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "dark-study",
@@ -11,9 +11,14 @@
     },
     "android": {
       "package": "com.darkstudy.app",
-      "versionCode": 25,
-      "blockedPermissions": ["android.permission.RECORD_AUDIO"],
-      "permissions": ["REQUEST_INSTALL_PACKAGES"],
+      "versionCode": 27,
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO"
+      ],
+      "permissions": [
+        "REQUEST_INSTALL_PACKAGES",
+        "SCHEDULE_EXACT_ALARM"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#08060D",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -42,11 +47,16 @@
       [
         "rn-mlkit-ocr",
         {
-          "ocrModels": ["chinese", "latin"],
+          "ocrModels": [
+            "chinese",
+            "latin"
+          ],
           "ocrUseBundled": true
         }
       ],
       "./plugins/withReleaseSigning",
+      "./plugins/withCourseWidgets",
+      "./plugins/withWhaleOverlay",
       [
         "expo-audio",
         {
@@ -57,7 +67,8 @@
         }
       ],
       "expo-secure-store",
-      "expo-asset"
+      "expo-asset",
+      "expo-notifications"
     ],
     "experiments": {
       "typedRoutes": true,

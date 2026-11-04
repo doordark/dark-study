@@ -1,11 +1,13 @@
+import { FarmButton, FarmPaper, FarmText as Text } from './FarmSkin';
+import { FarmSpeechLayer } from './FarmSpeechLayer';
 import { useState } from 'react';
-import { Modal, Pressable, ScrollView, Switch, Text, TextInput, View } from 'react-native';
+import { Modal, Pressable, ScrollView, Switch, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MODE_NAMES, PRESETS, RESIDENT_IDS, RESIDENTS, SETTING_RANGES, normalizeLifeUsage, type NumericLifeSetting, type ResidentId, type LifeMode } from '@/utils/farmLife';
 import type { FarmResidentsController } from '@/hooks/useFarmResidents';
 import { FarmResident } from './FarmResident';
-const ink = '#F6EEDC',
-  muted = '#ADBEA7';
+const ink = '#59432E',
+  muted = '#8A785E';
 function Button({
   label,
   onPress,
@@ -15,19 +17,7 @@ function Button({
   onPress: () => void;
   selected?: boolean;
 }) {
-  return <Pressable accessibilityRole="button" accessibilityState={{
-    selected
-  }} onPress={onPress} style={{
-    minHeight: 44,
-    justifyContent: 'center',
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    backgroundColor: selected ? '#617B3F' : '#2B4030'
-  }}><Text style={{
-      color: ink,
-      fontSize: 12,
-      fontWeight: '600'
-    }}>{label}</Text></Pressable>;
+  return <FarmButton label={label} onPress={onPress} tone={selected ? 'sage' : 'paper'} />;
 }
 function NumberSetting({
   label,
@@ -56,8 +46,8 @@ function NumberSetting({
         minHeight: 44,
         flex: 1,
         borderWidth: 1,
-        borderColor: '#52664B',
-        borderRadius: 9,
+        borderColor: '#BDA57D',
+        borderRadius: 3,
         paddingHorizontal: 12,
         color: ink,
         textAlign: 'center',
@@ -74,7 +64,7 @@ const LABELS: Record<NumericLifeSetting, string> = {
   dailyLimit: '每日 AI 请求上限',
   nightActivity: '夜间活跃程度（%）'
 };
-const COLORS = ['#B9DC9B', '#EDB6C9', '#A7C8EB', '#F0CD80', '#CBACE2', '#E7D9A5'];
+const COLORS = ['#5E7D45', '#A65D78', '#527C9F', '#9B7437', '#87639B', '#85763F'];
 export function FarmLifeLayer({
   scale,
   controller,
@@ -108,6 +98,7 @@ export function FarmLifeLayer({
   const records = history.filter(c => (person === 'all' || c.participants.includes(person)) && (filter === 'all' || filter === 'ai' && c.online || filter === 'encounter' && c.source === 'encounter' || filter === 'command' && c.source === 'player_command')).slice().reverse();
   return <>
     {controller.residents.map(resident => <FarmResident key={resident.id} resident={resident} scale={scale} active={controller.awake && (controller.autonomous || Boolean(resident.task))} reducedMotion={controller.reducedMotion} onTalk={onTalk} />)}
+    <FarmSpeechLayer residents={controller.residents} scale={scale} />
     <Modal visible={panelOpen} transparent animationType="slide" onRequestClose={onClosePanel}>
       <View style={{
         flex: 1,
@@ -120,10 +111,10 @@ export function FarmLifeLayer({
         }} />
         <View style={{
           maxHeight: '92%',
-          backgroundColor: '#14231A',
-          borderTopLeftRadius: 24,
-          borderTopRightRadius: 24
+          backgroundColor: '#FAF2DF',
+          borderRadius: 3
         }}>
+      <FarmPaper theme="residents" />
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{
             padding: 18,
             paddingBottom: insets.bottom + 22,
@@ -135,7 +126,7 @@ export function FarmLifeLayer({
               gap: 8
             }}><View style={{
                 flex: 1
-              }}><Text style={{
+              }}><Text variant="title" style={{
                   color: ink,
                   fontSize: 20,
                   fontWeight: '800'
@@ -165,7 +156,7 @@ export function FarmLifeLayer({
                 [key]: value
               })} /></View>)}
             <Text style={{
-              color: '#D0DCBB',
+              color: '#6F7A50',
               fontSize: 12,
               lineHeight: 19
             }}>今日 AI：{usage.count}/{settings.dailyLimit} 次 · 最短间隔 {settings.aiMinutes} 分钟 · 比例 {settings.aiRatio}%{!hasApiKey ? '\n未配置 Key，当前全部使用本地对白。' : ''}</Text>
@@ -184,7 +175,7 @@ export function FarmLifeLayer({
               lineHeight: 18
             }}>改动高级参数会切换到自定义模式。打开面板、切到后台时暂停生活；返回后从当前进度继续，不补演离线对话。</Text>
             {controller.notice ? <Text style={{
-              color: '#E8C48B',
+              color: '#926B35',
               fontSize: 12,
               lineHeight: 18
             }}>{controller.notice}</Text> : null}
@@ -210,14 +201,14 @@ export function FarmLifeLayer({
               lineHeight: 20
             }}>还没有这类交流。让居民在农场逛一会儿，或在“我的聊天”里请他们帮忙。</Text> : records.slice(0, count).map(record => <View key={record.id} style={{
               padding: 14,
-              borderRadius: 14,
-              backgroundColor: '#213528',
+              borderRadius: 3,
+              backgroundColor: '#F0E5CC',
               gap: 10,
               borderWidth: 1,
-              borderColor: '#3F573D'
+              borderColor: '#C4AE86'
             }}>
               <Text style={{
-                color: '#EBD99F',
+                color: '#8C6C3E',
                 fontSize: 14,
                 fontWeight: '700'
               }}>{record.participants.map(id => RESIDENTS[id].name).join(' ↔ ')}</Text>

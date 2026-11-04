@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import * as Network from "expo-network";
 import { router } from "expo-router";
 import React from "react";

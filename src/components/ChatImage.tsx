@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useWhalePersona } from "@/store/useWhalePersona";
+import { renderPersonaText } from "@/utils/whalePersona";
 import {
   ActivityIndicator,
   Image,
@@ -18,6 +20,7 @@ export function ChatImage({
   uri: string;
   aspectRatio?: number;
 }) {
+  const persona = useWhalePersona((s) => s.persona);
   const [status, setStatus] = useState<"loading" | "ok" | "error">("loading");
 
   return (
@@ -35,7 +38,7 @@ export function ChatImage({
         />
       ) : (
         <Text className="px-4 text-center text-[10.5px] leading-4 text-sky-700 dark:text-sky-200">
-          画布被海浪卷走了…大爹再让我画一次吧
+          {renderPersonaText("画布被海浪卷走了…{{user}}再让我画一次吧", persona)}
         </Text>
       )}
       {status === "loading" ? (

@@ -1,8 +1,9 @@
+import { FarmFrame, FarmButton, FarmPaper, FarmText as Text, FARM_BODY_FONT } from "@/components/farm/FarmSkin";
 /* eslint-disable react-hooks/immutability --
    Reanimated 共享值（px/py/face 等）本质是跨渲染、跨线程可变的容器，
    在事件回调与 effect 中赋值是官方标准用法，React 编译器的不可变假设不适用 */
 
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useIsFocused, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
@@ -16,7 +17,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
   TextInput,
   View,
   useWindowDimensions,
@@ -37,6 +37,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useForegroundClock } from "@/hooks/useForegroundClock";
 import Svg, { G, Rect } from "react-native-svg";
 
 import {
@@ -544,7 +545,7 @@ export function FarmScreen() {
   const chatMaxH = Math.max(150, Math.min(258, Math.round(height * 0.32)));
 
   const [loaded, setLoaded] = useState(false);
-  const [now, setNow] = useState(() => eventTime());
+  const now = useForegroundClock(3000).getTime();
   /** 睡觉、小游戏攒出来的时间偏移：虚拟时间 = 真实时间 + 偏移 */
   const [timeShift, setTimeShift] = useState(0);
   /** 第 1 天 0 点对应的虚拟时间戳 */
@@ -666,12 +667,10 @@ export function FarmScreen() {
   // 每 3 秒走一次表：作物进度、天色、时钟都靠它刷新
   // （原来 1 秒一次，整棵树每秒重渲染会让贴图与动画掉帧）
   useEffect(() => {
-    const t = setInterval(() => setNow(eventTime()), 3000);
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") setNow(eventTime());
-      else personalRequest.current?.abort();
+      if (state !== "active") personalRequest.current?.abort();
     });
-    return () => { clearInterval(t); subscription.remove(); };
+    return () => subscription.remove();
   }, []);
 
   // 首次读档后再挂贴图，之后用交叉淡化切换真实昼夜。
@@ -1169,128 +1168,18 @@ export function FarmScreen() {
   const speakerSub = speakerMeta.sub;
 
   return (
-    <View style={{ flex: 1, backgroundColor: "#0E1A12" }}>
-      <StatusBar style="light" />
+    <View style={{ flex: 1, backgroundColor: "#F5EDD8" }}>
+      <StatusBar style="dark" />
 
-      {/* ---------- 顶部 ---------- */}
-      <View
-        style={{
-          paddingTop: insets.top + 8,
-          paddingHorizontal: 14,
-          flexDirection: "row",
-          flexWrap: "wrap",
-          alignItems: "center",
-        }}
-      >
-        <Pressable
-          onPress={() => router.back()}
-          style={{
-            width: 34,
-            height: 34,
-            borderRadius: 17,
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: "rgba(246,238,220,0.08)",
-            borderWidth: 1,
-            borderColor: "rgba(246,238,220,0.12)",
-          }}
-        >
-          <Ionicons name="chevron-back" size={18} color="#F6EEDC" />
-        </Pressable>
-
-        <View style={{ flex: 1, marginLeft: 10, minWidth: 106 }}>
-          <Text
-            style={{
-              color: "#F6EEDC",
-              fontSize: 16,
-              fontWeight: "800",
-              letterSpacing: 1.5,
-              fontFamily: PIXEL_FONT,
-            }}
-          >
-            doordoor<Text style={{ color: "#8FD14F" }}>农场</Text>
-          </Text>
-          <Text
-            style={{
-              color: "rgba(246,238,220,0.5)",
-              fontSize: 10,
-              marginTop: 2,
-            }}
-          >
-            {`Lv.${level} · 第 ${day} 天 · ${seasonName} · 本地 ${clock} ${
-              night ? "夜晚" : "白天"
-            }`}
-          </Text>
+      <View style={{ paddingTop: insets.top + 6, paddingBottom: 8, paddingHorizontal: 12, gap: 7, backgroundColor: '#F5EDD8', borderBottomWidth: 2, borderColor: '#D5B88D' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <FarmButton onPress={() => router.back()} tone="paper" style={{ width: 44, paddingHorizontal: 0 }}><Ionicons name="chevron-back" size={18} color="#76583B" /></FarmButton>
+          <View style={{ flex: 1 }}><Text variant="title" style={{ letterSpacing: .6 }}>doordoor · 农场</Text>
+            <Text style={{ color: '#86745A', fontSize: 10, marginTop: 3 }}>{`Lv.${level} · 第 ${day} 天 · ${seasonName} · ${clock} ${night ? '夜晚' : '白天'}`}</Text></View>
         </View>
-
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 8, ...(width < 360 ? { width: width - 72, marginLeft: 44, marginTop: 6 } : {}) }}>
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              borderRadius: 999,
-              paddingHorizontal: 12,
-              paddingVertical: 6,
-              backgroundColor: "rgba(245,196,102,0.12)",
-              borderWidth: 1,
-              borderColor: "rgba(245,196,102,0.3)",
-            }}
-          >
-            <View
-              style={{
-                width: 11,
-                height: 11,
-                borderRadius: 6,
-                backgroundColor: "#F5C466",
-                borderWidth: 1,
-                borderColor: "#C9973A",
-              }}
-            />
-            <Text
-              style={{
-                color: "#F5C466",
-                fontSize: 12.5,
-                fontWeight: "800",
-                marginLeft: 6,
-              }}
-            >
-              {coins}
-            </Text>
-          </View>
-
-          <Pressable
-            onPress={fetchWater}
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              borderRadius: 999,
-              paddingHorizontal: 10,
-              paddingVertical: 6,
-              backgroundColor: water > 0
-                ? "rgba(94,200,242,0.14)"
-                : "rgba(246,238,220,0.06)",
-              borderWidth: 1,
-              borderColor: water > 0
-                ? "rgba(94,200,242,0.42)"
-                : "rgba(246,238,220,0.14)",
-            }}
-          >
-            <Ionicons
-              name="water"
-              size={12}
-              color={water > 0 ? "#5EC8F2" : "rgba(246,238,220,0.45)"}
-            />
-            <Text
-              style={{
-                color: water > 0 ? "#9BD9FF" : "rgba(246,238,220,0.45)",
-                fontSize: 12,
-                fontWeight: "800",
-                marginLeft: 4,
-              }}
-            >
-              {`${water}/${waterCap}`}
-            </Text>
-          </Pressable>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <View accessibilityLabel={`金币 ${coins}`} style={{ flex: 1, minHeight: 38, justifyContent: 'center', alignItems: 'center', flexDirection: 'row', gap: 7 }}><FarmFrame /><View style={{ width: 12, height: 12, borderWidth: 2, borderColor: '#B48236', backgroundColor: '#E9C163' }} /><Text style={{ color: '#76572E', fontWeight: '800', fontSize: 13 }}>{coins}</Text><Text style={{ color: '#8B7352', fontSize: 10 }}>金币</Text></View>
+          <FarmButton onPress={fetchWater} tone="blue" style={{ flex: 1, minHeight: 38, paddingVertical: 7, flexDirection: 'row', gap: 6 }}><Ionicons name="water" size={13} color="#537F91" /><Text style={{ color: '#426B7A', fontSize: 12, fontWeight: '700' }}>{water}/{waterCap}</Text><Text style={{ color: '#608494', fontSize: 10 }}>打水</Text></FarmButton>
         </View>
       </View>
 
@@ -1367,7 +1256,7 @@ export function FarmScreen() {
                         y={pos.y - 2.4}
                         width={pos.w}
                         height="1"
-                        fill="#0E1A12"
+                        fill="#F5EDD8"
                         opacity="0.42"
                       />
                       <Rect
@@ -1385,7 +1274,7 @@ export function FarmScreen() {
                       y={pos.y + 0.8}
                       width="1.6"
                       height="2.6"
-                      fill="#5EC8F2"
+                      fill="#557F98"
                       opacity="0.9"
                     />
                   ) : null}
@@ -1517,7 +1406,7 @@ export function FarmScreen() {
               style={{
                 flexDirection: "row",
                 alignItems: "center",
-                borderRadius: 999,
+                borderRadius: 3,
                 paddingHorizontal: 7,
                 paddingVertical: 3,
                 backgroundColor: "rgba(14,26,18,0.66)",
@@ -1525,7 +1414,7 @@ export function FarmScreen() {
                 borderColor: "rgba(94,200,242,0.28)",
               }}
             >
-              <Ionicons name="water" size={9} color="#9BD9FF" />
+              <Ionicons name="water" size={9} color="#47798F" />
               <Text
                 style={{
                   marginLeft: 4,
@@ -1557,7 +1446,7 @@ export function FarmScreen() {
               playerStyle,
             ]}
           >
-            <NameTag label="你" accent="#F5C466" scale={scale} hit center={7} />
+            <NameTag label="你" accent="#9E7338" scale={scale} hit center={7} />
             <View
               style={{
                 position: "absolute",
@@ -1591,15 +1480,15 @@ export function FarmScreen() {
               <View
                 style={{
                   maxWidth: sceneW - 24,
-                  borderRadius: 999,
+                  borderRadius: 3,
                   paddingHorizontal: 14,
                   paddingVertical: 7,
-                  backgroundColor: "rgba(14,26,18,0.86)",
+                  backgroundColor: "#FFF4DE",
                   borderWidth: 1,
                   borderColor: "rgba(246,238,220,0.16)",
                 }}
               >
-                <Text style={{ color: "#F6EEDC", fontSize: 11.5 }}>
+                <Text style={{ color: "#59432E", fontSize: 11.5 }}>
                   {toast.text}
                 </Text>
               </View>
@@ -1608,133 +1497,20 @@ export function FarmScreen() {
         </View>
       </ScrollView>
 
-      {/* ---------- 底部操作区 ---------- */}
-      <View
-        style={{
-          paddingHorizontal: 12,
-          paddingTop: 10,
-          paddingBottom: insets.bottom + 8,
-          gap: 7,
-          borderTopWidth: 1,
-          borderTopColor: "rgba(143,209,79,0.2)",
-          backgroundColor: "#112016",
-        }}
-      >
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-          <Text style={{ flex: 1, color: "rgba(246,238,220,0.5)", fontSize: 10, lineHeight: 16 }}>{loadFailed ? "存档读取失败，请退出农场重进，原存档未覆盖" : saveError ? "保存失败，请保持应用开启并重试操作" : fertilizing ? "施肥模式 · 轻点未成熟作物" : "横滑选种 · 收成在手账出售 · 水池打水"}</Text>
-          <Pressable accessibilityRole="button" onPress={() => setLifeOpen(true)} style={{ minHeight: 36, justifyContent: "center", paddingHorizontal: 10, borderRadius: 10, backgroundColor: "#2B4230" }}><Text style={{ color: "#D7EAC5", fontSize: 11 }}>居民生活</Text></Pressable>
+      <View style={{ paddingHorizontal: 10, paddingTop: 8, paddingBottom: insets.bottom + 8, gap: 7, borderTopWidth: 2, borderColor: '#CBB38B', backgroundColor: '#F5EDD8' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Text style={{ flex: 1, color: '#877358', fontSize: 10, lineHeight: 16 }}>{loadFailed ? '存档读取失败，请退出农场重进' : saveError ? '保存失败，请保持应用开启' : fertilizing ? '施肥模式 · 轻点未成熟作物' : '横滑选种 · 手账出售 · 水池打水'}</Text>
+          <FarmButton label="居民生活" tone="rose" onPress={() => setLifeOpen(true)} style={{ minHeight: 36, paddingVertical: 8 }} />
         </View>
-
-        <ScrollView horizontal style={{ flexGrow: 0 }} showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-          {CROP_KINDS.map((kind) => {
-            const on = selected === kind;
-            return (
-              <Pressable
-                key={kind}
-                onPress={() => setSelected(kind)}
-                style={{
-                  minWidth: 110,
-                  minHeight: 48,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  paddingVertical: 6,
-                  borderRadius: 14,
-                  borderWidth: 1,
-                  borderColor: on
-                    ? "rgba(245,196,102,0.7)"
-                    : "rgba(246,238,220,0.10)",
-                  backgroundColor: on
-                    ? "rgba(245,196,102,0.14)"
-                    : "rgba(246,238,220,0.04)",
-                }}
-              >
-                <View style={{ width: 26, height: 26 }}>
-                  <CropSprite kind={kind} size={26} />
-                </View>
-                <View style={{ marginLeft: 5 }}>
-                  <Text
-                    style={{
-                      color: on ? "#F5C466" : "#E6DCC7",
-                      fontSize: 11,
-                      fontWeight: "700",
-                    }}
-                  >
-                    {CROP_ART[kind].label}
-                  </Text>
-                  <Text
-                    style={{
-                      color: "rgba(246,238,220,0.5)",
-                      fontSize: 9.5,
-                      marginTop: 1,
-                    }}
-                  >
-                    {level < CROP_META[kind].level ? "Lv." + CROP_META[kind].level + " 解锁" : "种子 ×" + seeds[kind]}
-                  </Text>
-                </View>
-              </Pressable>
-            );
-          })}
+        <ScrollView horizontal style={{ flexGrow: 0 }} showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 7 }}>
+          {CROP_KINDS.map(kind => <FarmButton key={kind} onPress={() => setSelected(kind)} tone={selected === kind ? 'sage' : 'paper'} style={{ minWidth: 116, minHeight: 49, flexDirection: 'row', gap: 5, paddingHorizontal: 13 }}>
+            <CropSprite kind={kind} size={26} /><View><Text style={{ color: '#655035', fontWeight: '700', fontSize: 11 }}>{CROP_ART[kind].label}</Text><Text style={{ color: '#8A785B', fontSize: 10 }}>{level < CROP_META[kind].level ? 'Lv.' + CROP_META[kind].level + ' 解锁' : '种子 ×' + seeds[kind]}</Text></View>
+          </FarmButton>)}
         </ScrollView>
-
-        <View style={{ flexDirection: "row", gap: 8 }}>
-          <Pressable
-            onPress={() => setShopOpen(true)}
-            style={{
-              flex: 1,
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "center",
-              paddingVertical: 10,
-              borderRadius: 16,
-              borderWidth: 1,
-              borderColor: "rgba(245,196,102,0.32)",
-              backgroundColor: "rgba(245,196,102,0.1)",
-            }}
-          >
-            <Ionicons name="storefront-outline" size={14} color="#F5C466" />
-            <Text
-              style={{
-                marginLeft: 6,
-                color: "#F5C466",
-                fontSize: 12.5,
-                fontWeight: "700",
-              }}
-            >
-              小铺
-            </Text>
-          </Pressable>
-
-          <Pressable accessibilityRole="button" onPress={() => setJournalOpen(true)}
-            style={{ flex: 1.3, minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 3, borderRadius: 16, backgroundColor: fertilizing ? "#5B4426" : "#28452D", borderWidth: 1, borderColor: "#739B59" }}>
-            <FarmToolSprite kind={fertilizing ? "compost" : "seed"} size={24} />
-            <Text style={{ color: "#E2EDC9", fontSize: 11, fontWeight: "700" }}>{fertilizing ? "施肥中" : `手账 Lv.${level}`}</Text>
-          </Pressable>
-
-          <Pressable
-            onPress={openBugGame}
-            style={{
-              flex: 1.3,
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "center",
-              paddingVertical: 10,
-              borderRadius: 16,
-              backgroundColor: "#8FD14F",
-            }}
-          >
-            <Ionicons name="bug" size={14} color="#152A12" />
-            <Text
-              style={{
-                marginLeft: 6,
-                color: "#152A12",
-                fontSize: 12.5,
-                fontWeight: "800",
-              }}
-            >
-              抓虫小游戏
-            </Text>
-          </Pressable>
+        <View style={{ flexDirection: 'row', gap: 7 }}>
+          <FarmButton label="小铺" tone="paper" onPress={() => setShopOpen(true)} style={{ flex: 1 }} />
+          <FarmButton onPress={() => setJournalOpen(true)} tone="sage" style={{ flex: 1.3, flexDirection: 'row', gap: 3, paddingHorizontal: 10 }}><FarmToolSprite kind={fertilizing ? 'compost' : 'seed'} size={22} /><Text style={{ color: '#5B6340', fontSize: 11, fontWeight: '700' }}>{fertilizing ? '施肥中' : `手账 Lv.${level}`}</Text></FarmButton>
+          <FarmButton label="抓虫小游戏" tone="rose" onPress={openBugGame} style={{ flex: 1.3, paddingHorizontal: 10 }} />
         </View>
       </View>
 
@@ -1768,17 +1544,17 @@ export function FarmScreen() {
           <Animated.View entering={FadeInDown.springify()}>
             <View
               style={{
-                backgroundColor: "#16261A",
-                borderTopLeftRadius: 26,
-                borderTopRightRadius: 26,
+                backgroundColor: "#FAF2DF",
+                borderRadius: 3,
                 paddingHorizontal: 18,
                 paddingTop: 16,
                 paddingBottom: insets.bottom + 18,
                 maxHeight: height * 0.82,
                 borderTopWidth: 1,
-                borderColor: "rgba(246,238,220,0.10)",
+                borderColor: "#DECFAF",
               }}
             >
+              <FarmPaper theme="shop" />
               <View
                 style={{
                   flexDirection: "row",
@@ -1788,9 +1564,9 @@ export function FarmScreen() {
                 }}
               >
                 <View>
-                  <Text
+                  <Text variant="title"
                     style={{
-                      color: "#F6EEDC",
+                      color: "#59432E",
                       fontSize: 15,
                       fontWeight: "800",
                       letterSpacing: 1,
@@ -1800,7 +1576,7 @@ export function FarmScreen() {
                   </Text>
                   <Text
                     style={{
-                      color: "rgba(246,238,220,0.42)",
+                      color: "#8A785E",
                       fontSize: 10,
                       marginTop: 2,
                     }}
@@ -1824,7 +1600,7 @@ export function FarmScreen() {
               >
                 <Text
                   style={{
-                    color: "rgba(246,238,220,0.5)",
+                    color: "#8A785E",
                     fontSize: 10,
                     marginRight: 2,
                   }}
@@ -1840,21 +1616,21 @@ export function FarmScreen() {
                       style={{
                         paddingHorizontal: 10,
                         paddingVertical: 5,
-                        borderRadius: 999,
+                        borderRadius: 3,
                         borderWidth: 1,
                         borderColor: on
                           ? "rgba(143,209,79,0.6)"
-                          : "rgba(246,238,220,0.12)",
+                          : "#DECFAF",
                         backgroundColor: on
                           ? "rgba(143,209,79,0.16)"
-                          : "rgba(246,238,220,0.04)",
+                          : "#F5ECD8",
                       }}
                     >
                       <Text
                         style={{
                           fontSize: 10.5,
                           fontWeight: "700",
-                          color: on ? "#8FD14F" : "rgba(246,238,220,0.55)",
+                          color: on ? "#5F7749" : "#8A785E",
                         }}
                       >
                         {`×${n}`}
@@ -1866,7 +1642,7 @@ export function FarmScreen() {
                   style={{
                     flex: 1,
                     textAlign: "right",
-                    color: "rgba(246,238,220,0.4)",
+                    color: "#8A785E",
                     fontSize: 10,
                   }}
                 >
@@ -1883,7 +1659,7 @@ export function FarmScreen() {
                     alignItems: "center",
                     paddingVertical: 10,
                     borderTopWidth: 1,
-                    borderColor: "rgba(246,238,220,0.08)",
+                    borderColor: "#F1E5CC",
                   }}
                 >
                   <View style={{ width: 32, height: 32 }}>
@@ -1892,7 +1668,7 @@ export function FarmScreen() {
                   <View style={{ flex: 1, marginLeft: 10 }}>
                     <Text
                       style={{
-                        color: "#F6EEDC",
+                        color: "#59432E",
                         fontSize: 13,
                         fontWeight: "700",
                       }}
@@ -1901,7 +1677,7 @@ export function FarmScreen() {
                     </Text>
                     <Text
                       style={{
-                        color: "rgba(246,238,220,0.45)",
+                        color: "#8A785E",
                         fontSize: 10,
                         marginTop: 2,
                       }}
@@ -1913,13 +1689,13 @@ export function FarmScreen() {
                     disabled={level < CROP_META[kind].level || coins < CROP_META[kind].price * qty}
                     onPress={() => buy(kind)}
                     style={{
-                      borderRadius: 999,
+                      borderRadius: 3,
                       paddingHorizontal: 12,
                       paddingVertical: 7,
                       backgroundColor:
                         level >= CROP_META[kind].level && coins >= CROP_META[kind].price * qty
-                          ? "#8FD14F"
-                          : "rgba(246,238,220,0.12)",
+                          ? "#A4B887"
+                          : "#DECFAF",
                     }}
                   >
                     <Text
@@ -1928,8 +1704,8 @@ export function FarmScreen() {
                         fontWeight: "800",
                         color:
                           level >= CROP_META[kind].level && coins >= CROP_META[kind].price * qty
-                            ? "#152A12"
-                            : "rgba(246,238,220,0.4)",
+                            ? "#435532"
+                            : "#8A785E",
                       }}
                     >
                       {level < CROP_META[kind].level ? "Lv." + CROP_META[kind].level + " 解锁" : "买入 ×" + qty + " · " + CROP_META[kind].price * qty}
@@ -1972,13 +1748,14 @@ export function FarmScreen() {
             <View
               style={{
                 margin: 10,
-                borderRadius: 22,
-                backgroundColor: "#16261A",
+                borderRadius: 3,
+                backgroundColor: "#FAF2DF",
                 borderWidth: 1,
-                borderColor: "rgba(246,238,220,0.12)",
+                borderColor: "#DECFAF",
                 overflow: "hidden",
               }}
             >
+              <FarmPaper theme="chat" />
               <View
                 style={{
                   flexDirection: "row",
@@ -1987,7 +1764,7 @@ export function FarmScreen() {
                   paddingTop: 12,
                   paddingBottom: 10,
                   borderBottomWidth: 1,
-                  borderBottomColor: "rgba(246,238,220,0.08)",
+                  borderBottomColor: "#F1E5CC",
                 }}
               >
                 <View
@@ -1996,17 +1773,17 @@ export function FarmScreen() {
                     height: 54,
                     alignItems: "center",
                     justifyContent: "center",
-                    borderRadius: 12,
-                    backgroundColor: "rgba(246,238,220,0.06)",
+                    borderRadius: 3,
+                    backgroundColor: "#F5ECD8",
                   }}
                 >
                   <FarmPersonSprite who={speaker ?? "gu"} size={36} />
                 </View>
                 <View style={{ marginLeft: 10, flex: 1 }}>
                   <View style={{ flexDirection: "row", alignItems: "center" }}>
-                    <Text
+                    <Text variant="title"
                       style={{
-                        color: "#F6EEDC",
+                        color: "#59432E",
                         fontSize: 14,
                         fontWeight: "800",
                         letterSpacing: 1,
@@ -2021,15 +1798,15 @@ export function FarmScreen() {
                         paddingVertical: 1.5,
                         borderRadius: 99,
                         backgroundColor: chatOffline
-                          ? "rgba(246,238,220,0.08)"
+                          ? "#F1E5CC"
                           : "rgba(143,209,79,0.16)",
                       }}
                     >
                       <Text
                         style={{
                           color: chatOffline
-                            ? "rgba(246,238,220,0.42)"
-                            : "#8FD14F",
+                            ? "#8A785E"
+                            : "#5F7749",
                           fontSize: 8.5,
                           fontWeight: "700",
                         }}
@@ -2040,7 +1817,7 @@ export function FarmScreen() {
                   </View>
                   <Text
                     style={{
-                      color: "rgba(246,238,220,0.45)",
+                      color: "#8A785E",
                       fontSize: 10,
                       marginTop: 3,
                     }}
@@ -2057,10 +1834,10 @@ export function FarmScreen() {
                   style={{
                     width: 28,
                     height: 28,
-                    borderRadius: 14,
+                    borderRadius: 3,
                     alignItems: "center",
                     justifyContent: "center",
-                    backgroundColor: "rgba(246,238,220,0.06)",
+                    backgroundColor: "#F5ECD8",
                   }}
                 >
                   <Ionicons name="close" size={16} color="#8FA08F" />
@@ -2089,14 +1866,14 @@ export function FarmScreen() {
                       paddingVertical: 6,
                       borderRadius: 99,
                       borderWidth: 1,
-                      borderColor: "rgba(246,238,220,0.14)",
-                      backgroundColor: "rgba(246,238,220,0.04)",
+                      borderColor: "#D7C6A6",
+                      backgroundColor: "#F5ECD8",
                       opacity: chatBusy ? 0.45 : 1,
                     }}
                   >
                     <Text
                       style={{
-                        color: "rgba(246,238,220,0.7)",
+                        color: "#6B573E",
                         fontSize: 10.5,
                       }}
                     >
@@ -2130,23 +1907,22 @@ export function FarmScreen() {
                     <View
                       style={{
                         maxWidth: "84%",
-                        borderRadius: 15,
-                        borderTopLeftRadius: m.role === "user" ? 15 : 5,
-                        borderTopRightRadius: m.role === "user" ? 5 : 15,
+                        borderRadius: 4,
                         paddingHorizontal: 11,
                         paddingVertical: 8,
-                        borderWidth: m.role === "user" ? 0 : 1,
-                        borderColor: "rgba(246,238,220,0.1)",
+                        borderWidth: 1,
+                        borderColor: m.role === "user" ? "#AEB98D" : "#DFC1B3",
                         backgroundColor:
                           m.role === "user"
-                            ? "#8FD14F"
-                            : "rgba(246,238,220,0.07)",
+                            ? "#E2E8CC"
+                            : "#FFF8EB",
                       }}
                     >
                       <Text
                         style={{
-                          color: m.role === "user" ? "#152A12" : "#EDE4CE",
+                          color: m.role === "user" ? "#435532" : "#59432E",
                           fontSize: 13,
+                          lineHeight: 20,
                         }}
                       >
                         {m.text}
@@ -2164,13 +1940,13 @@ export function FarmScreen() {
                         paddingHorizontal: 11,
                         paddingVertical: 8,
                         borderWidth: 1,
-                        borderColor: "rgba(246,238,220,0.1)",
-                        backgroundColor: "rgba(246,238,220,0.05)",
+                        borderColor: "#DECFAF",
+                        backgroundColor: "#F2E7CF",
                       }}
                     >
                       <Text
                         style={{
-                          color: "rgba(246,238,220,0.5)",
+                          color: "#8A785E",
                           fontSize: 12,
                         }}
                       >
@@ -2186,13 +1962,13 @@ export function FarmScreen() {
                   style={{
                     paddingHorizontal: 14,
                     paddingBottom: 2,
-                    color: "rgba(246,238,220,0.32)",
+                    color: "#8A785E",
                     fontSize: 9.5,
                   }}
                 >
                   {apiKey
-                    ? "刚刚没连上，先用本地台词陪你"
-                    : "在设置里填好 Key，就能真正聊起来了"}
+                    ? "本轮由本地对白陪你，聊天仍可继续"
+                    : "当前使用本地对白，可在设置中开启 AI 聊天"}
                 </Text>
               ) : null}
 
@@ -2205,25 +1981,26 @@ export function FarmScreen() {
                   paddingTop: 8,
                   paddingBottom: 12,
                   borderTopWidth: 1,
-                  borderTopColor: "rgba(246,238,220,0.08)",
-                  backgroundColor: "#122019",
+                  borderTopColor: "#F1E5CC",
+                  backgroundColor: "#F0E5CC",
                 }}
               >
                 <TextInput
                   value={draft}
                   onChangeText={setDraft}
                   placeholder={`和${speakerName}聊天，或请他打水、浇地…`}
-                  placeholderTextColor="rgba(246,238,220,0.28)"
+                  placeholderTextColor="#9A896C"
                   style={{
+                    fontFamily: FARM_BODY_FONT,
                     flex: 1,
                     height: 42,
-                    borderRadius: 14,
+                    borderRadius: 3,
                     paddingHorizontal: 12,
-                    color: "#F6EEDC",
+                    color: "#59432E",
                     fontSize: 13,
-                    backgroundColor: "rgba(246,238,220,0.06)",
+                    backgroundColor: "#F5ECD8",
                     borderWidth: 1,
-                    borderColor: "rgba(246,238,220,0.12)",
+                    borderColor: "#DECFAF",
                   }}
                   maxLength={200}
                   returnKeyType="send"
@@ -2240,13 +2017,13 @@ export function FarmScreen() {
                   style={{
                     width: 42,
                     height: 42,
-                    borderRadius: 14,
+                    borderRadius: 3,
                     alignItems: "center",
                     justifyContent: "center",
                     backgroundColor:
                       !draft.trim() || chatBusy
                         ? "rgba(143,209,79,0.22)"
-                        : "#8FD14F",
+                        : "#A4B887",
                   }}
                 >
                   <Ionicons
@@ -2255,7 +2032,7 @@ export function FarmScreen() {
                     color={
                       !draft.trim() || chatBusy
                         ? "rgba(21,42,18,0.45)"
-                        : "#152A12"
+                        : "#435532"
                     }
                   />
                 </Pressable>

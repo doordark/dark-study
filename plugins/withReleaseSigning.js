@@ -28,6 +28,7 @@ const DEFAULTS = {
 const GRADLE_PROPS = {
   // 只打 arm64-v8a：真机无需其他 ABI，APK 直接减半
   reactNativeArchitectures: "arm64-v8a",
+  "android.enableMinifyInReleaseBuilds": "true",
   // 资源裁剪（移除未被引用的 drawable/布局/字符串）
   "android.enableShrinkResourcesInReleaseBuilds": "true",
   // 不使用 RN Image 的 GIF/WebP 解码（图片统一走 expo-image），省掉对应 native 库

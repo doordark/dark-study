@@ -1,6 +1,7 @@
-import { Ionicons } from "@expo/vector-icons";
+import { FarmPaper, FarmText as Text } from './FarmSkin';
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { useEffect, useRef, useState } from "react";
-import { Modal, Pressable, Text, View, useWindowDimensions } from "react-native";
+import { Modal, Pressable, View, useWindowDimensions } from "react-native";
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 
 import { CropSprite, FarmToolSprite } from "./CropSprite";
@@ -127,12 +128,13 @@ export function BugGame({ visible, onClose, onFinish }: BugGameProps) {
           style={{
             width: areaW + 24,
             borderRadius: 24,
-            backgroundColor: "#16261A",
+            backgroundColor: "#FAF2DF",
             borderWidth: 1,
             borderColor: "rgba(246,238,220,0.12)",
             overflow: "hidden",
           }}
         >
+      <FarmPaper theme="bugs" />
           {/* 顶部 */}
           <View
             style={{
@@ -144,9 +146,9 @@ export function BugGame({ visible, onClose, onFinish }: BugGameProps) {
             }}
           >
             <View style={{ flex: 1 }}>
-              <Text
+              <Text variant="title"
                 style={{
-                  color: "#F6EEDC",
+                  color: "#59432E",
                   fontSize: 14.5,
                   fontWeight: "800",
                   letterSpacing: 1,
@@ -156,7 +158,7 @@ export function BugGame({ visible, onClose, onFinish }: BugGameProps) {
               </Text>
               <Text
                 style={{
-                  color: "rgba(246,238,220,0.42)",
+                  color: "#8A785E",
                   fontSize: 9.5,
                   marginTop: 2,
                 }}
@@ -186,16 +188,16 @@ export function BugGame({ visible, onClose, onFinish }: BugGameProps) {
                 borderRadius: 12,
                 paddingHorizontal: 10,
                 paddingVertical: 7,
-                backgroundColor: "rgba(246,238,220,0.05)",
+                backgroundColor: "#EFE4CD",
                 borderWidth: 1,
                 borderColor: "rgba(246,238,220,0.08)",
               }}
             >
-              <Ionicons name="bug" size={13} color="#8FD14F" />
+              <Ionicons name="bug" size={13} color="#A4B887" />
               <Text
                 style={{
                   marginLeft: 6,
-                  color: "#E6DCC7",
+                  color: "#685338",
                   fontSize: 12,
                   fontWeight: "700",
                 }}
@@ -211,14 +213,14 @@ export function BugGame({ visible, onClose, onFinish }: BugGameProps) {
                 borderRadius: 12,
                 paddingHorizontal: 10,
                 paddingVertical: 7,
-                backgroundColor: "rgba(245,196,102,0.1)",
+                backgroundColor: "#EEE0BC",
                 borderWidth: 1,
                 borderColor: "rgba(245,196,102,0.24)",
               }}
             >
               <Text
                 style={{
-                  color: "#F5C466",
+                  color: "#926B35",
                   fontSize: 12,
                   fontWeight: "800",
                 }}
@@ -298,7 +300,7 @@ export function BugGame({ visible, onClose, onFinish }: BugGameProps) {
                 style={{
                   paddingVertical: 10,
                   textAlign: "center",
-                  color: "rgba(246,238,220,0.35)",
+                  color: "#8A785E",
                   fontSize: 9.5,
                 }}
               >
@@ -316,11 +318,11 @@ export function BugGame({ visible, onClose, onFinish }: BugGameProps) {
                   paddingVertical: 14,
                 }}
               >
-                <Ionicons name="checkmark-circle" size={30} color="#8FD14F" />
+                <Ionicons name="checkmark-circle" size={30} color="#A4B887" />
                 <Text
                   style={{
                     marginTop: 8,
-                    color: "#F6EEDC",
+                    color: "#59432E",
                     fontSize: 13,
                     fontWeight: "700",
                   }}
@@ -330,7 +332,7 @@ export function BugGame({ visible, onClose, onFinish }: BugGameProps) {
                 <Text
                   style={{
                     marginTop: 5,
-                    color: "rgba(246,238,220,0.55)",
+                    color: "#8A785E",
                     fontSize: 10.5,
                     textAlign: "center",
                   }}
@@ -348,12 +350,12 @@ export function BugGame({ visible, onClose, onFinish }: BugGameProps) {
                     borderRadius: 14,
                     borderWidth: 1,
                     borderColor: "rgba(246,238,220,0.14)",
-                    backgroundColor: "rgba(246,238,220,0.05)",
+                    backgroundColor: "#EFE4CD",
                   }}
                 >
                   <Text
                     style={{
-                      color: "rgba(246,238,220,0.7)",
+                      color: "#6B573E",
                       fontSize: 12,
                       fontWeight: "700",
                     }}
@@ -368,12 +370,12 @@ export function BugGame({ visible, onClose, onFinish }: BugGameProps) {
                     alignItems: "center",
                     paddingVertical: 10,
                     borderRadius: 14,
-                    backgroundColor: "#8FD14F",
+                    backgroundColor: "#A4B887",
                   }}
                 >
                   <Text
                     style={{
-                      color: "#152A12",
+                      color: "#435532",
                       fontSize: 12,
                       fontWeight: "800",
                     }}

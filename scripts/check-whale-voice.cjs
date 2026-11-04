@@ -33,10 +33,10 @@ async function httpChecks() {
   let fetcher = async () => response();
   const load = loader({}, { fetch: (...args) => fetcher(...args), setTimeout: (f, ms) => setTimeout(f, ms === 12000 ? 5 : ms) });
   const { generateFishSpeech } = load("./services/fishAudio");
-  const args = { text: "今天也一起加油吧。", mood: "tender", referenceId: "test-voice", apiKey: "fake-test-key", signal: new AbortController().signal };
+  const args = { text: "今天也一起加油吧。", mood: "normal", referenceId: "test-voice", apiKey: "fake-test-key", signal: new AbortController().signal };
   fetcher = async (url, options) => {
     assert.equal(url, "https://api.fish.audio/v1/tts");
-    assert.equal(options.headers.model, "s2.1-pro-free");
+    assert.equal(options.headers.model, "s2.1-pro");
     const body = JSON.parse(options.body);
     assert.equal(body.reference_id, "test-voice");
     assert.equal(body.text, "[relaxed][soft tone] 今天也一起加油吧。");
@@ -87,11 +87,11 @@ async function cacheChecks() {
   const files = fakeFileSystem();
   const load = loader({ "expo-file-system": files.module });
   const cache = load("./services/whaleVoiceCache");
-  const id = cache.voiceCacheIdentity("大爹，我在呢。", "tender", "voice-a");
-  const changed = cache.voiceCacheIdentity("阿顾，我在呢。", "tender", "voice-a");
+  const id = cache.voiceCacheIdentity("大爹，我在呢。", "normal", "voice-a");
+  const changed = cache.voiceCacheIdentity("阿顾，我在呢。", "normal", "voice-a");
   assert.notEqual(cache.voiceCacheKey(id), cache.voiceCacheKey(changed));
   assert.notEqual(cache.voiceCacheKey(id), cache.voiceCacheKey(cache.voiceCacheIdentity("大爹，我在呢。", "happy", "voice-a")));
-  assert.notEqual(cache.voiceCacheKey(id), cache.voiceCacheKey(cache.voiceCacheIdentity("大爹，我在呢。", "tender", "voice-b")));
+  assert.notEqual(cache.voiceCacheKey(id), cache.voiceCacheKey(cache.voiceCacheIdentity("大爹，我在呢。", "normal", "voice-b")));
   assert.equal(await cache.getCachedVoice(id), null);
   const uri = await cache.putCachedVoice(id, mp3);
   assert.equal(await cache.getCachedVoice(id), uri);
@@ -115,14 +115,13 @@ async function cacheChecks() {
 
 async function orchestratorChecks() {
   const cache = new Map(), plays = [], spoken = [], requests = [];
-  const state = { on: true, engine: "auto", referenceId: "voice-a", hydrate: async () => {} };
+  const state = { on: true, hydrate: async () => {} };
   const app = { currentState: "active" };
+  const env = { EXPO_PUBLIC_FISH_API_KEY: "fake-test-key" };
   let generate = async (args) => { requests.push(args); return mp3; };
-  let key = "fake-test-key";
   const load = loader({
     "react-native": { AppState: app },
     "@/store/useWhaleVoice": { useWhaleVoice: { getState: () => state } },
-    "./whaleVoiceCredentials": { getFishApiKey: async () => key },
     "./whaleVoiceCache": {
       voiceCacheIdentity: (...args) => JSON.stringify(args),
       getCachedVoice: async (id) => cache.get(id) ?? null,
@@ -131,16 +130,16 @@ async function orchestratorChecks() {
     },
     "./whaleAudioPlayer": { whaleAudioPlayer: { stop() {}, dispose() {}, async play(uri, signal, started) { if (!signal.aborted) { plays.push(uri); started(); } } } },
     "./whaleSystemVoice": { stopSystemVoice: async () => {}, speakSystem: (text) => spoken.push(text) },
-  });
+  }, { process: { env } });
   // Retain real FishAudioError class, replace only synthesis transport.
   const fish = load("./services/fishAudio");
   fish.generateFishSpeech = (args) => generate(args);
   const voice = load("./services/whaleVoice");
   assert.equal((await voice.speakWhale("大爹，我在呢。")).engine, "fish");
-  key = null;
+  delete env.EXPO_PUBLIC_FISH_API_KEY;
   assert.equal((await voice.speakWhale("大爹，我在呢。")).engine, "cache");
   assert.equal(requests.length, 1, "cache hit needs neither key nor HTTP");
-  key = "fake-test-key";
+  env.EXPO_PUBLIC_FISH_API_KEY = "fake-test-key";
   assert.equal((await voice.speakWhale("阿顾，我在呢。")).engine, "fish");
   assert.ok(plays.at(-1).includes("阿顾"));
   let resolveA, signalA;
@@ -156,10 +155,10 @@ async function orchestratorChecks() {
   assert.equal((await pending).engine, "cancelled");
   assert.equal(plays.length, before, "late A must never play after B");
   generate = async () => { throw new fish.FishAudioError("Fish 验证失败 / API Key 无效"); };
-  const preview = await voice.speakWhale("大爹，我在呢。", { preview: true });
-  assert.equal(preview.engine, "system");
-  assert.match(preview.error, /Key 无效/);
-  assert.equal(spoken.at(-1), "大爹，我在呢。");
+  const fallback = await voice.speakWhale("新台词验证失败。");
+  assert.equal(fallback.engine, "system");
+  assert.match(fallback.error, /Key 无效/);
+  assert.equal(spoken.at(-1), "新台词验证失败。");
   for (const status of ["background", "inactive"]) {
     app.currentState = status;
     const count = plays.length + spoken.length;
@@ -173,7 +172,7 @@ async function orchestratorChecks() {
   const cleaned = text.toSpeakable("（尾巴一摆）[angry][whisper] 阿顾！(๑•̀ㅂ•́)و✧ https://example.com");
   assert.equal(cleaned, "阿顾！");
   assert.ok(text.fishSpeakable("学习。".repeat(200)).length <= 220);
-  console.log("PASS shared voice: miss/hit, custom name, stale A/B race, preview key check, fallback, lifecycle guard, mute, injection cleaning");
+  console.log("PASS shared voice: miss/hit, custom name, stale A/B race, error fallback, lifecycle guard, mute, injection cleaning");
 }
 
 async function playerChecks() {

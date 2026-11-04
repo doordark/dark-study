@@ -229,7 +229,7 @@ export async function chatJson<T>(
       lastError = e;
       // chat() 内部已对 5xx/429/网络抖动做过退避重试，这类错误换模式再试也没用；
       // 只有 400（可能是 json_object 不被支持）和解析失败才值得降级重试
-      if (e instanceof DeepSeekError && e.status !== undefined && e.status !== 400) break;
+      if (e instanceof DeepSeekError && e.status !== 400) break;
     }
   }
 

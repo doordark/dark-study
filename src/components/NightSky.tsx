@@ -12,6 +12,7 @@ import Animated, {
   cancelAnimation,
   runOnJS,
   useAnimatedStyle,
+  useAnimatedProps,
   useSharedValue,
   useReducedMotion,
   withDelay,
@@ -20,7 +21,7 @@ import Animated, {
   withSpring,
   withTiming,
 } from "react-native-reanimated";
-import Svg, { Circle, Path } from "react-native-svg";
+import Svg, { Circle, ClipPath, Defs, G, Path, RadialGradient, Stop } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AtlasSprite } from "@/components/AtlasSprite";
@@ -232,6 +233,15 @@ function ShootingStar({
 /*  月亮：拾满七颗星后会稍微长大、光晕更亮                                     */
 /* -------------------------------------------------------------------------- */
 
+const MOON_NAMES = ["新月", "娥眉月", "上弦月", "盈凸月", "满月", "亏凸月", "下弦月", "残月"];
+
+function moonPhase(date: Date) {
+  // Mean synodic month, anchored at the 2024-04-08 new moon.
+  const localNoon = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12);
+  const cycles = (localNoon.getTime() - Date.UTC(2024, 3, 8, 18, 21)) / (29.530588853 * 86400000);
+  return Math.round((cycles - Math.floor(cycles)) * 8) % 8;
+}
+
 function Moon({
   lit,
   top,
@@ -265,6 +275,17 @@ function Moon({
   }));
   const haloStyle = useAnimatedStyle(() => ({ opacity: halo.value }));
 
+  const [phase, setPhase] = useState(() => moonPhase(new Date()));
+  useEffect(() => {
+    const refresh = () => setPhase(moonPhase(new Date()));
+    const timer = setInterval(refresh, 30000);
+    return () => clearInterval(timer);
+  }, []);
+  const waxing = phase < 4;
+  const curve = Math.cos(phase * Math.PI / 4) * 36;
+  const terminator = Math.abs(curve) < 0.01 ? "L50 86" :
+    `A${Math.abs(curve)} 36 0 0 ${(waxing ? curve < 0 : curve > 0) ? 0 : 1} 50 86`;
+  const phasePath = `M50 14 ${terminator} A36 36 0 0 ${waxing ? 0 : 1} 50 14 Z`;
   const bright = 0.35 + (lit / TOTAL_STARS) * 0.65;
 
   return (
@@ -283,30 +304,34 @@ function Moon({
         growStyle,
       ]}
     >
-      <Animated.View
-        style={[
-          {
-            position: "absolute",
-            width: size * 2.1,
-            height: size * 2.1,
-            borderRadius: size,
-            backgroundColor: `rgba(253,230,138,${0.05 * bright})`,
-          },
-          haloStyle,
-        ]}
-      />
-      <View
-        style={{
-          position: "absolute",
-          width: size * 1.55,
-          height: size * 1.55,
-          borderRadius: size,
-          backgroundColor: `rgba(253,230,138,${0.08 * bright})`,
-        }}
-      />
-      <Animated.View style={{ opacity: 0.68 + bright * 0.32 }}>
-        <AtlasSprite source={NIGHT_SPRITES} columns={3} rows={2} column={2} row={0} width={size} />
+      <Animated.View pointerEvents="none" style={[{ position: "absolute", width: size * 3, height: size * 3 }, haloStyle]}>
+        <Svg width="100%" height="100%" viewBox="0 0 100 100">
+          <Defs><RadialGradient id="moonAtmosphere" cx="50%" cy="50%" r="50%">
+            <Stop offset="0" stopColor="#E9D2B2" stopOpacity={0.23 * bright} />
+            <Stop offset="0.38" stopColor="#B6A0CE" stopOpacity={0.11 * bright} />
+            <Stop offset="1" stopColor="#8F9BCD" stopOpacity={0} />
+          </RadialGradient></Defs>
+          <Circle cx="50" cy="50" r="50" fill="url(#moonAtmosphere)" />
+        </Svg>
       </Animated.View>
+      <Svg width={size} height={size} viewBox="0 0 100 100" accessibilityLabel={MOON_NAMES[phase]}>
+        <Defs>
+          <RadialGradient id="nightMoonLight" cx="35%" cy="30%" r="75%">
+            <Stop offset="0" stopColor="#FFF1CE" />
+            <Stop offset="1" stopColor="#AD91A0" />
+          </RadialGradient>
+          <ClipPath id="nightMoonPhase"><Path d={phasePath} /></ClipPath>
+        </Defs>
+        <Circle cx="50" cy="50" r="36" fill="#222941" stroke="#A7A4C3" strokeOpacity={0.24} />
+        {phase !== 0 ? (
+          <G clipPath={phase === 4 ? undefined : "url(#nightMoonPhase)"} opacity={0.78 + bright * 0.22}>
+            <Circle cx="50" cy="50" r="36" fill="url(#nightMoonLight)" />
+            <Path d="M21 39 Q32 24 46 31 T62 49 Q59 62 45 60 T31 68 Q20 58 21 39Z M61 64 Q74 53 83 63 Q77 78 65 82 Q57 77 61 64Z" fill="#817994" opacity={0.24} />
+            <Circle cx="37" cy="49" r="7" fill="#9E8293" opacity={0.25} />
+            <Circle cx="65" cy="38" r="4" fill="#9E8293" opacity={0.3} />
+          </G>
+        ) : null}
+      </Svg>
     </Animated.View>
   );
 }
@@ -401,18 +426,16 @@ function CollectStar({
         {Array.from({ length: 6 }, (_, i) => <BurstDot key={i} dx={Math.cos(i * Math.PI / 3) * 38} dy={Math.sin(i * Math.PI / 3) * 38} delay={i * 12} />)}
       </View> : null}
       <Animated.View style={[{ alignItems: "center", justifyContent: "center" }, wrap]}>
-      <Animated.View
-        style={[
-          {
-            position: "absolute",
-            width: box * 1.7,
-            height: box * 1.7,
-            borderRadius: box,
-            backgroundColor: "rgba(253,224,71,0.10)",
-          },
-          halo,
-        ]}
-      />
+      <Animated.View pointerEvents="none" style={[{ position: "absolute", width: box * 2, height: box * 2 }, halo]}>
+        <Svg width="100%" height="100%" viewBox="0 0 100 100">
+          <Defs><RadialGradient id={"starGlow" + Math.round(x * 100)} cx="50%" cy="50%" r="50%">
+            <Stop offset="0" stopColor="#FFE7AB" stopOpacity={0.32} />
+            <Stop offset="0.38" stopColor="#D4BCB5" stopOpacity={0.11} />
+            <Stop offset="1" stopColor="#A8B7EB" stopOpacity={0} />
+          </RadialGradient></Defs>
+          <Circle cx="50" cy="50" r="50" fill={"url(#starGlow" + Math.round(x * 100) + ")"} />
+        </Svg>
+      </Animated.View>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="拾起这颗星星"
@@ -510,6 +533,48 @@ function Burst({ cx, cy }: { cx: number; cy: number }) {
   );
 }
 
+const AnimatedPath = Animated.createAnimatedComponent(Path);
+
+function ConstellationReveal({ points, width, height }: {
+  points: { x: number; y: number }[];
+  width: number;
+  height: number;
+}) {
+  const motion = useContext(NightMotion);
+  const progress = useSharedValue(0);
+  const path = points.map(({ x, y }, index) => `${index ? "L" : "M"}${x} ${y}`).join(" ");
+  const length = points.reduce((total, point, index) => {
+    const previous = points[index - 1];
+    return previous ? total + Math.hypot(point.x - previous.x, point.y - previous.y) : total;
+  }, 0);
+  useEffect(() => {
+    progress.value = motion
+      ? withTiming(1, { duration: 1650, easing: Easing.inOut(Easing.cubic) })
+      : 1;
+    return () => cancelAnimation(progress);
+  }, [motion, progress]);
+  const trace = useAnimatedProps(() => ({ strokeDashoffset: length * (1 - progress.value) }));
+  const flash = useAnimatedProps(() => ({
+    opacity: Math.sin(progress.value * Math.PI) * 0.65,
+    strokeDashoffset: length * (1 - progress.value),
+  }));
+
+  return (
+    <Svg pointerEvents="none" width={width} height={height} style={{ position: "absolute" }}>
+      <AnimatedPath d={path} fill="none" stroke="#A89AFF" strokeWidth={8} strokeLinecap="round"
+        strokeDasharray={[length, length]} animatedProps={flash} />
+      <AnimatedPath d={path} fill="none" stroke="#FCE5BB" strokeWidth={1.8} strokeLinecap="round"
+        strokeDasharray={[length, length]} animatedProps={trace} />
+      {points.map(({ x, y }) => (
+        <G key={x}>
+          <Circle cx={x} cy={y} r={8} fill="#BAA6FF" opacity={0.19} />
+          <Circle cx={x} cy={y} r={3.4} fill="#FFF2CE" />
+        </G>
+      ))}
+    </Svg>
+  );
+}
+
 /* -------------------------------------------------------------------------- */
 /*  猫头鹰：拾满星后从月边探出头，会眨眼                                        */
 /* -------------------------------------------------------------------------- */
@@ -521,15 +586,18 @@ function OwlBody() {
   useEffect(() => {
     if (!motion) { bob.value = 0; blink.value = 1; return; }
     bob.value = withRepeat(withTiming(-3, { duration: 1900, easing: Easing.inOut(Easing.sin) }), -1, true);
-    blink.value = withRepeat(withSequence(withDelay(2800, withTiming(0, { duration: 70 })), withDelay(100, withTiming(1, { duration: 100 }))), -1, false);
+    blink.value = withRepeat(withSequence(withDelay(2800, withTiming(0, { duration: 0 })), withDelay(105, withTiming(1, { duration: 0 }))), -1, false);
     return () => { cancelAnimation(blink); cancelAnimation(bob); };
   }, [blink, bob, motion]);
   const body = useAnimatedStyle(() => ({ transform: [{ translateY: bob.value }] }));
-  const open = useAnimatedStyle(() => ({ opacity: blink.value }));
   const closed = useAnimatedStyle(() => ({ opacity: 1 - blink.value }));
   return <Animated.View style={[{ width: 80, height: 86 }, body]}>
-    <Animated.View style={[{ position: "absolute" }, open]}><AtlasSprite source={NIGHT_SPRITES} columns={3} rows={2} column={0} row={1} width={80} height={86} /></Animated.View>
-    <Animated.View style={[{ position: "absolute" }, closed]}><AtlasSprite source={NIGHT_SPRITES} columns={3} rows={2} column={1} row={1} width={80} height={86} /></Animated.View>
+    <AtlasSprite source={NIGHT_SPRITES} columns={3} rows={2} column={0} row={1} width={80} height={86} />
+    <Animated.View pointerEvents="none" style={[{ position: "absolute", left: 20, top: 21, width: 40, height: 17, borderRadius: 7, overflow: "hidden" }, closed]}>
+      <View style={{ position: "absolute", left: -20, top: -21 }}>
+        <AtlasSprite source={NIGHT_SPRITES} columns={3} rows={2} column={1} row={1} width={80} height={86} />
+      </View>
+    </Animated.View>
   </Animated.View>;
 }
 
@@ -633,15 +701,6 @@ export function NightSky({
   const [owlHint, setOwlHint] = useState("");
   const owlTaps = useRef(0);
   const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // 看星星的时候顺手把农场贴图解好码：进农场直接命中已解码的位图，
-  // 转场那一下不用再临时解码两张 1080 宽的图，就不会卡一下
-  const [farmWarm, setFarmWarm] = useState(false);
-  useEffect(() => {
-    if (!onEnterFarm) return;
-    const t = setTimeout(() => setFarmWarm(true), 420);
-    return () => clearTimeout(t);
-  }, [onEnterFarm]);
 
   useEffect(
     () => () => {
@@ -766,36 +825,6 @@ export function NightSky({
     >
       <StatusBar style="light" />
 
-      {/* 农场贴图预热：铺满屏幕但完全透明，只为提前解码，不参与交互。
-          尺寸必须和农场场景一致（场景高 = 屏宽 × 330/200），否则 Fresco 会按
-          另一个尺寸重新解码，预热就白做了 */}
-      {farmWarm ? (
-        <View
-          pointerEvents="none"
-          style={{
-            position: "absolute",
-            left: 0,
-            top: 0,
-            width: w,
-            height: (w * 330) / 200,
-            opacity: 0,
-          }}
-        >
-          <Image
-            source={require("../../assets/images/farm-day-v2.png")}
-            style={{ width: w, height: (w * 330) / 200 }}
-            resizeMode="stretch"
-            fadeDuration={0}
-          />
-          <Image
-            source={require("../../assets/images/farm-night-v2.png")}
-            style={{ width: w, height: (w * 330) / 200 }}
-            resizeMode="stretch"
-            fadeDuration={0}
-          />
-        </View>
-      ) : null}
-
       <LinearGradient
         colors={["#03060F", "#071022", "#0E1A33"]}
         start={{ x: 0.2, y: 0 }}
@@ -876,7 +905,7 @@ export function NightSky({
       </View>
 
       <Svg pointerEvents="none" width={w} height={h} style={{ position: "absolute" }}>
-        {constellation.length > 1 ? <Path
+        {!done && constellation.length > 1 ? <Path
           d={constellation.map((s, i) => `${i ? "L" : "M"}${s.x * w} ${starY(s.y)}`).join(" ")}
           stroke="rgba(186,211,255,0.35)" strokeWidth="1" strokeDasharray="3 6" fill="none"
         /> : null}
@@ -902,7 +931,12 @@ export function NightSky({
         />
       ))}
 
-      {done ? <Burst cx={moonCx} cy={moonCy} /> : null}
+      {done ? (
+        <>
+          <ConstellationReveal points={SPOTS.map((spot) => ({ x: spot.x * w, y: starY(spot.y) }))} width={w} height={h} />
+          <Burst cx={moonCx} cy={moonCy} />
+        </>
+      ) : null}
       {showOwl ? (
         <>
           {/* 猫头鹰身下的一圈暖光，提示它是可以互动的 */}
@@ -956,6 +990,7 @@ export function NightSky({
         <View
           style={{
             borderRadius: 26,
+            overflow: "hidden",
             borderWidth: 1,
             borderColor: "rgba(194,204,255,0.18)",
             backgroundColor: "rgba(12,17,36,0.94)",
@@ -963,9 +998,11 @@ export function NightSky({
             paddingVertical: compact ? 12 : 16,
           }}
         >
-          <LinearGradient pointerEvents="none" colors={["rgba(151,126,225,0.13)", "rgba(85,154,207,0.02)"]}
-            start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-            style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, borderRadius: 26 }} />
+          <Image pointerEvents="none" source={require("../../assets/images/night-letter-bg.png")}
+            resizeMode="cover" fadeDuration={0}
+            style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, width: "100%", height: "100%" }} />
+          <LinearGradient pointerEvents="none" colors={["rgba(7,12,30,0.24)", "rgba(7,12,30,0.38)"]}
+            style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0 }} />
           <View className="flex-row items-center justify-between">
             <Text
               style={{

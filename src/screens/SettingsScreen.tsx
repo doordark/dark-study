@@ -1,4 +1,5 @@
-import { Ionicons } from "@expo/vector-icons";
+import { useWhalePersona } from "@/store/useWhalePersona";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import DateTimePicker, {
   DateTimePickerAndroid,
 } from "@react-native-community/datetimepicker";
@@ -19,11 +20,14 @@ import {
 } from "react-native";
 import Animated, { FadeInDown, FadeOutDown } from "react-native-reanimated";
 
+import { CourseReminderSettings } from "@/components/CourseReminderSettings";
+import { CourseWidgetSettings } from "@/components/CourseWidgetSettings";
 import { Backdrop } from "@/components/Backdrop";
 import {
   GlassContainer,
   GlassTargetProvider,
 } from "@/components/GlassContainer";
+import { GlassMaterialPreview } from "@/components/GlassMaterialPreview";
 import { pickImageForBackground } from "@/services/fileImport";
 import {
   currentVersion,
@@ -48,10 +52,10 @@ const APPEARANCES = [
   { key: "dark", label: "深色", icon: "moon" },
 ] as const;
 
-/** 卡片材质：扁平实心 / 玻璃磨砂 */
+/** 卡片材质：扁平 / 柔光玻璃 */
 const MATERIALS = [
-  { key: "flat", label: "扁平", hint: "简洁 · 清晰", icon: "square-outline" },
-  { key: "glass", label: "雾面玻璃", hint: "通透 · 柔光", icon: "water-outline" },
+  { key: "glass", label: "柔光玻璃", hint: "透出背景纹理" },
+  { key: "flat", label: "扁平", hint: "简洁清晰" },
 ] as const;
 
 function DateRow({
@@ -299,6 +303,7 @@ function PrimaryBtn({
 }
 
 export function SettingsScreen() {
+  const personaName = useWhalePersona((s) => s.persona.name);
   const apiKey = useSettings((s) => s.apiKey);
   const setApiKey = useSettings((s) => s.setApiKey);
   const appearance = useSettings((s) => s.appearance);
@@ -452,6 +457,9 @@ export function SettingsScreen() {
             </Text>
           </Animated.View>
 
+          <CourseReminderSettings />
+          <CourseWidgetSettings />
+
           {/* 外观 */}
           <Animated.View entering={FadeInDown.delay(60).springify()}>
             <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
@@ -502,7 +510,7 @@ export function SettingsScreen() {
                   材质
                 </Text>
                 <Text className="mb-3 text-[11px] leading-4 text-slate-500 dark:text-slate-400">
-                  柔和透色与细腻亮边，让背景自然融入卡片。旧版 Android 自动使用磨砂效果。
+                  柔光玻璃保留底下的纹理，沿边缘透出一圈细光。
                 </Text>
                 <View className="flex-row gap-x-2.5">
                   {MATERIALS.map((m) => (
@@ -512,31 +520,18 @@ export function SettingsScreen() {
                       accessibilityRole="radio"
                       accessibilityLabel={`${m.label}，${m.hint}`}
                       accessibilityState={{ checked: material === m.key }}
-                      className={`flex-1 rounded-[20px] border p-1 ${
-                        material === m.key
-                          ? "border-sky-400/60 bg-sky-400/10"
-                          : "border-slate-300/40 dark:border-white/10"
-                      }`}
+                      className="flex-1"
                     >
-                      <GlassContainer material={m.key} radius={16} borderOpacity={0.18}>
-                        <View className="items-center px-2 py-4">
-                          <Ionicons
-                            name={m.icon}
-                            size={18}
-                            color={material === m.key ? "#38BDF8" : "#94A3B8"}
-                          />
-                          <Text
-                            className={`mt-1 text-[11px] font-semibold ${
-                              material === m.key
-                                ? "text-sky-600 dark:text-sky-300"
-                                : "text-slate-500 dark:text-slate-400"
-                            }`}
-                          >
-                            {m.label}
-                          </Text>
-                          <Text className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">{m.hint}</Text>
-                        </View>
-                      </GlassContainer>
+                      <View className={`rounded-[20px] border-2 p-0.5 ${
+                        material === m.key ? "border-sky-500 dark:border-sky-400" : "border-transparent"
+                      }`}>
+                        <GlassMaterialPreview material={m.key} />
+                      </View>
+                      <Text className={`mt-1.5 text-center text-[12px] font-semibold ${
+                        material === m.key ? "text-sky-700 dark:text-sky-300" : "text-slate-700 dark:text-slate-300"
+                      }`}>
+                        {m.label}
+                      </Text>
                     </Pressable>
                   ))}
                 </View>
@@ -796,7 +791,7 @@ export function SettingsScreen() {
             <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
               <Pressable accessibilityRole="button" onPress={() => router.push("/whale-settings")} className="min-h-20 flex-row items-center px-4 py-4">
                 <View className="mr-3 h-11 w-11 items-center justify-center rounded-2xl bg-sky-400/20"><Ionicons name="options" size={22} color="#38BDF8" /></View>
-                <View className="flex-1"><Text className="text-[14px] font-bold text-slate-800 dark:text-white">大肥鱼 · 人设与记忆</Text><Text className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">拖动性格滑条、改写人设，整理她记住的事</Text></View>
+                <View className="flex-1"><Text className="text-[14px] font-bold text-slate-800 dark:text-white">{personaName} · 人设与记忆</Text><Text className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">拖动性格滑条、改写人设，整理她记住的事</Text></View>
                 <Ionicons name="chevron-forward" size={17} color="#94A3B8" />
               </Pressable>
             </GlassContainer>

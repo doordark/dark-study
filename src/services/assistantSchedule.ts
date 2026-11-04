@@ -61,6 +61,9 @@ export function applyScheduleAction(
   schedule: Schedule,
 ): string {
   const store = useStore.getState();
+  if (store.activeScheduleId !== schedule.id) return "课表已切换，请在当前课表重新确认操作";
+  // Earlier operations in this batch may have edited or deleted a course.
+  schedule = store.schedules.find((s) => s.id === schedule.id) ?? schedule;
   switch (action.type) {
     case "add": {
       const draft = normalizeDraft(action.course, schedule);
@@ -80,6 +83,7 @@ export function applyScheduleAction(
       if (!target)
         return `未找到课程「${action.courseName ?? action.courseId}」`;
       const patch: Partial<Course> = { ...action.patch };
+      delete patch.id;
       if (patch.startPeriod != null || patch.endPeriod != null) {
         const clamped = clampPeriods(
           schedule.periods,
@@ -125,5 +129,12 @@ export function applyScheduleActions(
   actions: ScheduleAction[],
   schedule: Schedule,
 ): string[] {
-  return actions.map((a) => applyScheduleAction(a, schedule));
+  if (useStore.getState().activeScheduleId !== schedule.id) {
+    return actions.map(() => "课表已切换，请在当前课表重新确认操作");
+  }
+  return actions.map((action) => {
+    const state = useStore.getState();
+    const current = state.schedules.find((s) => s.id === state.activeScheduleId);
+    return current ? applyScheduleAction(action, current) : "当前课表不存在，请重新选择课表";
+  });
 }

@@ -11,6 +11,10 @@ import { migratingStorage } from "@/utils/storage";
 
 interface SettingsState {
   apiKey: string;
+  reminderEnabled: boolean;
+  reminderMinutes: number;
+  reminderCount: number;
+  setReminder: (patch: Partial<Pick<SettingsState, "reminderEnabled" | "reminderMinutes" | "reminderCount">>) => void;
   /** 主题：跟随系统 / 浅色 / 深色 */
   appearance: "system" | "light" | "dark";
   /** 卡片材质：扁平实心 / 玻璃（毛玻璃模糊） */
@@ -38,6 +42,10 @@ export const useSettings = create<SettingsState>()(
       // 默认为空：API Key 由用户在「设置」中填写，只存本地，
       // 永远不要把真实 Key 写进代码或提交到仓库
       apiKey: "",
+      reminderEnabled: false,
+      reminderMinutes: 15,
+      reminderCount: 1,
+      setReminder: (patch) => set(patch),
       appearance: "system",
       material: "flat",
       backgroundImage: null,

@@ -11,7 +11,8 @@ const APK_MIME = "application/vnd.android.package-archive";
 const FLAG_GRANT_READ = 1;
 
 const APK_DIR = "update-apk";
-const APK_NAME = "dark-study-update.apk";
+let downloadId = 0;
+const activeDownloads = new Set<string>();
 
 export interface ReleaseInfo {
   /** 语义化版本（无 v 前缀），如 "1.1.0" */
@@ -113,33 +114,54 @@ const apkDirUri = () => {
   return `${cache}${APK_DIR}`;
 };
 
-const apkFileUri = () => `${apkDirUri()}/${APK_NAME}`;
-
 /** 下载到本地缓存，返回 promise 与取消句柄；onProgress 以 0..1 上报 */
 export function createApkDownload(
   url: string,
   onProgress: (p: number) => void,
 ): { promise: Promise<string>; cancel: () => void } {
   let task: FileSystem.DownloadResumable | null = null;
+  let cancelled = false;
+  const destination = `${apkDirUri()}/update-${Date.now()}-${++downloadId}.apk`;
+  activeDownloads.add(destination);
+  const checkCancelled = () => {
+    if (cancelled) throw new Error("下载已取消");
+  };
 
   const promise = (async () => {
-    // Android 上 createDownloadResumable 不会自动建目录，目录不存在会直接抛
-    // IOException，这里必须先确保缓存子目录存在
-    await FileSystem.makeDirectoryAsync(apkDirUri(), {
-      intermediates: true,
-    }).catch(() => {});
-    task = FileSystem.createDownloadResumable(url, apkFileUri(), {}, (p) => {
-      const total = p.totalBytesExpectedToWrite;
-      if (total > 0) onProgress(Math.min(1, p.totalBytesWritten / total));
-    });
-    const r = await task.downloadAsync();
-    if (!r?.uri) throw new Error("下载未完成");
-    return r.uri;
+    try {
+      // Android 上 createDownloadResumable 不会自动建目录。
+      await FileSystem.makeDirectoryAsync(apkDirUri(), { intermediates: true });
+      checkCancelled();
+      // Keep only the current download; exclude other requests still cancelling.
+      const files = await FileSystem.readDirectoryAsync(apkDirUri());
+      await Promise.all(files.filter((name) => /^(?:dark-study-update|update-\d+-\d+)\.apk$/.test(name))
+        .map((name) => `${apkDirUri()}/${name}`)
+        .filter((uri) => !activeDownloads.has(uri))
+        .map((uri) => FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {})));
+      checkCancelled();
+      task = FileSystem.createDownloadResumable(url, destination, {}, (p) => {
+        const total = p.totalBytesExpectedToWrite;
+        if (!cancelled && total > 0) onProgress(Math.min(1, p.totalBytesWritten / total));
+      });
+      const r = await task.downloadAsync();
+      checkCancelled();
+      if (!r?.uri || r.status !== 200) throw new Error(`下载未完成（HTTP ${r?.status ?? "未知"}）`);
+      const info = await FileSystem.getInfoAsync(r.uri);
+      checkCancelled();
+      if (!info.exists || info.isDirectory || info.size <= 0) throw new Error("安装包为空，请重新下载");
+      return r.uri;
+    } catch (error) {
+      await FileSystem.deleteAsync(destination, { idempotent: true }).catch(() => {});
+      throw error;
+    } finally {
+      activeDownloads.delete(destination);
+    }
   })();
 
   return {
     promise,
     cancel: () => {
+      cancelled = true;
       task?.cancelAsync().catch(() => {});
     },
   };
@@ -149,7 +171,7 @@ export function createApkDownload(
 export async function verifyApk(fileUri: string): Promise<boolean> {
   try {
     const info = await FileSystem.getInfoAsync(fileUri);
-    return info.exists;
+    return info.exists && !info.isDirectory && info.size > 0;
   } catch {
     return false;
   }

@@ -33,6 +33,12 @@ export function useFarmResidents(options: FarmResidentsOptions) {
   const [ready, setReady] = useState(false);
   const [foreground, setForeground] = useState(() => !AppState.currentState || AppState.currentState === 'active');
   const [notice, setNotice] = useState('');
+  const [dialogueHint, setDialogueHint] = useState('');
+  useEffect(() => {
+    if (!dialogueHint) return;
+    const timer = setTimeout(() => setDialogueHint(''), 8000);
+    return () => clearTimeout(timer);
+  }, [dialogueHint]);
   const reducedMotion = useReducedMotion();
   const blocked = useRef(false);
   const budget = useRef(usage);
@@ -63,6 +69,7 @@ export function useFarmResidents(options: FarmResidentsOptions) {
   }, []);
   const abortAll = useCallback(() => {
     epoch.current++;
+    setTimeout(() => { if (alive.current) setDialogueHint(''); }, 0);
     requests.current.forEach(c => c.abort());
     requests.current.clear();
   }, []);
@@ -188,11 +195,13 @@ export function useFarmResidents(options: FarmResidentsOptions) {
         timeoutMs: 12000,
         maxTokens: Math.min(1024, 180 + event.rounds * 130)
       });
-      if (token === epoch.current && alive.current) engine.supplyConversation(event.id, readLifeReply(raw, event.pair, event.rounds), true, now());
+      if (token === epoch.current && alive.current && !controller.signal.aborted) {
+        const lines = readLifeReply(raw, event.pair, event.rounds);
+        if (engine.supplyConversation(event.id, lines, true, now())) setDialogueHint(lines ? '' : '本轮使用本地对白');
+      }
     } catch {
-      if (!controller.signal.aborted && alive.current) {
-        engine.supplyConversation(event.id, null, false, now());
-        setNotice('这轮改用本地对白；失败的联网请求也计入今日额度。');
+      if (!controller.signal.aborted && alive.current && token === epoch.current) {
+        if (engine.supplyConversation(event.id, null, false, now())) setDialogueHint('本轮使用本地对白');
       }
     } finally {
       requests.current.delete(event.id);
@@ -262,7 +271,7 @@ export function useFarmResidents(options: FarmResidentsOptions) {
     settings,
     history,
     usage,
-    notice,
+    notice: notice || dialogueHint,
     ready,
     awake,
     autonomous: options.autonomous,

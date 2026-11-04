@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import React from "react";
 import { ActivityIndicator, Pressable, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -13,6 +13,7 @@ export interface ChatInputBarProps {
   placeholder?: string;
   /** 覆盖底部安全区（键盘弹出时由页面传入，避免重复留白） */
   bottomInset?: number;
+  whaleTheme?: boolean;
 }
 
 /**
@@ -26,6 +27,7 @@ export function ChatInputBar({
   busy = false,
   placeholder = "例如：把周四的课和周五的换一下…",
   bottomInset,
+  whaleTheme = false,
 }: ChatInputBarProps) {
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme !== "light";
@@ -40,6 +42,7 @@ export function ChatInputBar({
         paddingHorizontal: 16,
         paddingTop: 8,
         paddingBottom: padBottom,
+        backgroundColor: whaleTheme ? (isDark ? "rgba(14,31,55,0.42)" : "rgba(229,241,255,0.60)") : undefined,
       }}
     >
       <GlassContainer
@@ -52,6 +55,8 @@ export function ChatInputBar({
           minHeight: 46,
           paddingLeft: 16,
           paddingRight: 5,
+          borderWidth: whaleTheme ? 1 : 0,
+          borderColor: whaleTheme ? "rgba(140,190,225,0.48)" : "transparent",
         }}
       >
         <TextInput
@@ -87,7 +92,7 @@ export function ChatInputBar({
             alignItems: "center",
             justifyContent: "center",
             backgroundColor: canSend
-              ? "#38BDF8"
+              ? (whaleTheme ? "#658BC4" : "#38BDF8")
               : isDark
                 ? "rgba(255,255,255,0.07)"
                 : "rgba(148,163,184,0.18)",

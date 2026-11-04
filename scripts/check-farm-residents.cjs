@@ -41,6 +41,12 @@ encounter.tick(at,{autonomous:true});assert.equal(encounter.history.length,1);as
 advance(encounter,at,20);assert.equal(encounter.history[0].lines.length,4);assert(encounter.history[0].endedAt);assert.equal(encounter.residents.door.conversationPartner,null);
 encounter.tick(at+21000,{autonomous:true});assert.equal(encounter.history.length,1,'cooldown prevents repeat chatter');
 
+// Conversation approaches keep sprites apart; the current speaker owns the only bubble.
+const space=load('src/utils/farmResidentSpace.ts');
+assert(Math.hypot(encounter.residents.door.logicalPosition.x-encounter.residents.gu.logicalPosition.x, encounter.residents.door.logicalPosition.y-encounter.residents.gu.logicalPosition.y)>=30);
+const occupied=[{x:95,y:247}];const free=space.freeResidentSpot({x:95,y:247},occupied);assert(free);assert(Math.hypot(free.x-95,free.y-247)>=23);
+for(const width of [240,320,400]){const cards=[];for(let i=0;i<3;i++){const r=space.placeFarmSpeech({x:width-3,y:5},width,500,200,95,cards);if(r){assert(r.left>=0&&r.top>=0&&r.left+r.width<=width&&r.top+r.height<=500);for(const o of cards)assert(r.left+r.width<=o.left||o.left+o.width<=r.left||r.top+r.height<=o.top||o.top+o.height<=r.top);cards.push(r)}}assert(cards.length>=2)}
+
 // Inert/autonomy-reduced modes never produce walking or network effects.
 for(const options of [{roaming:false,chatter:false},{roaming:true,chatter:false,nightActivity:0}]){const e=engine();e.configure({...settings,...options},at);e.tick(at+60000,{night:true,reducedMotion:true});assert(e.snapshot().every(r=>!r.motion));assert.equal(e.drainEffects().length,0);}
 

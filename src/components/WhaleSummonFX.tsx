@@ -1,4 +1,6 @@
 import { useEffect, useRef } from "react";
+import { useWhalePersona } from "@/store/useWhalePersona";
+import { renderPersonaText } from "@/utils/whalePersona";
 import { StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import Animated, {
   cancelAnimation,
@@ -69,9 +71,7 @@ function Character({ p, mode, reduced }: Timeline & { reduced: boolean }) {
       transform: [
         { translateX: leaving ? travel * -14 : travel * 22 },
         { translateY: travel * travel * 278 + float * -5 },
-        { scaleX: interpolate(t, leaving ? [0, 0.52, 0.62, 0.88] : [0, 0.28, 0.40, 0.48], leaving ? [1, 1, 1.04, 0.74] : [0.76, 0.90, 1.04, 1], Extrapolation.CLAMP) },
-        { scaleY: interpolate(t, leaving ? [0, 0.52, 0.62, 0.88] : [0, 0.28, 0.40, 0.48], leaving ? [1, 1, 0.96, 0.9] : [0.9, 1.06, 0.97, 1], Extrapolation.CLAMP) },
-        { rotate: `${leaving ? travel * -9 : travel * 12}deg` },
+        { rotate: `${leaving ? travel * -3 : travel * 3}deg` },
       ],
     };
   });
@@ -146,6 +146,7 @@ function WhaleTransition({ mode, onDone }: { mode: Mode; onDone: () => void }) {
   const p = useSharedValue(0);
   const reduced = useReducedMotion();
   const { width, height } = useWindowDimensions();
+  const persona = useWhalePersona((s) => s.persona);
   const duration = reduced ? 240 : mode === "summon" ? 2600 : 2100;
   const sceneScale = Math.min(1, Math.max(0.4, (width - 24) / 320), Math.max(0.4, (height - 32) / 460));
 
@@ -176,8 +177,8 @@ function WhaleTransition({ mode, onDone }: { mode: Mode; onDone: () => void }) {
       </>}
       <Animated.View style={[styles.caption, caption]}>
         <Text style={styles.eyebrow}>{mode === "summon" ? "✦ 鲸鱼空间 · 开 ✦" : "✦ 暂时潜水中 ✦"}</Text>
-        <Text style={styles.title}>{mode === "summon" ? "喊我就来！" : "一会儿见，大爹"}</Text>
-        <Text style={styles.subtitle}>{mode === "summon" ? "大肥鱼浮出水面，向你挥了挥手" : "先回水里歇一会，想我了就喊我"}</Text>
+        <Text style={styles.title}>{mode === "summon" ? "喊我就来！" : renderPersonaText("一会儿见，{{user}}", persona)}</Text>
+        <Text style={styles.subtitle}>{mode === "summon" ? renderPersonaText("{{char}}浮出水面，向你挥了挥手", persona) : "先回水里歇一会，想我了就喊我"}</Text>
       </Animated.View>
     </View>
   </Animated.View>;

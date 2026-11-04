@@ -1,3 +1,4 @@
+import { conversationSpots, freeResidentSpot } from './farmResidentSpace';
 import { RESIDENT_PLACEMENTS, WAYPOINTS, type FarmPoint, type WaypointId } from '@/constants/farmMap';
 import { farmSegmentClear, nearestFarmWaypoint, safeFarmPoint, waypointFarmRoute } from './farmNavigation';
 import { DEFAULT_LIFE, RESIDENT_IDS, localConversation, normalizeLifeSettings, type LifeSettings, type ResidentId, type ResidentConversation, type ResidentLine } from './farmLife';
@@ -56,6 +57,7 @@ interface PlayingConversation {
   nextAt: number;
   waiting: boolean;
   deadline: number;
+  arranging: boolean;
 }
 export const LOCATION_WAYPOINTS: Record<FarmLocation, WaypointId> = {
   pond: 'pond',
@@ -248,8 +250,17 @@ export class FarmResidentEngine {
       }
     }
   }
-  private move(r: ResidentModel, to: FarmPoint, at: number, state: ResidentState = 'walking') {
-    const points = waypointFarmRoute(r.logicalPosition, to);
+  private move(r: ResidentModel, to: FarmPoint, at: number, state: ResidentState = 'walking', direct = false) {
+    if (!direct && !r.conversationPartner) {
+      const others = Object.values(this.residents).filter(o => o.id !== r.id);
+      const spot = freeResidentSpot(safeFarmPoint(to), others.flatMap(o => [o.logicalPosition, ...(o.destination ? [o.destination] : [])]));
+      if (!spot) {
+        if (r.task) { this.cancelTask(r, at); this.bubble(r, '这里有点挤，等空些再去吧。', at); }
+        r.nextDecisionAt = at + 4000; return;
+      }
+      to = spot;
+    }
+    const points = direct && farmSegmentClear(r.logicalPosition, to) ? [to] : waypointFarmRoute(r.logicalPosition, to);
     r.destination = safeFarmPoint(to);
     r.targetWaypoint = nearestFarmWaypoint(safeFarmPoint(to));
     if (!points.length) {
@@ -280,6 +291,7 @@ export class FarmResidentEngine {
     r.destination = null;
     if (r.targetWaypoint) r.currentWaypoint = r.targetWaypoint;
     r.targetWaypoint = null;
+    if (r.conversationPartner) { r.state = 'talking'; return; }
     if (r.task && r.task.action.type !== 'talk_to') {
       r.task = {
         ...r.task,
@@ -292,11 +304,32 @@ export class FarmResidentEngine {
       r.nextDecisionAt = at + this.settings.activitySeconds * 1000;
     }
   }
+  private yieldUntil = new Map<ResidentId, number>();
   private advancePositions(at: number) {
-    for (const r of Object.values(this.residents)) if (r.motion) {
+    const actors = Object.values(this.residents);
+    for (const r of actors) if (r.motion) {
       const step = motionPosition(r.motion, at);
       r.logicalPosition = step.position;
       if (step.done) this.arrive(r, at);
+    }
+    // Look ahead once per scheduler tick. Task walkers get priority, then a stable ID order.
+    for (const r of actors) if (r.motion && !r.conversationPartner && at >= (this.yieldUntil.get(r.id) ?? 0)) {
+      const ahead = motionPosition(r.motion, at + 650).position;
+      const other = actors.find(o => o.id !== r.id && o.conversationPartner !== r.id &&
+        distance(ahead, o.motion ? motionPosition(o.motion, at + 650).position : o.logicalPosition) < 19 &&
+        (!o.motion || (!r.task && !!o.task) || (!!r.task === !!o.task && actors.indexOf(o) < actors.indexOf(r))));
+      if (other) {
+        this.yieldUntil.set(r.id, at + 2500);
+        const side = freeResidentSpot(ahead, actors.filter(o => o !== r).map(o => o.logicalPosition), 21);
+        const destination = r.destination;
+        if (side && farmSegmentClear(r.logicalPosition, side) && distance(side, r.logicalPosition) > 3 && destination) {
+          const rest = waypointFarmRoute(side, destination);
+          if (rest.length) r.motion = { ...r.motion, id: ++this.sequence, from: { ...r.logicalPosition }, points: [side, ...rest], startedAt: at };
+        } else {
+          const rest = remainingResidentMotion(r.motion, at);
+          r.motion = { ...r.motion, id: ++this.sequence, from: rest.start, points: rest.steps.map(s => s.point), startedAt: at + 500 };
+        }
+      }
     }
   }
   private cancelTask(r: ResidentModel, at: number) {
@@ -404,6 +437,13 @@ export class FarmResidentEngine {
     };
   }
   private startConversation(pair: [ResidentId, ResidentId], source: ResidentConversation['source'], at: number) {
+    const [a, b] = pair.map(p => this.residents[p]);
+    const slots = conversationSpots(a.logicalPosition, b.logicalPosition,
+      Object.values(this.residents).filter(r => !pair.includes(r.id)).flatMap(r => [r.logicalPosition, ...(r.destination ? [r.destination] : [])]));
+    if (!slots) {
+      if (source === 'player_command') { this.cancelTask(a, at); this.bubble(a, '这里有点挤，换个空些的地方聊吧。', at); }
+      return null;
+    }
     const id = `conversation-${at}-${++this.sequence}`;
     const planned = localConversation(pair, this.settings.rounds, this.sequence);
     const record: ResidentConversation = {
@@ -422,11 +462,11 @@ export class FarmResidentEngine {
       index: 0,
       nextAt: at + 500,
       waiting,
-      deadline: at + 15000
+      deadline: at + 15000,
+      arranging: true
     });
     this.history = [...this.history, record].slice(-40);
     this.historyRevision++;
-    const [a, b] = pair.map(p => this.residents[p]);
     for (const [r, other] of [[a, b], [b, a]]) {
       r.motion = null;
       r.targetWaypoint = null;
@@ -439,6 +479,8 @@ export class FarmResidentEngine {
         phase: 'conversation'
       };
     }
+    this.move(a, slots[0], at, 'walking', true);
+    this.move(b, slots[1], at, 'walking', true);
     this.pairs.set(pairKey(...pair), at);
     if (waiting) this.effects.push({
       type: 'conversation',
@@ -527,6 +569,15 @@ export class FarmResidentEngine {
     if (this.pausedAt !== null) return;
     this.advancePositions(at);
     for (const c of [...this.conversations.values()]) {
+      if (c.arranging) {
+        if (c.record.participants.some(id => this.residents[id].motion)) continue;
+        c.arranging = false;
+        c.nextAt = Math.max(c.nextAt, at + 300);
+        const [a, b] = c.record.participants.map(id => this.residents[id]);
+        a.state = b.state = 'talking';
+        a.face = b.logicalPosition.x >= a.logicalPosition.x ? 1 : -1;
+        b.face = a.face === 1 ? -1 : 1;
+      }
       if (c.waiting) {
         if (at >= c.deadline) {
           c.waiting = false;
@@ -544,6 +595,7 @@ export class FarmResidentEngine {
       };
       c.record.lines.push(line);
       this.historyRevision++;
+      for (const id of c.record.participants) this.residents[id].bubble = null;
       this.bubble(this.residents[line.speaker], line.text, at);
       c.nextAt = at + Math.max(2200, line.text.length * 95);
     }

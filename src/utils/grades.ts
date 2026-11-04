@@ -202,7 +202,8 @@ export function normalizeGradeInput(input: {
 
   const gpaRaw = Number(input.gpa);
   const hasGpa =
-    input.gpa != null && Number.isFinite(gpaRaw) && gpaRaw >= 0 && gpaRaw <= 5;
+    input.gpa != null && String(input.gpa).trim() !== "" &&
+    Number.isFinite(gpaRaw) && gpaRaw >= 0 && gpaRaw <= 5;
   // 分数与绩点至少提供一项
   if (!score && !hasGpa) return null;
 

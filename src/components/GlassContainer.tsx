@@ -4,13 +4,15 @@ import React, {
   type RefObject,
   createContext,
   useContext,
+  useId,
 } from "react";
 import { Platform, StyleSheet, View as RNView, type ViewProps } from "react-native";
+import { requireNativeView, requireOptionalNativeModule } from "expo";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import { useColorScheme } from "nativewind";
+import Svg, { Defs, LinearGradient as SvgGradient, Rect, Stop } from "react-native-svg";
 
-import { BACKGROUND_PRESETS, resolveTint } from "@/constants/backgrounds";
 import { useReducedTransparency } from "@/hooks/useReducedTransparency";
 import { useSettings } from "@/store/useSettings";
 
@@ -34,10 +36,17 @@ export function useGlassTarget(): GlassTargetRef | undefined {
 }
 
 const DEPTH = {
-  surface: { dark: 36, light: 48, wash: 0.025 },
-  floating: { dark: 56, light: 64, wash: 0.045 },
-  sheet: { dark: 68, light: 76, wash: 0.018 },
+  surface: { blur: 18, dark: [0.15, 0.24], light: [0.20, 0.10] },
+  floating: { blur: 25, dark: [0.18, 0.30], light: [0.27, 0.14] },
+  sheet: { blur: 42, dark: [0.55, 0.68], light: [0.67, 0.55] },
 } as const;
+
+const isAndroid = Platform.OS === "android";
+const androidVersion = Number(Platform.Version);
+const refractionModule = "DarkStudyGlassRefraction";
+const RefractionView = isAndroid && androidVersion >= 33 && requireOptionalNativeModule(refractionModule)
+  ? requireNativeView<PropsWithChildren<ViewProps & { radius: number }>>(refractionModule)
+  : null;
 
 export interface GlassContainerProps extends ViewProps {
   intensity?: number;
@@ -60,7 +69,7 @@ export interface GlassContainerProps extends ViewProps {
   children?: React.ReactNode;
 }
 
-/** Frosted substrate, tinted transmission, directional light and a fine inner bevel. */
+/** A lightly blurred backdrop with a directional glass edge. */
 export function GlassContainer({
   intensity,
   radius = 28,
@@ -80,28 +89,36 @@ export function GlassContainer({
 }: GlassContainerProps) {
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme !== "light";
+  const darkGlass = tint === "dark" || (tint !== "light" && isDark);
   const selectedMaterial = useSettings((s) => s.material);
-  const backgroundTint = useSettings((s) => s.backgroundTint);
   const reduceTransparency = useReducedTransparency();
   const glass = (material ?? selectedMaterial) === "glass" && !reduceTransparency;
   const glassTarget = useGlassTarget();
   const depth = DEPTH[variant];
-  const accent = BACKGROUND_PRESETS[resolveTint(backgroundTint)].glowRgb[0];
+  const rimId = useId().replace(/[^\w-]/g, "");
   // Dialogs on Android live in a separate native window without a valid target.
-  const canBlur = glass && (Platform.OS !== "android" ||
-    (Number(Platform.Version) >= 31 && !!glassTarget));
+  const canBlur = glass && (!isAndroid || (androidVersion >= 31 && !!glassTarget));
   const edge = Math.max(0, Math.min(1, borderOpacity));
-  const transmitted = isDark
-    ? variant === "sheet" ? "rgba(13,20,36,0.62)" : "rgba(13,20,36,0.20)"
-    : variant === "sheet" ? "rgba(255,255,255,0.70)" : "rgba(255,255,255,0.25)";
-  const fallback = isDark ? "rgba(19,28,45,0.88)" : "rgba(247,250,255,0.94)";
+  const fallback = darkGlass ? "rgba(19,28,45,0.88)" : "rgba(247,250,255,0.94)";
   const flat = reduceTransparency
     ? isDark ? "#111928" : "#FFFFFF"
     : isDark ? "rgba(17,25,40,0.78)" : "rgba(255,255,255,0.92)";
-  const surface = glass ? canBlur ? transmitted : fallback : flat;
+  const wash = darkGlass ? depth.dark : depth.light;
+  const innerRadius = Math.max(0, radius - 1);
+  const rim = Math.min(0.9, edge * (darkGlass ? 2.5 : 4));
   const border = glass
-    ? `rgba(255,255,255,${Math.min(1, edge * (isDark ? 1.25 : 3.2))})`
+    ? "transparent"
     : isDark ? `rgba(255,255,255,${edge * 0.5})` : `rgba(148,163,184,${edge})`;
+  const blur = canBlur ? (
+    <BlurView
+      style={StyleSheet.absoluteFill}
+      blurMethod="dimezisBlurViewSdk31Plus"
+      blurReductionFactor={5}
+      blurTarget={glassTarget}
+      intensity={Math.max(1, Math.min(100, intensity == null ? depth.blur : intensity * 0.5))}
+      tint={isAndroid && !darkGlass ? "default" : tint ?? (darkGlass ? "dark" : "light")}
+    />
+  ) : null;
 
   return (
     <RNView
@@ -115,12 +132,12 @@ export function GlassContainer({
           borderWidth: 1,
           borderColor: border,
           boxShadow: glass && variant !== "surface" &&
-            (Platform.OS !== "android" || Number(Platform.Version) >= 28)
-            ? [{ offsetX: 0, offsetY: variant === "sheet" ? 4 : 8,
-                blurRadius: 24, color: isDark ? "rgba(0,4,16,0.28)" : "rgba(30,64,100,0.10)" }]
+            (!isAndroid || androidVersion >= 28)
+            ? [{ offsetX: 0, offsetY: variant === "sheet" ? 4 : 6,
+                blurRadius: 18, color: darkGlass ? "rgba(0,4,16,0.28)" : "rgba(30,64,100,0.14)" }]
             : undefined,
           // No Android elevation: it causes opaque rectangles during transforms.
-          backgroundColor: glass ? "transparent" : overlayClassName && !reduceTransparency ? undefined : surface,
+          backgroundColor: glass ? "transparent" : overlayClassName && !reduceTransparency ? undefined : flat,
         },
         style,
       ]}
@@ -131,41 +148,21 @@ export function GlassContainer({
           accessible={false}
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
-          style={StyleSheet.absoluteFill}
+          style={[StyleSheet.absoluteFill, !canBlur && { backgroundColor: fallback }]}
         >
-          {canBlur ? (
-            <BlurView
-              style={StyleSheet.absoluteFill}
-              blurMethod="dimezisBlurViewSdk31Plus"
-              blurReductionFactor={4}
-              blurTarget={glassTarget}
-              intensity={Math.max(1, Math.min(100, intensity ?? (isDark ? depth.dark : depth.light)))}
-              tint={tint ?? (isDark ? "dark" : "light")}
-            />
-          ) : null}
-          <RNView style={[StyleSheet.absoluteFill, { backgroundColor: surface }]} />
+          {blur && RefractionView ? (
+            <RefractionView style={StyleSheet.absoluteFill} radius={innerRadius}>
+              {blur}
+            </RefractionView>
+          ) : blur}
           <LinearGradient
-            colors={[
-              `rgba(${accent},${depth.wash})`,
-              "rgba(255,255,255,0)",
-              isDark ? "rgba(3,7,18,0.14)" : "rgba(148,163,184,0.06)",
-            ]}
-            locations={[0, 0.48, 1]}
+            colors={darkGlass
+              ? [`rgba(45,60,85,${wash[0]})`, `rgba(8,14,29,${wash[1]})`]
+              : [`rgba(255,255,255,${wash[0]})`, `rgba(235,245,255,${wash[1]})`]}
             start={{ x: 0, y: 0 }}
-            end={{ x: 0.9, y: 1 }}
+            end={{ x: 0.85, y: 1 }}
             style={StyleSheet.absoluteFill}
           />
-          {highlight ? (
-            <LinearGradient
-              colors={isDark
-                ? ["rgba(255,255,255,0.105)", "rgba(255,255,255,0.015)", "rgba(255,255,255,0)"]
-                : ["rgba(255,255,255,0.50)", "rgba(255,255,255,0.10)", "rgba(255,255,255,0)"]}
-              locations={[0, 0.32, 0.74]}
-              start={{ x: 0.05, y: 0 }}
-              end={{ x: 0.8, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
-          ) : null}
         </RNView>
       ) : null}
       {overlayClassName && !reduceTransparency ? (
@@ -173,34 +170,18 @@ export function GlassContainer({
       ) : null}
       {children}
       {glass && edge > 0 ? (
-        <RNView pointerEvents="none" style={StyleSheet.absoluteFill}>
-          <RNView style={[
-            styles.bevel,
-            {
-              borderRadius: Math.max(0, radius - 2),
-              borderTopColor: highlight ? `rgba(255,255,255,${Math.min(1, edge * (isDark ? 0.8 : 1.3))})` : "transparent",
-              borderBottomColor: isDark ? "rgba(2,6,23,0.24)" : "rgba(71,85,105,0.07)",
-            },
-          ]} />
-          {highlight ? (
-            <LinearGradient
-              colors={["rgba(255,255,255,0)", `rgba(255,255,255,${Math.min(0.85, edge * 2.6)})`, "rgba(255,255,255,0)"]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={{ position: "absolute", top: 0, left: radius * 0.6, right: radius * 0.6, height: 1 }}
-            />
-          ) : null}
-        </RNView>
+        <Svg pointerEvents="none" style={StyleSheet.absoluteFill} width="100%" height="100%">
+          <Defs>
+            <SvgGradient id={rimId} x1="0%" y1="0%" x2="75%" y2="100%">
+              <Stop offset="0" stopColor="#F5FCFF" stopOpacity={rim * (highlight ? 1 : 0.35)} />
+              <Stop offset="0.43" stopColor="#CBE5FD" stopOpacity={rim * 0.22} />
+              <Stop offset="0.72" stopColor="#557294" stopOpacity={rim * 0.20} />
+              <Stop offset="1" stopColor="#E7F6FF" stopOpacity={rim * (highlight ? 0.58 : 0.28)} />
+            </SvgGradient>
+          </Defs>
+          <Rect width="100%" height="100%" rx={innerRadius} fill="none" stroke={`url(#${rimId})`} strokeWidth={1.6} />
+        </Svg>
       ) : null}
     </RNView>
   );
 }
-
-const styles = StyleSheet.create({
-  bevel: {
-    ...StyleSheet.absoluteFill,
-    margin: 1,
-    borderWidth: 1,
-    borderColor: "transparent",
-  },
-});
