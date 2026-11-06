@@ -279,6 +279,7 @@ export interface ResidentConversation {
   source: 'encounter' | 'scheduled/local' | 'player_command';
   sharedTopic?: SharedFarmTopic;
   discussion?: FarmDiscussion;
+  requestOutcome?: string;
   activity?: 'project' | 'rest';
   online: boolean;
   lines: ResidentLine[];
@@ -334,13 +335,14 @@ export function restoreConversations(raw: unknown): ResidentConversation[] {
       const sharedTopic = participants.length >= 2 && lines.length >= 2 ? restoreSharedTopic(v.sharedTopic, participants) : undefined;
       const rawDiscussion = object(v.discussion);
       const kind = rawDiscussion.kind;
-      const discussion: FarmDiscussion | undefined = kind === 'discussion' || kind === 'debate' || kind === 'followup' ? {
+      const discussion: FarmDiscussion | undefined = kind === 'discussion' || kind === 'debate' || kind === 'followup' || kind === 'request' ? {
         kind,
         ...(typeof rawDiscussion.topic === 'string' && Object.hasOwn(FARM_TOPICS, rawDiscussion.topic) ? { topic: rawDiscussion.topic as FarmTopicId } : {}),
         ...(typeof rawDiscussion.question === 'string' && v.source === 'player_command' ? { question: rawDiscussion.question.slice(0, 160) } : {}),
         ...(isResidentId(rawDiscussion.relayedBy) ? { relayedBy: rawDiscussion.relayedBy } : {}),
       } : undefined;
       if (participants.length && participants.length <= 3 && lines.length) result.push({
+        ...(kind === 'request' && typeof v.requestOutcome === 'string' ? { requestOutcome: v.requestOutcome.slice(0, 240) } : {}),
         ...(discussion ? { discussion } : {}),
         ...(v.source === 'scheduled/local' && (v.activity === 'project' || v.activity === 'rest') ? { activity: v.activity } : {}),
         ...(sharedTopic ? { sharedTopic } : {}),

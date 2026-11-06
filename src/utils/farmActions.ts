@@ -8,6 +8,7 @@ export type NpcAction = FarmDiscussionAction | {
 } | {
   type: 'talk_to';
   target: ResidentId;
+  purpose?: string;
 } | {
   type: 'visit';
   target: FarmLocation;
@@ -20,6 +21,10 @@ export function validateNpcAction(raw: unknown): NpcAction | null {
       Array.isArray(v.guests) && v.guests.length <= 2 && v.guests.every(isResidentId) && new Set(v.guests).size === v.guests.length) {
     return { type: 'discuss', question: v.question.trim(), guests: v.guests };
   }
+  if (v.type === 'talk_to' && isResidentId(v.target) && Object.keys(v).every(k => ['type', 'target', 'purpose'].includes(k)) &&
+      (v.purpose === undefined || typeof v.purpose === 'string' && v.purpose.trim().length >= 2 && v.purpose.length <= 160)) return {
+    type: 'talk_to', target: v.target, ...(typeof v.purpose === 'string' ? { purpose: v.purpose.trim() } : {}),
+  };
   if (Object.keys(v).some(k => !['type', 'target'].includes(k))) return null;
   if (['fetch_water', 'water_crops', 'rest', 'go_home'].includes(v.type as string) && Object.keys(v).length === 1) return {
     type: v.type as 'fetch_water' | 'water_crops' | 'rest' | 'go_home'
@@ -60,7 +65,27 @@ export function parseNpcReply(raw: string, social = false): {
   }
 }
 export const DISCUSSION_PROMPT = '请家人一起讨论：';
-const mentionsResident = (text: string, id: ResidentId) => text.includes(RESIDENTS[id].name) || (id === 'weigang' && text.includes('唯纲'));
+const mentionsResident = (text: string, id: ResidentId) => text.includes(RESIDENTS[id].name) || (id === 'weigang' && /唯纲|伟刚|伟纲/.test(text));
+
+/** Keep the player's actual instruction, never a model-invented reason. */
+export function bindTalkPurpose(action: NpcAction, text: string, previous: readonly { player: string }[] = []): NpcAction {
+  if (action.type !== 'talk_to') return action;
+  if (!/质问|问问|问一下|询问|问清|为什么|骂|欺负|道歉|转告|告诉|带话|传话|解释|劝|安慰|这件事|刚才的事|说.*事|聊.*事/.test(text)) return { type: 'talk_to', target: action.target };
+  const prior = previous.at(-1)?.player;
+  const needsContext = !/骂|欺负/.test(text) && /质问|这件事|刚才|为什么|问清|[他她]/.test(text);
+  const context = needsContext && prior ? prior.slice(0, 60) + '；' : '';
+  return { type: 'talk_to', target: action.target, purpose: (context + text).slice(0, 160) };
+}
+
+export function playerTalkCommand(text: string, who: ResidentId, previous: readonly { player: string }[] = []): NpcAction | null {
+  const direct = localNpcCommand(text, who);
+  if (direct) return bindTalkPurpose(direct, text, previous);
+  // Resolve "go ask him about it" only from an unambiguous, recent player statement.
+  if (!/^(?:请|麻烦|帮我|你|替我|去|能不能)/.test(text) || !/(?:质问|问问|问清|转告|告诉|带话|劝|安慰)(?:一下)?[他她]/.test(text) || /不要|不用|别|不需要|如果|假如/.test(text)) return null;
+  const prior = previous.at(-1)?.player ?? '';
+  const targets = RESIDENT_IDS.filter(id => id !== who && mentionsResident(prior, id));
+  return targets.length === 1 ? bindTalkPurpose({ type: 'talk_to', target: targets[0] }, text, previous) : null;
+}
 
 /** An invitation must be explicit, and guest names only count in the invitation. */
 export function playerDiscussionCommand(text: string, who: ResidentId): FarmDiscussionAction | null {
@@ -75,22 +100,22 @@ export function playerDiscussionCommand(text: string, who: ResidentId): FarmDisc
 }
 /** Explicit local commands only. Never run this on malformed model output. */
 export function localNpcCommand(text: string, who: ResidentId): NpcAction | null {
-  if (/不要|不用|别|不需要/.test(text)) return null;
+  if (/^(?:如果|假如|要是|他说|她说|[“「"'])/.test(text.trim()) || /(?:不要|不用|别|不需要)(?:你|帮我|去|找|让|叫|替我|质问|问|告诉|转告|打|浇|回|休息)/.test(text)) return null;
   const discussion = playerDiscussionCommand(text, who);
   if (discussion) return discussion;
-  if (/怎么|如何|如果|假如|要是|会.*吗/.test(text) && !/帮|请|麻烦/.test(text)) return null;
+  if (/怎么|如何|如果|假如|要是|会.*吗/.test(text) && !/帮|请|麻烦|(?:你|替我|去).*(?:问|质问|转告|告诉)/.test(text)) return null;
   if (/打[点些一壶]*水|取水|装[点些满]*水/.test(text)) return {
     type: 'fetch_water'
   };
   if (/浇[一下点些水地菜苗田]|帮.*浇/.test(text)) return {
     type: 'water_crops'
   };
-  if (/找.*聊|和.*聊|跟.*说/.test(text)) {
+  if (/找.*聊|和.*聊|跟.*说|(?:去|帮我|请|麻烦|让|替我).*(?:质问|问问|问一下|问清|询问|转告|告诉|带话|传话|解释|劝|安慰)|(?:质问|转告|告诉|问问|询问)/.test(text)) {
     const target = RESIDENT_IDS.find(id => id !== who && (mentionsResident(text, id) || text.includes(id)));
-    if (target) return {
+    if (target) return bindTalkPurpose({
       type: 'talk_to',
       target
-    };
+    }, text);
   }
   if (/回家|回屋|回小屋|回鸡窝/.test(text)) return {
     type: 'go_home'

@@ -2,6 +2,7 @@ import { finiteCount, realDate } from './farmProgress';
 
 export const CROP_KINDS = ['radish', 'wheat', 'carrot', 'berry', 'tomato', 'corn', 'pumpkin', 'grape', 'star', 'moonroot', 'dewberry', 'sunmelon'] as const;
 export type CropKind = typeof CROP_KINDS[number];
+export const CROP_LABELS: Record<CropKind, string> = { radish: '萝卜', wheat: '小麦', carrot: '胡萝卜', berry: '蓝莓', tomato: '番茄', corn: '玉米', pumpkin: '南瓜', grape: '葡萄', star: '星星果', moonroot: '月光萝卜', dewberry: '露珠莓', sunmelon: '日辉蜜瓜' };
 export const SEASON_NAMES = ['春', '夏', '秋', '冬'];
 const minute = 60_000;
 export const CROP_META: Record<CropKind, { price: number; sell: number; growMs: number; level: number; seasons: number[]; yield: number; rounds: number }> = {

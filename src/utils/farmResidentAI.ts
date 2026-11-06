@@ -3,7 +3,7 @@ import { RESIDENT_PLACEMENTS, WAYPOINTS, type FarmPoint, type WaypointId } from 
 import { farmSegmentClear, nearestFarmWaypoint, safeFarmPoint, waypointFarmRoute } from './farmNavigation';
 import { DEFAULT_LIFE, LONG_TALK_MAX, RESIDENTS, RESIDENT_IDS, SHORT_TALK_MAX, TALK_BATCH_ROUNDS, lifeDate, localConversation, normalizeLifeSettings, sharedTopicExchange, type FarmTopicId, type SharedFarmTopic, type LifeSettings, type ResidentId, type ResidentConversation, type ResidentLine } from './farmLife';
 import { validateNpcAction, type NpcAction, type FarmLocation } from './farmActions';
-import { discussionLines, type FarmDiscussion, type ResidentMood } from './farmDiscussion';
+import { discussionLines, requestBatchOnTopic, type FarmDiscussion, type ResidentMood } from './farmDiscussion';
 import { publicFarmTopic } from './farmMemory';
 import { RESIDENT_PROJECTS, readResidentIntent, type ResidentIntent } from './farmAgency';
 export type ResidentState = 'idle' | 'wandering' | 'walking' | 'talking' | 'working' | 'going_home';
@@ -378,12 +378,23 @@ export class FarmResidentEngine {
       }
     }
   }
+  private recordInterruptedRequest(r: ResidentModel, at: number) {
+    if (r.task?.discussion?.kind !== 'request' || r.task.phase === 'reserved' || r.task.phase === 'conversation') return;
+    this.history = [...this.history, {
+      id: r.task.id + '-interrupted', participants: [r.id, ...(r.task.action.type === 'talk_to' ? [r.task.action.target] : [])],
+      discussion: r.task.discussion, startedAt: r.task.createdAt, endedAt: at, source: 'player_command' as const,
+      online: false, lines: [{ speaker: r.id, text: '这次带话还没有完成。', at }],
+      requestOutcome: '这次带话途中中断了，还没有问到对方，不能当作已经办好。',
+    }].slice(-40);
+    this.historyRevision++;
+  }
   private cancelTask(r: ResidentModel, at: number) {
     if (r.conversationPartner) {
       const partner = this.residents[r.conversationPartner];
       const conversation = [...this.conversations.values()].find(c => c.record.participants.includes(r.id));
       if (conversation) this.finishConversation(conversation.record.id, at);
       else if (r.task && partner.task?.id === r.task.id) {
+        this.recordInterruptedRequest(partner, at);
         partner.task = null;
         partner.conversationPartner = null;
         partner.conversationSize = 0;
@@ -391,6 +402,7 @@ export class FarmResidentEngine {
         partner.motion = null;
       }
     }
+    this.recordInterruptedRequest(r, at);
     r.task = null;
     r.conversationPartner = null;
     r.conversationSize = 0;
@@ -451,6 +463,7 @@ export class FarmResidentEngine {
       createdAt: at,
       expiresAt: at + 90000,
       phase: 'walking',
+      ...(action.type === 'talk_to' && action.purpose ? { discussion: { kind: 'request' as const, question: action.purpose } } : {}),
       workUntil: 0
     };
     r.lastInteractionAt = at;
@@ -519,8 +532,9 @@ export class FarmResidentEngine {
       return null;
     }
     const id = `conversation-${at}-${++this.sequence}`;
-    const natural = participants.length === 2 && this.settings.longTalks && this.settings.naturalTalks;
-    const rounds = participants.length === 3 ? 3 : natural ? LONG_TALK_MAX : Math.max(discussion?.kind === 'debate' ? 3 : 2, this.settings.rounds);
+    const requested = discussion?.kind === 'request';
+    const natural = !requested && participants.length === 2 && this.settings.longTalks && this.settings.naturalTalks;
+    const rounds = requested ? 3 : participants.length === 3 ? 3 : natural ? LONG_TALK_MAX : Math.max(discussion?.kind === 'debate' ? 3 : 2, this.settings.rounds);
     const candidates = this.settings.shareTopics && participants.length === 2 && !discussion ? pair.flatMap(from => (this.publicTopics[from] ?? []).map(topic => ({ from, topic }))) : [];
     const candidate = candidates.find(({ from, topic }) => !this.history.some(record =>
       record.participants.includes(pair[0]) && record.participants.includes(pair[1]) &&
@@ -535,7 +549,7 @@ export class FarmResidentEngine {
       { speaker: first, text: '我今天有点提不起劲。能陪我坐一小会儿吗？' },
       { speaker: second, text: second === 'chicken' ? '咕，我就蹲你旁边。' : '好。我陪着你。你想说话的时候再说。' },
     ] : [];
-    const planned = [...opener, ...moodLines, ...local, ...(participants.length === 2 ? localConversation(pair, rounds, this.sequence) : [])].slice(0, rounds * participants.length);
+    const planned = [...opener, ...moodLines, ...local, ...(!requested && participants.length === 2 ? localConversation(pair, rounds, this.sequence) : [])].slice(0, rounds * participants.length);
     if (rounds > SHORT_TALK_MAX) this.closeLocalTalk(pair, planned);
     const record: ResidentConversation = {
       id,
@@ -557,7 +571,7 @@ export class FarmResidentEngine {
       deadline: 0,
       arranging: true,
       network,
-      batchEnd: opener.length + moodLines.length,
+      batchEnd: requested ? 2 : opener.length + moodLines.length,
       natural,
       sharedTopic,
     };
@@ -594,6 +608,7 @@ export class FarmResidentEngine {
   }
   private continueConversationLocally(c: PlayingConversation) {
     c.network = false;
+    if (c.record.discussion?.kind === 'request') return;
     if (c.record.online && c.record.participants.length === 2 && c.index < c.planned.length) {
       const pair = c.record.participants as [ResidentId, ResidentId];
       const rounds = (c.planned.length - c.index) / 2;
@@ -628,7 +643,7 @@ export class FarmResidentEngine {
     const expected = c.batchEnd - c.index;
     const ending = c.natural && done;
     const speakers = c.record.participants.length;
-    if (lines && (lines.length === expected || ending && lines.length >= Math.min(2 * speakers, expected) && lines.length < expected && lines.length % speakers === 0) &&
+    if (lines && (c.record.discussion?.kind !== 'request' || requestBatchOnTopic(c.record.discussion.question ?? '', lines)) && (lines.length === expected || ending && lines.length >= Math.min(2 * speakers, expected) && lines.length < expected && lines.length % speakers === 0) &&
         lines.every((line, index) => (speakers === 3 && online
           ? c.record.participants.includes(line.speaker) && (index === 0 || lines[index - 1].speaker !== line.speaker)
           : line.speaker === c.record.participants[index % speakers]) && line.text.trim() && line.text.length <= 44) &&
@@ -649,6 +664,15 @@ export class FarmResidentEngine {
     const c = this.conversations.get(id);
     if (!c) return;
     c.record.endedAt = at;
+    if (c.record.discussion?.kind === 'request') {
+      const target = c.record.participants[1];
+      const responses = c.record.lines.filter(line => line.speaker === target);
+      const response = [...responses].reverse().find(line => !/请如实转达|不要替我编结论/.test(line.text)) ?? responses.at(-1);
+      c.record.requestOutcome = completed && response
+        ? `我已经找${RESIDENTS[target].name}问过「${c.record.discussion.question?.slice(0, 40)}」。对方最后说：「${response.text}」`
+        : '刚才的带话还没完成，不能当作已经问清楚。';
+      this.bubble(this.residents[c.record.participants[0]], c.record.requestOutcome, at);
+    }
     this.historyRevision++;
     for (const who of c.record.participants) {
       const r = this.residents[who];
@@ -657,7 +681,7 @@ export class FarmResidentEngine {
       r.targetWaypoint = null;
       r.destination = null;
       if (completed && c.record.discussion) {
-        r.mood = c.record.discussion.kind === 'debate' ? '松了口气' : '开心';
+        r.mood = c.record.discussion.kind === 'request' ? '平静' : c.record.discussion.kind === 'debate' ? '松了口气' : '开心';
         r.moodUntil = at + 60000;
       }
       r.state = 'idle';
@@ -815,7 +839,7 @@ export class FarmResidentEngine {
         }
         if (task.action.type === 'talk_to' && task.phase !== 'reserved' && task.phase !== 'conversation' && !r.motion) {
           const target = this.residents[task.action.target];
-          if (target.task?.id === task.id && distance(r.logicalPosition, target.logicalPosition) < 24 && farmSegmentClear(r.logicalPosition, target.logicalPosition)) this.startConversation([r.id, target.id], task.discussion ? 'scheduled/local' : 'player_command', at, task.discussion);else {
+          if (target.task?.id === task.id && distance(r.logicalPosition, target.logicalPosition) < 24 && farmSegmentClear(r.logicalPosition, target.logicalPosition)) this.startConversation([r.id, target.id], task.discussion && task.discussion.kind !== 'request' ? 'scheduled/local' : 'player_command', at, task.discussion);else {
             this.cancelTask(r, at);
             this.bubble(r, '现在靠近不了他，换个地方再试吧。', at);
           }

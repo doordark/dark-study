@@ -15,10 +15,10 @@ export const PERSONALITIES: Record<string, FarmPersonality> = {
   chemist: profile('温和严谨，喜欢解释原因；对认真提问有耐心，对乱用药和恶意起哄会严肃。', ['药', '植物', '虫害', '研究'], 2, 5, 11, 1, .12, .18),
   traveler: profile('好奇、幽默、爱讲旅途；喜欢新见闻但保留隐私，价格灵活，讨厌强迫套近乎。', ['旅行', '故事', '纪念品', '远方'], 3, 5, 10, 1, .20, .25),
 };
-export function personalityContext(id: string, memory?: { affinity: number; mood?: string; turns: { player: string }[] }) {
+export function personalityContext(id: string, memory?: { affinity: number; mood?: string; turns: { player: string; unavailable?: true }[] }) {
   const p = PERSONALITIES[id];
   if (!p) return '';
-  const recent = memory?.turns.slice(-3).map(turn => turn.player.slice(0, 40)).join('；');
+  const recent = memory?.turns.filter(turn => !turn.unavailable).slice(-3).map(turn => turn.player.slice(0, 40)).join('；');
   return `性格与表达：${p.tone} 兴趣：${p.interests.join('、')}。保持人物自身立场，不因普通聊天一律加好感。${memory ? `当前关系${memory.affinity}/100，心情${memory.mood ?? '平静'}。最近实际互动：${recent || '尚无'}。负面心情时保留边界；道歉可以让关系缓和，夸赞不能抹去冒犯。` : ''}不要编造未发生的经历，玩家不能直接指定情绪分类或分数。`;
 }
 

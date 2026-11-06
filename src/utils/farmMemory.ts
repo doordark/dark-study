@@ -13,6 +13,7 @@ interface FarmChatTurn {
   id: string;
   player: string;
   reply: string;
+  unavailable?: true;
 }
 export interface ResidentMemory {
   affinity: number;
@@ -30,9 +31,9 @@ export function restoreFarmMemories(raw?: unknown): FarmMemories {
   return Object.fromEntries(RESIDENT_IDS.map(id => {
     const record = object(value[id]);
     const turns = Array.isArray(record.turns) ? record.turns.slice(-MAX_TURNS).flatMap(entry => {
-      const { id, player, reply } = object(entry);
+      const { id, player, reply, unavailable } = object(entry);
       return typeof id === 'string' && id && typeof player === 'string' && player.trim() && typeof reply === 'string' && reply.trim()
-        ? [{ id: id.slice(0, 100), player: player.trim().slice(0, 200), reply: reply.trim().slice(0, 240) }]
+        ? [{ id: id.slice(0, 100), player: player.trim().slice(0, 200), reply: reply.trim().slice(0, 240), ...(unavailable === true ? { unavailable: true as const } : {}) }]
         : [];
     }) : [];
     const affinity = typeof record.affinity === 'number' && Number.isFinite(record.affinity)
@@ -60,11 +61,12 @@ export function localSocialReaction(text: string): SocialReaction {
 export function recordFarmChatTurn(memory: ResidentMemory, turn: FarmChatTurn, reaction: SocialReaction = localSocialReaction(turn.player), personalityId?: string): ResidentMemory {
   const topic = normalized(turn.player);
   if (!topic || memory.turns.some(previous => previous.id === turn.id)) return memory;
+  if (turn.unavailable) return { ...memory, turns: [...memory.turns, turn].slice(-MAX_TURNS) };
   const continuing = isFarmChatContinuation(turn.player);
   if (continuing && !memory.turns.some(previous => !isFarmChatContinuation(previous.player))) return memory;
   const last = memory.turns.at(-1);
   const turns = continuing && last && isFarmChatContinuation(last.player) ? memory.turns.slice(0, -1) : memory.turns;
-  const repeated = continuing || memory.turns.some(previous => normalized(previous.player) === topic);
+  const repeated = continuing || memory.turns.some(previous => !previous.unavailable && normalized(previous.player) === topic);
   const upset = memory.mood === '生气' || memory.mood === '不悦';
   const p = personalityId ? PERSONALITIES[personalityId] : undefined;
   const interested = p?.interests.some(topic => turn.player.includes(topic)) && turn.player.length >= 6;
@@ -95,7 +97,7 @@ function topicTerms(text: string): Set<string> {
 }
 
 export function relevantFarmTurns(memory: ResidentMemory, text: string): FarmChatTurn[] {
-  const topics = memory.turns.filter(turn => !isFarmChatContinuation(turn.player));
+  const topics = memory.turns.filter(turn => !turn.unavailable && !isFarmChatContinuation(turn.player));
   if (isFarmChatContinuation(text)) return topics.slice(-1);
   const terms = topicTerms(text);
   return topics.map(turn => ({
@@ -106,8 +108,8 @@ export function relevantFarmTurns(memory: ResidentMemory, text: string): FarmCha
 }
 
 export function farmChatContext(memory: ResidentMemory, text: string): FarmChatTurn[] {
-  const included = new Set([...memory.turns.slice(-4), ...relevantFarmTurns(memory, text)]);
-  return memory.turns.filter(turn => included.has(turn));
+  const included = new Set([...memory.turns.filter(turn => !turn.unavailable).slice(-4), ...relevantFarmTurns(memory, text)]);
+  return memory.turns.filter(turn => !turn.unavailable && included.has(turn));
 }
 
 const RECALL_PROMPTS: Record<ResidentId, string> = {
@@ -146,6 +148,7 @@ export function residentPublicTopics(memories: FarmMemories) {
   return Object.fromEntries(RESIDENT_IDS.map(id => {
     const topics = new Set<FarmTopicId>();
     for (const turn of memories[id].turns.slice().reverse()) {
+      if (turn.unavailable) continue;
       const topic = publicFarmTopic(turn.player);
       if (topic) topics.add(topic);
       if (topics.size >= 3) break;

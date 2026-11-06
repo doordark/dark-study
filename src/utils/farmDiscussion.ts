@@ -6,7 +6,20 @@ export interface FarmDiscussion {
   topic?: FarmTopicId;
   question?: string;
   relayedBy?: ResidentId;
-  kind: 'discussion' | 'debate' | 'followup';
+  kind: 'discussion' | 'debate' | 'followup' | 'request';
+}
+
+/** Reject obvious topic loss in generated request replies; keep the grounded local plan. */
+export function requestBatchOnTopic(question: string, lines: readonly { text: string }[]): boolean {
+  let content = question;
+  for (const resident of Object.values(RESIDENTS)) content = content.replaceAll(resident.name, ' ');
+  content = content.replace(/伟刚|伟纲|唯纲|客人|帮我|替我|你去|去找|找他|问问|问一下|质问|转告|告诉|带话|传话|一下|这件事|刚才|为什么|聊聊|说说/g, ' ');
+  const terms = content.match(/[\p{Script=Han}a-zA-Z0-9]+/gu) ?? [];
+  const anchors = terms.flatMap(term => term.length === 1 ? [term] : Array.from({ length: term.length - 1 }, (_, i) => term.slice(i, i + 2)));
+  const reply = lines.map(line => line.text).join('');
+  if (/骂|辱/.test(question) && /骂|辱|原话|言语/.test(reply)) return true;
+  if (/欺负|欺凌/.test(question) && /欺负|欺凌|经过|受伤/.test(reply)) return true;
+  return anchors.length === 0 || anchors.some(anchor => reply.includes(anchor));
 }
 
 export const RESIDENT_OUTLOOK: Record<ResidentId, { voice: string; approach: string; pushback: string; soften: string }> = {
@@ -30,6 +43,19 @@ const TOPIC_VIEWS: Record<FarmTopicId, readonly [string, string, string]> = {
 };
 
 export function discussionLines(participants: readonly ResidentId[], discussion: FarmDiscussion): Omit<ResidentLine, 'at'>[] {
+  if (discussion.kind === 'request' && discussion.question) {
+    const [actor, target] = participants;
+    const concern = /骂|欺负|质问|误会/.test(discussion.question);
+    const subject = discussion.question.slice(0, 28);
+    return [
+      { speaker: actor, text: `客人托我来问这件事：「${subject}」` },
+      { speaker: target, text: concern ? '我听到了。能说说当时的原话和情境吗？' : '你带的话我听到了，具体想问哪一点？' },
+      { speaker: actor, text: concern ? '我没有亲眼见到，先来听你的说法。' : '我先确认你的意思，再如实带回去。' },
+      { speaker: target, text: concern ? '只凭转述还不能判断，要把原话核对清楚。' : '我还需要具体情况，不能随口答应。' },
+      { speaker: actor, text: '好，我会转达：已经问过，还需要核实细节。' },
+      { speaker: target, text: '嗯，请如实转达，不要替我编结论。' },
+    ];
+  }
   const topic = discussion.topic ? FARM_TOPICS[discussion.topic].label : '这件事';
   const views = discussion.topic ? TOPIC_VIEWS[discussion.topic] : undefined;
   const lead = participants[0];

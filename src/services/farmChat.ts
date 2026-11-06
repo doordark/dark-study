@@ -151,6 +151,8 @@ export async function farmChat(messages: ChatContent[], apiKey: string, options:
   retries?: number;
   /** 默认使用 JSON 输出模式；降级重试时会自动切到普通模式 */
   jsonMode?: boolean;
+  /** Optional caller schema check shares the same bounded retry budget. */
+  validate?: (raw: string) => boolean;
 } = {}): Promise<string> {
   if (!apiKey) throw new FarmChatError('未配置 API Key');
   let remaining = Math.max(0, Math.min(2, options.retries ?? 0));
@@ -163,11 +165,13 @@ export async function farmChat(messages: ChatContent[], apiKey: string, options:
     const left = budget - (Date.now() - startedAt);
     if (left < 1500) throw new FarmChatError('回复超时，请检查网络');
     try {
-      return await requestOnce(messages, apiKey, {
+      const raw = await requestOnce(messages, apiKey, {
         ...options,
         jsonMode,
         timeoutMs: Math.min(options.timeoutMs ?? 12000, left),
       });
+      if (options.validate && !options.validate(raw)) throw new FarmChatError('回复格式不完整', { retryable: true, empty: true });
+      return raw;
     } catch (e) {
       if (options.signal?.aborted) throw cancelled();
       if (!(e instanceof FarmChatError)) throw e;
