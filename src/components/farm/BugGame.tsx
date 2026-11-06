@@ -1,10 +1,10 @@
-import { FarmIllustration, FarmText as Text } from './FarmSkin';
+import { FarmText as Text } from './FarmSkin';
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useEffect, useRef, useState } from "react";
-import { Modal, Pressable, View, useWindowDimensions } from "react-native";
+import { Image, Modal, Pressable, View, useWindowDimensions } from "react-native";
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 
-import { CropSprite, FarmToolSprite } from "./CropSprite";
+import { FarmToolSprite } from "./CropSprite";
 import { compostReward } from "@/utils/farmProgress";
 
 export interface BugGameProps {
@@ -96,7 +96,7 @@ export function BugGame({ visible, onClose, onFinish }: BugGameProps) {
   };
 
   const jumpMs = MINUTE + score * 30_000;
-  const areaH = Math.max(200, Math.min(320, Math.round(height * 0.4)));
+  const areaH = Math.max(200, Math.min(420, Math.round(height * 0.48)));
   const areaW = Math.min(width - 56, 360);
 
   const claim = () => {
@@ -134,7 +134,7 @@ export function BugGame({ visible, onClose, onFinish }: BugGameProps) {
             overflow: "hidden",
           }}
         >
-          <FarmIllustration theme="bugs" compact />
+
           {/* 顶部 */}
           <View
             style={{
@@ -242,37 +242,7 @@ export function BugGame({ visible, onClose, onFinish }: BugGameProps) {
                   backgroundColor: "#4C8A3F",
                 }}
               >
-                {[0.34, 0.6, 0.86].map((t) => (
-                  <View
-                    key={t}
-                    style={{
-                      position: "absolute",
-                      left: 0,
-                      right: 0,
-                      top: `${t * 100}%`,
-                      height: 1,
-                      backgroundColor: "#3F7A34",
-                    }}
-                  />
-                ))}
-
-                {/* 地里的菜 */}
-                {[
-                  { left: "8%", top: "72%" },
-                  { left: "46%", top: "78%" },
-                  { left: "78%", top: "70%" },
-                  { left: "26%", top: "88%" },
-                  { left: "64%", top: "90%" },
-                ].map((spot) => (
-                  <View
-                    key={`${spot.left}-${spot.top}`}
-                    pointerEvents="none"
-                    style={{ position: "absolute", left: spot.left, top: spot.top }}
-                  >
-                    <CropSprite kind="radish" size={26} />
-                  </View>
-                ))}
-
+                <Image pointerEvents="none" source={require('../../../assets/images/farm-bug-garden-v7.png')} resizeMode="cover" style={{ position: 'absolute', width: '100%', height: '100%' }} />
                 {/* 虫子 */}
                 {bugs.map((bug) => (
                   <Animated.View

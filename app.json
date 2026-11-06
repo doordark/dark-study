@@ -2,7 +2,7 @@
   "expo": {
     "name": "dark-study",
     "slug": "dark-study",
-    "version": "1.8.7",
+    "version": "1.9.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "dark-study",
@@ -11,7 +11,7 @@
     },
     "android": {
       "package": "com.darkstudy.app",
-      "versionCode": 31,
+      "versionCode": 32,
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO"
       ],
@@ -57,7 +57,6 @@
       "./plugins/withReleaseSigning",
       "./plugins/withCourseWidgets",
       "./plugins/withWhaleOverlay",
-      "./plugins/withWhaleOfflineVoice",
       [
         "expo-audio",
         {

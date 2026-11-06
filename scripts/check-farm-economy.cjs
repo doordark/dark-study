@@ -13,6 +13,7 @@ function load(name, dependencies = {}) {
 }
 const progress = load('farmProgress');
 const e = load('farmEconomy', { './farmProgress': progress });
+const market = load('farmMarket', { './farmProgress': progress, './farmEconomy': e });
 const today = new Date(2026, 10, 3, 12).getTime();
 const tomorrow = new Date(2026, 10, 4, 12).getTime();
 
@@ -23,7 +24,7 @@ assert.equal(e.migrateCoins(4, NaN), 0);
 assert.equal(e.migrateCoins(4, -5), 0);
 assert.deepEqual(e.restoreSeeds({ radish: 3, berry: 5 }), { ...e.cropRecord(), radish: 3, berry: 5 });
 assert.equal(e.restoreSeeds({ wheat: Infinity, tomato: -4 }).wheat, 0);
-assert.equal(e.CROP_KINDS.length, 9);
+assert.equal(e.CROP_KINDS.length, 12);
 assert.equal(e.isCropKind('toString'), false);
 assert.equal(e.isCropKind(null), false);
 assert.equal(e.restoreEconomy({ inventory: { radish: null }, orders: { date: progress.realDate(today), claimed: ['radish', 'radish', '__proto__'] } }, today).orders.claimed.length, 1);
@@ -78,4 +79,29 @@ assert.equal(e.consume(stock.wheat, -1), null);
 assert.equal(e.consume(stock.wheat, 0.5), null);
 assert.equal(e.stockValue('wheat', { normal: 2, premium: 1 }, today), e.unitPrice('wheat', false, today) * 2 + e.unitPrice('wheat', true, today));
 
-console.log('Farm economy checks passed: one-time currency reset, nine crops, regrowth limits, seasonal yield, quality, persistent orders, atomic processing, irrigation and malformed saves.');
+const gear = market.restoreGear();
+const stacks = market.bagStacks({ ...e.cropRecord(), radish: 129 }, e.restoreInventory({ radish: { normal: 65, premium: 1 } }), gear.extras, 2);
+assert.deepEqual(stacks.filter(s => s.type === 'seed').map(s => s.count), [64, 64, 1]);
+assert.deepEqual(stacks.filter(s => s.type === 'crop').map(s => s.count), [64, 1]);
+assert.equal(stacks.find(s => s.type === 'premium').count, 1);
+assert.equal(stacks.find(s => s.type === 'compost').count, 2);
+assert.equal(gear.hoe, 40);
+assert.equal(market.canCapacity(3), progress.waterCapacity(3), 'old water upgrades preserve capacity');
+const savedGear = { ...gear, bag: 2, rust: 35, stockWindow: market.marketWindow(today),
+  purchased: { 'farmer:radish': 2 }, requests: { farmer: { day: progress.realDate(today), delivered: true } } };
+assert.deepEqual(market.restoreGear(JSON.parse(JSON.stringify(savedGear))), savedGear);
+assert.deepEqual(market.marketOffers('farmer', today), market.marketOffers('farmer', today + 3000));
+assert.notDeepEqual(market.marketOffers('farmer', today), market.marketOffers('farmer', today + 3600000));
+const travelerWindows = Array.from({ length: 24 }, (_, i) => today + i * 3600000);
+assert(travelerWindows.some(at => market.vendorAvailable('traveler', at)));
+assert(travelerWindows.some(at => !market.vendorAvailable('traveler', at)));
+for (const at of travelerWindows) {
+  assert.equal(market.vendorAvailable('traveler', at), market.vendorAvailable('traveler', at + 3000));
+  const offers = market.marketOffers('traveler', at);
+  if (market.vendorAvailable('traveler', at)) assert(offers.some(o => o.crop && market.qualityOf(o.crop) >= 2));
+  else assert.deepEqual(offers, []);
+}
+assert(!market.pestAt(44, 100, false));
+assert(market.pestAt(45, 100, false));
+assert(!market.pestAt(100, 100, true));
+console.log('Farm economy checks passed: 12 crops, stacking, gear migration, stock rotation, pests, persistent requests, processing and irrigation.');

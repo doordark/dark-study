@@ -10,20 +10,22 @@ function Button({ label, onPress, disabled = false }: { label: string; onPress: 
 }
 const ink = '#59432E';
 const muted = '#8A785E';
-export function FarmEconomyPanel({ economy, coins, level, season, at, onSell, onOrder, onCraft, onKitchen, onRescue, onIrrigation }: {
+export function FarmEconomyPanel({ mode, economy, coins, level, season, at, onSell, onOrder, onCraft, onKitchen, onRescue, onIrrigation }: {
+  mode?: "stock" | "orders" | "kitchen" | "guide";
   economy: Economy; coins: number; level: number; season: number; at: number;
   onSell: (kind: CropKind) => void; onOrder: (kind: CropKind) => void; onCraft: (recipe: Recipe) => void; onKitchen: () => void; onRescue: () => void; onIrrigation: () => void;
 }) {
-  const [tab, setTab] = useState<'stock' | 'orders' | 'kitchen' | 'guide'>('stock');
+  const [localTab, setTab] = useState<'stock' | 'orders' | 'kitchen' | 'guide'>('stock');
+  const tab = mode ?? localTab;
   const current = restoreEconomy(economy, at);
   const total = CROP_KINDS.reduce((n, k) => n + stockCount(current.inventory[k]), 0);
   return <View style={{ gap: 12, padding: 14, borderRadius: 3, backgroundColor: '#F8F0DE', borderWidth: 1, borderColor: '#CAB38B' }}>
-    <FarmIllustration theme="market" />
-    <Text variant="title" style={{ color: '#926B35', fontWeight: '800', fontSize: 16 }}>丰收集市 · {SEASON_NAMES[season]}季</Text>
+    {!mode ? <FarmIllustration theme="market" /> : null}
+    <Text variant="title" style={{ color: '#926B35', fontWeight: '800', fontSize: 16 }}>{mode ? ({ stock: "出售收成", orders: "采购委托", kitchen: "加工工坊", guide: "作物图鉴" }[mode]) : `丰收集市 · ${SEASON_NAMES[season]}季`}</Text>
     <Text style={{ color: muted, fontSize: 12, lineHeight: 19 }}>收获先入仓，再选择出售、交订单或加工。当季播种每次多收 1 份；施肥收获为优质品，市价 +30%。</Text>
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>{([['stock', `仓库 ${total}`], ['orders', '订单'], ['kitchen', '工坊'], ['guide', '图鉴']] as const).map(([key, label]) => <Button key={key} label={`${tab === key ? '● ' : ''}${label}`} onPress={() => setTab(key)} />)}</View>
+    {!mode ? <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>{([['stock', `仓库 ${total}`], ['orders', '订单'], ['kitchen', '工坊'], ['guide', '图鉴']] as const).map(([key, label]) => <Button key={key} label={`${tab === key ? '● ' : ''}${label}`} onPress={() => setTab(key)} />)}</View> : null}
     {tab === 'stock' && <>
-      <Text style={{ color: muted, fontSize: 11 }}>每日行情 85% / 100% / 115%，按现实日期刷新。出售会卖出该作物全部库存，请先留好订单与食材。</Text>
+      <Text style={{ color: muted, fontSize: 11 }}>每小时更新行情。出售会卖出该作物全部库存，请先留好委托与食材。</Text>
       {total === 0 && <Text style={{ color: ink }}>仓库还空着，先种一块田吧。</Text>}
       {CROP_KINDS.filter(k => stockCount(current.inventory[k]) > 0).map(k => <View key={k} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
         <CropSprite kind={k} size={32} /><View style={{ flex: 1 }}><Text style={{ color: ink }}>{CROP_ART[k].label} ×{stockCount(current.inventory[k])}</Text><Text style={{ color: muted, fontSize: 11 }}>优质 {current.inventory[k].premium} · 今日 {Math.round(marketRate(k, at) * 100)}% · 普通单价 {unitPrice(k, false, at)}</Text></View>

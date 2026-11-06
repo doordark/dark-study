@@ -11,6 +11,8 @@ import { migratingStorage } from "@/utils/storage";
 
 interface SettingsState {
   apiKey: string;
+  farmWebSearch: boolean;
+  setFarmWebSearch: (enabled: boolean) => void;
   reminderEnabled: boolean;
   reminderMinutes: number;
   reminderCount: number;
@@ -42,6 +44,8 @@ export const useSettings = create<SettingsState>()(
       // 默认为空：API Key 由用户在「设置」中填写，只存本地，
       // 永远不要把真实 Key 写进代码或提交到仓库
       apiKey: "",
+      farmWebSearch: false,
+      setFarmWebSearch: (farmWebSearch) => set({ farmWebSearch }),
       reminderEnabled: false,
       reminderMinutes: 15,
       reminderCount: 1,

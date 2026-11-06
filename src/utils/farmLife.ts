@@ -1,3 +1,4 @@
+import { personalityContext } from './farmPersonality';
 import type { FarmDiscussion } from './farmDiscussion';
 
 export const RESIDENT_IDS = ["door", "gu", "xiaoba", "yujie", "weigang", "chicken"] as const;
@@ -623,3 +624,5 @@ export function localConversation(pair: readonly [ResidentId, ResidentId], round
     return pair.map((speaker, index) => ({ speaker, text: lines[index] }));
   }).flat();
 }
+
+for (const id of RESIDENT_IDS) RESIDENTS[id].persona += " " + personalityContext(id);

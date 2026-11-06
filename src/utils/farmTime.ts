@@ -12,7 +12,13 @@ export function farmTime(realNow: number, timeShift: number, epoch: number) {
   const weatherHash = Math.imul(weatherWindow ^ 0x5bd1e995, 0x45d9f3b);
   const weatherRoll = ((weatherHash ^ (weatherHash >>> 16)) >>> 0) % 100;
   const weather: 'clear' | 'rain' = weatherRoll < 30 ? 'rain' : 'clear';
+  const previousHash = Math.imul((weatherWindow - 1) ^ 0x5bd1e995, 0x45d9f3b);
+  const previousWasRain = ((previousHash ^ (previousHash >>> 16)) >>> 0) % 100 < 30;
+  const rainbow = weather === 'clear' && previousWasRain && weatherRoll >= 94 && hour >= 6 && hour < 19;
+  const sceneVariant: `${typeof period}-${typeof weather}` | "rainbow-morning" | "rainbow-evening" = rainbow ? (hour < 17 ? 'rainbow-morning' : 'rainbow-evening') : `${period}-${weather}` as const;
   return {
+    sceneVariant,
+    rainbow,
     growthNow,
     day,
     season: Math.floor((day - 1) / 7) % 4,

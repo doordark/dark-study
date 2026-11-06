@@ -1,8 +1,13 @@
+import { PERSONALITIES } from './farmPersonality';
 import { FARM_TOPICS, RESIDENTS, RESIDENT_IDS, type FarmTopicId, type ResidentConversation, type ResidentId, type SharedFarmTopic } from './farmLife';
 
 export const CONTINUE_FARM_CHAT = '接着上次聊';
 const MAX_TURNS = 24;
 const MAX_AFFINITY = 100;
+export const SOCIAL_REACTIONS = ['neutral', 'warm', 'teasing', 'insult', 'apology'] as const;
+export type SocialReaction = typeof SOCIAL_REACTIONS[number];
+export const SOCIAL_MOODS = { warm: '开心', teasing: '不悦', insult: '生气', apology: '缓和' } as const;
+type SocialMood = typeof SOCIAL_MOODS[keyof typeof SOCIAL_MOODS];
 
 interface FarmChatTurn {
   id: string;
@@ -12,6 +17,7 @@ interface FarmChatTurn {
 export interface ResidentMemory {
   affinity: number;
   turns: FarmChatTurn[];
+  mood?: SocialMood;
 }
 export type FarmMemories = Record<ResidentId, ResidentMemory>;
 
@@ -31,7 +37,8 @@ export function restoreFarmMemories(raw?: unknown): FarmMemories {
     }) : [];
     const affinity = typeof record.affinity === 'number' && Number.isFinite(record.affinity)
       ? Math.min(MAX_AFFINITY, Math.max(0, Math.round(record.affinity))) : 0;
-    return [id, { turns, affinity }];
+    const mood = Object.values(SOCIAL_MOODS).find(item => item === record.mood);
+    return [id, { turns, affinity, ...(mood ? { mood } : {}) }];
   })) as FarmMemories;
 }
 
@@ -39,7 +46,18 @@ export const affinityLabel = (affinity: number) => affinity >= 60 ? '亲近' : a
 
 const normalized = (value: string) => value.normalize('NFKC').toLowerCase().replace(/[\p{P}\p{S}\s]/gu, '');
 
-export function recordFarmChatTurn(memory: ResidentMemory, turn: FarmChatTurn): ResidentMemory {
+export function localSocialReaction(text: string): SocialReaction {
+  const line = text.normalize('NFKC').trim();
+  if (/^(?:[“「"'‘]|如果|假如|有人|他说|她说|你觉得|什么意思)/.test(line) || /(?:是什么意思|怎么理解|这个词)[？?]?$/.test(line)) return 'neutral';
+  if (/^滚[！!。\s]*$/.test(line)) return 'insult';
+  if (/(?:你(?:就是|真是|是个|这个|个)?|^)(?:傻[逼比叉]|废物|蠢货|白痴|智障)|^(?:滚蛋|滚开|去死)|你妈的/i.test(line)) return 'insult';
+  if (/^(?:儿子(?:[，,！!。\s]|$)|乖儿子|(?:你是|你就是|你个)(?:我的)?儿子|叫(?:我爸爸|爸爸|爹))/.test(line)) return 'teasing';
+  if (/^(?:对不起|抱歉|我道歉|刚才是我不对)/.test(line)) return 'apology';
+  if (/^(?:谢谢你|多亏你|辛苦你了|你做得真好)/.test(line)) return 'warm';
+  return 'neutral';
+}
+
+export function recordFarmChatTurn(memory: ResidentMemory, turn: FarmChatTurn, reaction: SocialReaction = localSocialReaction(turn.player), personalityId?: string): ResidentMemory {
   const topic = normalized(turn.player);
   if (!topic || memory.turns.some(previous => previous.id === turn.id)) return memory;
   const continuing = isFarmChatContinuation(turn.player);
@@ -47,8 +65,15 @@ export function recordFarmChatTurn(memory: ResidentMemory, turn: FarmChatTurn): 
   const last = memory.turns.at(-1);
   const turns = continuing && last && isFarmChatContinuation(last.player) ? memory.turns.slice(0, -1) : memory.turns;
   const repeated = continuing || memory.turns.some(previous => normalized(previous.player) === topic);
+  const upset = memory.mood === '生气' || memory.mood === '不悦';
+  const p = personalityId ? PERSONALITIES[personalityId] : undefined;
+  const interested = p?.interests.some(topic => turn.player.includes(topic)) && turn.player.length >= 6;
+  const delta = reaction === 'insult' ? -(p?.insultLoss ?? 8) : reaction === 'teasing' ? -(p?.teaseLoss ?? 4)
+    : repeated ? 0 : reaction === 'apology' && upset ? (p?.apologyGain ?? 1) : reaction === 'warm' && !upset ? (p?.warmGain ?? 2) : reaction === 'neutral' && !upset && interested ? 1 : 0;
+  const mood = reaction === 'neutral' || reaction === 'warm' && upset ? memory.mood : SOCIAL_MOODS[reaction];
   return {
-    affinity: Math.min(MAX_AFFINITY, memory.affinity + (repeated ? 0 : 2)),
+    affinity: Math.min(MAX_AFFINITY, Math.max(0, memory.affinity + delta)),
+    ...(mood ? { mood } : {}),
     turns: [...turns, turn].slice(-MAX_TURNS),
   };
 }

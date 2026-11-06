@@ -1,5 +1,4 @@
 import { FARM_BODY_FONT, FarmText as Text } from './FarmSkin';
-import { FarmSpeechLayer } from './FarmSpeechLayer';
 import { useState } from 'react';
 import { Image, Modal, Pressable, ScrollView, Switch, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -126,13 +125,12 @@ export function FarmLifeLayer({
   const records = history.filter(c => (person === 'all' || c.participants.includes(person)) && (filter === 'all' || filter === 'ai' && c.online || filter === 'encounter' && c.source === 'encounter' || filter === 'command' && c.source === 'player_command')).slice().reverse();
   return <>
     {controller.residents.map(resident => <FarmResident key={resident.id} resident={resident} scale={scale} active={controller.awake && (controller.autonomous || Boolean(resident.task) || resident.conversationSize > 0)} reducedMotion={controller.reducedMotion} onTalk={onTalk} />)}
-    <FarmSpeechLayer residents={controller.residents} scale={scale} />
     <Modal visible={panelOpen} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={onClosePanel}>
       <View style={{
         flex: 1,
         justifyContent: 'flex-end',
         backgroundColor: 'rgba(0,0,0,.55)'
-      }}><Pressable accessibilityLabel="关闭居民生活" onPress={onClosePanel} style={{
+      }}><Pressable accessibilityLabel="关闭农场设置" onPress={onClosePanel} style={{
           position: 'absolute',
           width: '100%',
           height: '100%'
@@ -162,7 +160,7 @@ export function FarmLifeLayer({
                   fontFamily: FARM_BODY_FONT,
                   fontSize: 22,
                   fontWeight: '800'
-                }}>居民生活记录</Text><Text style={{
+                }}>农场设置</Text><Text style={{
                   color: muted,
                   fontSize: 12,
                   marginTop: 5

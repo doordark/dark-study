@@ -1,9 +1,10 @@
 import { FarmText } from './FarmSkin';
 import { memo, useEffect } from 'react';
 import { Pressable, View } from 'react-native';
-import Animated, { cancelAnimation, Easing, useAnimatedReaction, useAnimatedStyle, useSharedValue, withDelay, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
+import Animated, { cancelAnimation, Easing, useAnimatedReaction, useAnimatedStyle, useSharedValue, withDelay, withSequence, withTiming } from 'react-native-reanimated';
 import { RESIDENTS, type ResidentId } from '@/utils/farmLife';
 import { remainingResidentMotion, type ResidentModel } from '@/utils/farmResidentAI';
+import { FarmSpeechCard } from './FarmSpeechLayer';
 import { FarmPersonSprite } from './FarmPersonSprite';
 
 /** Display only: the central controller owns decisions, position and conversations. */
@@ -28,8 +29,7 @@ export const FarmResident = memo(function FarmResident({
     motion = resident.motion;
   const x = useSharedValue(resident.logicalPosition.x),
     y = useSharedValue(resident.logicalPosition.y);
-  const face = useSharedValue<number>(resident.face),
-    breath = useSharedValue(0);
+  const face = useSharedValue<number>(resident.face);
   useEffect(() => {
     cancelAnimation(x);
     cancelAnimation(y);
@@ -65,19 +65,12 @@ export const FarmResident = memo(function FarmResident({
   useAnimatedReaction(() => x.get(), (current, previous) => {
     if (previous !== null && Math.abs(current - previous) > .01) face.set(current > previous ? 1 : -1);
   });
-  useEffect(() => {
-    if (active && !reducedMotion) breath.set(withRepeat(withTiming(1, {
-      duration: 1900 + meta.row * 120,
-      easing: Easing.inOut(Easing.sin)
-    }), -1, true));
-    return () => cancelAnimation(breath);
-  }, [active, reducedMotion, breath, meta.row]);
   const position = useAnimatedStyle(() => ({
-    zIndex: Math.round(y.get()),
+    zIndex: resident.bubble ? 1500 : Math.round(y.get()),
     transform: [{
       translateX: (x.get() - 11) * scale
     }, {
-      translateY: (y.get() - 27.5) * scale - breath.get() * .5 * scale
+      translateY: (y.get() - 27.5) * scale
     }]
   }));
   const facing = useAnimatedStyle(() => ({
@@ -97,7 +90,7 @@ export const FarmResident = memo(function FarmResident({
   }, position]}>
     <View pointerEvents="none" style={{
       position: 'absolute',
-      top: -17,
+      top: Math.max(-8, 22 * scale * 0.24924 - 16),
       left: -50,
       right: -50,
       alignSelf: 'center',
@@ -111,11 +104,12 @@ export const FarmResident = memo(function FarmResident({
       borderRadius: 7,
       fontSize: 10
     }}>{meta.name}{taskLabel ? ` · ${taskLabel}` : talking ? ' ···' : ''}</FarmText></View>
+    {resident.bubble ? <FarmSpeechCard resident={resident} scale={scale} x={x} /> : null}
     <Pressable accessibilityRole="button" accessibilityLabel={`${meta.name}，点击我的聊天`} hitSlop={5} onPress={() => onTalk(who, {
       x: x.get(),
       y: y.get()
     })}>
-      <Animated.View style={facing}><FarmPersonSprite who={who} activity={walking ? 'walk' : talking ? 'talk' : 'idle'} size={22 * scale} active={active && !reducedMotion} positionX={x} positionY={y} walkSpeed={motion?.speed ?? 22} /></Animated.View>
+      <Animated.View style={facing}><FarmPersonSprite who={who} activity={walking ? 'walk' : talking ? 'talk' : 'idle'} size={22 * scale} active={active && !reducedMotion} walkSpeed={motion?.speed ?? 22} /></Animated.View>
     </Pressable>
   </Animated.View>;
 });

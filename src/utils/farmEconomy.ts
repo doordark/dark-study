@@ -1,6 +1,6 @@
 import { finiteCount, realDate } from './farmProgress';
 
-export const CROP_KINDS = ['radish', 'wheat', 'carrot', 'berry', 'tomato', 'corn', 'pumpkin', 'grape', 'star'] as const;
+export const CROP_KINDS = ['radish', 'wheat', 'carrot', 'berry', 'tomato', 'corn', 'pumpkin', 'grape', 'star', 'moonroot', 'dewberry', 'sunmelon'] as const;
 export type CropKind = typeof CROP_KINDS[number];
 export const SEASON_NAMES = ['春', '夏', '秋', '冬'];
 const minute = 60_000;
@@ -13,6 +13,9 @@ export const CROP_META: Record<CropKind, { price: number; sell: number; growMs: 
   corn: { price: 42, sell: 29, growMs: 30 * minute, level: 3, seasons: [1, 2], yield: 2, rounds: 1 },
   pumpkin: { price: 68, sell: 98, growMs: 48 * minute, level: 4, seasons: [2], yield: 1, rounds: 1 },
   grape: { price: 94, sell: 43, growMs: 60 * minute, level: 4, seasons: [2], yield: 1, rounds: 3 },
+  moonroot: { price: 24, sell: 36, growMs: 15 * minute, level: 2, seasons: [3], yield: 1, rounds: 1 },
+  dewberry: { price: 58, sell: 85, growMs: 38 * minute, level: 3, seasons: [0, 1], yield: 1, rounds: 1 },
+  sunmelon: { price: 110, sell: 158, growMs: 72 * minute, level: 4, seasons: [1], yield: 1, rounds: 1 },
   star: { price: 120, sell: 172, growMs: 90 * minute, level: 5, seasons: [3], yield: 1, rounds: 1 },
 };
 export const isCropKind = (value: unknown): value is CropKind => CROP_KINDS.includes(value as CropKind);
@@ -38,7 +41,7 @@ export const wetDuration = (upgrade: number) => (30 + finiteCount(upgrade, 3) * 
 // Versioned migration resets money once. Future loads preserve the earned balance.
 export const migrateCoins = (version: unknown, coins: unknown) => version === 4 ? finiteCount(coins) : 120;
 export function marketRate(kind: CropKind, at: number): number {
-  const date = realDate(at);
+  const date = String(Math.floor(at / 3_600_000));
   const hash = [...date].reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 7);
   return [0.85, 1, 1.15][(hash + CROP_KINDS.indexOf(kind) * 7) % 3];
 }

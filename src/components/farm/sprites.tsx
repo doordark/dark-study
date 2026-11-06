@@ -345,6 +345,9 @@ export const CROP_ART: Record<
   tomato: { label: "番茄", palette: { "1": "#287347", "2": "#83BE60", "3": "#F06450", "5": "#568C39" } },
   corn: { label: "玉米", palette: { "1": "#287347", "2": "#83BE60", "3": "#FFD65A", "5": "#568C39" } },
   pumpkin: { label: "南瓜", palette: { "1": "#287347", "2": "#83BE60", "3": "#E99536", "5": "#568C39" } },
+  moonroot: { label: "月光萝卜", palette: {} },
+  dewberry: { label: "露珠莓", palette: {} },
+  sunmelon: { label: "日辉蜜瓜", palette: {} },
   grape: { label: "葡萄", palette: { "1": "#287347", "2": "#83BE60", "3": "#AF83DF", "5": "#568C39" } },
 };
 

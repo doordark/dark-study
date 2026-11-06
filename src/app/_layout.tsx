@@ -3,7 +3,7 @@ import { StatusBar } from "expo-status-bar";
 import { colorScheme as appColorScheme, useColorScheme } from "nativewind";
 import { useEffect } from "react";
 import { AppState } from "react-native";
-import { disposeWhaleVoice, stopWhaleVoice, warmWhaleVoice } from "@/services/whaleVoice";
+import { disposeWhaleVoice, stopWhaleVoice } from "@/services/whaleVoice";
 import { useWhaleVoice } from "@/store/useWhaleVoice";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
@@ -20,18 +20,16 @@ export default function RootLayout() {
   const isDark = colorScheme !== "light";
 
   useEffect(() => {
-    let mounted = true;
-    void useWhaleVoice.getState().hydrate().then(() => {
-      if (mounted && useWhaleVoice.getState().on) warmWhaleVoice();
-    });
+
+    void useWhaleVoice.getState().hydrate();
     const state = AppState.addEventListener("change", (next) => {
       if (next !== "active") stopWhaleVoice();
     });
     const unsubscribe = useWhaleVoice.subscribe((next, prev) => {
       if (!next.on && prev.on) stopWhaleVoice();
-      if (next.on && !prev.on) warmWhaleVoice();
+
     });
-    return () => { mounted = false; state.remove(); unsubscribe(); disposeWhaleVoice(); };
+    return () => { state.remove(); unsubscribe(); disposeWhaleVoice(); };
   }, []);
 
   // Reapply the saved theme after storage hydration, including direct web loads.

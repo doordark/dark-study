@@ -318,7 +318,7 @@ function AppearanceSettings() {
   return (
     <>
       {/* 外观 */}
-      <Animated.View entering={FadeInDown.delay(60).springify()}>
+      <Animated.View entering={FadeInDown.springify()}>
         <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
           <View className="px-4 py-4">
             <Text className="mb-3 text-[14px] font-bold text-slate-800 dark:text-white">
@@ -358,7 +358,7 @@ function AppearanceSettings() {
 
       {/* 材质 */}
       <Animated.View
-        entering={FadeInDown.delay(90).springify()}
+        entering={FadeInDown.delay(420).springify()}
         style={{ marginTop: 14 }}
       >
         <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
@@ -398,7 +398,7 @@ function AppearanceSettings() {
 
       {/* 背景 */}
       <Animated.View
-        entering={FadeInDown.delay(120).springify()}
+        entering={FadeInDown.delay(420).springify()}
         style={{ marginTop: 14 }}
       >
         <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
@@ -606,7 +606,7 @@ function ScheduleSettings() {
 
       {/* 课程表管理 */}
       <Animated.View
-        entering={FadeInDown.delay(240).springify()}
+        entering={FadeInDown.delay(420).springify()}
         style={{ marginTop: 14 }}
       >
         <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
@@ -694,6 +694,7 @@ function ScheduleSettings() {
           </View>
         </GlassContainer>
       </Animated.View>
+      <DataSettings />
       {/* iOS 日期选择 */}
       {iosPicker ? (
         <DateTimePicker
@@ -783,12 +784,23 @@ function AiSettings() {
   const personaName = useWhalePersona((s) => s.persona.name);
   const apiKey = useSettings((s) => s.apiKey);
   const setApiKey = useSettings((s) => s.setApiKey);
+  const farmWebSearch = useSettings((s) => s.farmWebSearch);
+  const setFarmWebSearch = useSettings((s) => s.setFarmWebSearch);
   const [draft, setDraft] = useState<string | null>(null);
   const editing = draft ?? apiKey;
   const [saved, setSaved] = useState(false);
 
   return (
     <>
+      <Pressable accessibilityRole="switch" accessibilityState={{ checked: farmWebSearch }}
+        onPress={() => setFarmWebSearch(!farmWebSearch)}>
+        <GlassContainer radius={20} intensity={42} borderOpacity={0.22}>
+          <View className="px-4 py-3">
+            <Text className="font-bold text-slate-800 dark:text-white">农场居民联网搜索 · {farmWebSearch ? "开启" : "关闭"}</Text>
+            <Text className="text-xs text-slate-500 dark:text-slate-400">明确请居民查资料时，将搜索词发送给搜索引擎。需要配置 DeepSeek API Key。</Text>
+          </View>
+        </GlassContainer>
+      </Pressable>
       {/* DeepSeek Key */}
       <Animated.View entering={FadeInDown.springify()}>
         <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
@@ -850,7 +862,7 @@ function AiSettings() {
         </GlassContainer>
       </Animated.View>
 
-      <View style={{ marginTop: 14 }}>
+      <Animated.View entering={FadeInDown.delay(420).springify()} style={{ marginTop: 14 }}>
         <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
           <Pressable accessibilityRole="button" onPress={() => router.push("/whale-settings")} className="min-h-20 flex-row items-center px-4 py-4">
             <View className="mr-3 h-11 w-11 items-center justify-center rounded-2xl bg-sky-400/20"><Ionicons name="options" size={22} color="#38BDF8" /></View>
@@ -858,7 +870,7 @@ function AiSettings() {
             <Ionicons name="chevron-forward" size={17} color="#94A3B8" />
           </Pressable>
         </GlassContainer>
-      </View>
+      </Animated.View>
     </>
   );
 }
@@ -872,7 +884,7 @@ function DataSettings() {
   return (
     <>
       {/* 数据 */}
-      <Animated.View entering={FadeInDown.springify()}>
+      <Animated.View entering={FadeInDown.delay(420).springify()} style={{ marginTop: 14 }}>
         <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
           <View className="px-4 py-4">
             <Text className="mb-3 text-[14px] font-bold text-slate-800 dark:text-white">
@@ -900,7 +912,6 @@ function DataSettings() {
           </View>
         </GlassContainer>
       </Animated.View>
-      <UpdateCard />
     </>
   );
 }
@@ -908,8 +919,12 @@ function DataSettings() {
 function ReminderAndWidgetSettings() {
   return (
     <>
-      <CourseReminderSettings />
-      <CourseWidgetSettings />
+      <Animated.View entering={FadeInDown.springify()}>
+        <CourseReminderSettings />
+      </Animated.View>
+      <Animated.View entering={FadeInDown.delay(420).springify()}>
+        <CourseWidgetSettings />
+      </Animated.View>
     </>
   );
 }
@@ -1001,76 +1016,11 @@ function OverviewStat({
   );
 }
 
-/** 常用操作：把散落在首页的入口在设置里也留一份快捷方式 */
-const QUICK_ACTIONS = [
-  {
-    key: "import",
-    label: "导入课表",
-    icon: "cloud-upload-outline",
-    onPress: () => router.push("/import"),
-  },
-  {
-    key: "grades",
-    label: "成绩",
-    icon: "stats-chart-outline",
-    onPress: () => router.push("/grades"),
-  },
-  {
-    key: "assistant",
-    label: "AI 助手",
-    icon: "sparkles-outline",
-    onPress: () => router.push("/assistant"),
-  },
-  {
-    key: "update",
-    label: "检查更新",
-    icon: "cloud-download-outline",
-    onPress: () =>
-      router.push({
-        pathname: "/settings/[category]",
-        params: { category: "data" },
-      }),
-  },
-] as const;
-
-function QuickActions() {
-  return (
-    <Animated.View
-      entering={FadeInDown.delay(150).springify()}
-      style={{ marginTop: 14 }}
-    >
-      <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
-        <View className="px-4 py-4">
-          <Text className="mb-3 text-[14px] font-bold text-slate-800 dark:text-white">
-            快捷操作
-          </Text>
-          <View className="flex-row gap-x-2">
-            {QUICK_ACTIONS.map((action) => (
-              <Pressable
-                key={action.key}
-                onPress={action.onPress}
-                accessibilityRole="button"
-                accessibilityLabel={action.label}
-                className="flex-1 items-center rounded-2xl border border-white/20 bg-white/15 py-3 dark:border-white/10 dark:bg-white/[0.05] active:bg-sky-400/15"
-              >
-                <Ionicons name={action.icon} size={18} color="#0EA5E9" />
-                <Text className="mt-1.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
-                  {action.label}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        </View>
-      </GlassContainer>
-    </Animated.View>
-  );
-}
-
 const SETTINGS_GROUPS = [
   {
     id: "schedule",
     title: "课表与学期",
-    description: "切换课表、开学与放假日期",
+    description: "切换课表、学期日期与数据管理",
     icon: "calendar-outline",
     Content: ScheduleSettings,
   },
@@ -1094,13 +1044,6 @@ const SETTINGS_GROUPS = [
     description: "DeepSeek API Key、人设与记忆",
     icon: "sparkles-outline",
     Content: AiSettings,
-  },
-  {
-    id: "data",
-    title: "数据与更新",
-    description: "数据概况、重置、检查更新",
-    icon: "settings-outline",
-    Content: DataSettings,
   },
 ] as const;
 
@@ -1178,7 +1121,7 @@ export function SettingsScreen() {
           ))}
         </GlassContainer>
       </Animated.View>
-      <QuickActions />
+      <UpdateCard />
       <Text className="mt-5 text-center text-[11px] text-slate-500 dark:text-slate-400">
         Dark Study v{currentVersion()}
       </Text>

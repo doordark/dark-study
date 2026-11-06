@@ -14,11 +14,7 @@ import {
   View,
   type ScrollViewInstance,
 } from "react-native";
-import Animated, {
-  FadeIn,
-  FadeInDown,
-  FadeOut,
-} from "react-native-reanimated";
+import Animated, { FadeIn, FadeInDown, FadeOut } from "react-native-reanimated";
 
 import { Backdrop } from "@/components/Backdrop";
 import { ChatImage } from "@/components/ChatImage";
@@ -282,7 +278,9 @@ export function AssistantScreen() {
     if (n < 3) return;
     tapHaptic();
     const idx = Math.min(n - 3, AVATAR_TAPS.length - 1);
-    flashReaction(renderPersonaText(AVATAR_TAPS[idx], useWhalePersona.getState().persona));
+    flashReaction(
+      renderPersonaText(AVATAR_TAPS[idx], useWhalePersona.getState().persona),
+    );
     if (idx === AVATAR_TAPS.length - 1) {
       taps.current.count = 0;
       thumpHaptic();
@@ -363,7 +361,13 @@ export function AssistantScreen() {
     const next = !voiceOn;
     tapHaptic();
     toggleVoiceStore();
-    if (next) speakWhale(renderPersonaText("声音开好啦，{{user}}。", useWhalePersona.getState().persona));
+    if (next)
+      speakWhale(
+        renderPersonaText(
+          "声音开好啦，{{user}}。",
+          useWhalePersona.getState().persona,
+        ),
+      );
     else stopWhaleVoice();
   };
 
@@ -473,7 +477,8 @@ export function AssistantScreen() {
         if (pick) {
           if (stickerTimer.current) clearTimeout(stickerTimer.current);
           stickerTimer.current = setTimeout(() => {
-            if (useWhaleMemory.getState().epoch === memoryEpoch) pushSticker(pick);
+            if (useWhaleMemory.getState().epoch === memoryEpoch)
+              pushSticker(pick);
           }, 420);
         }
       }
@@ -584,13 +589,17 @@ export function AssistantScreen() {
         hidePet();
         setMessages((prev) => [
           ...prev,
-          localMsg("（尾巴一摆，乖乖缩回水里）那我先回去啦，{{user}}想我就再叫一声。"),
+          localMsg(
+            "（尾巴一摆，乖乖缩回水里）那我先回去啦，{{user}}想我就再叫一声。",
+          ),
         ]);
       } else if (action.type === "forget_memory") {
         clearMemory();
         exitSelect();
         setMessages(() => [
-          localMsg("（歪了歪头）好，之前聊的我都不记得啦……{{user}}，我们重新认识一下？"),
+          localMsg(
+            "（歪了歪头）好，之前聊的我都不记得啦……{{user}}，我们重新认识一下？",
+          ),
         ]);
       }
     }
@@ -626,7 +635,18 @@ export function AssistantScreen() {
           style={{ paddingBottom: kbHeight }}
         >
           {/* 头部 */}
-          <View className="px-5 pb-2 pt-2" style={whale ? { borderBottomWidth: 1, borderBottomColor: "rgba(151,195,229,0.22)", backgroundColor: "rgba(172,205,238,0.08)" } : undefined}>
+          <View
+            className="px-5 pb-2 pt-2"
+            style={
+              whale
+                ? {
+                    borderBottomWidth: 1,
+                    borderBottomColor: "rgba(151,195,229,0.22)",
+                    backgroundColor: "rgba(172,205,238,0.08)",
+                  }
+                : undefined
+            }
+          >
             <Animated.View entering={FadeInDown.springify()}>
               <View className="flex-row items-center">
                 <Pressable
@@ -654,7 +674,9 @@ export function AssistantScreen() {
                         accessibilityRole="button"
                         accessibilityLabel={voiceOn ? "关闭鱼语" : "开启鱼语"}
                         className={`ml-1.5 h-7 w-7 items-center justify-center rounded-full ${
-                          voiceOn ? "bg-sky-400/20" : "bg-white/25 dark:bg-white/[0.07]"
+                          voiceOn
+                            ? "bg-sky-400/20"
+                            : "bg-white/25 dark:bg-white/[0.07]"
                         }`}
                       >
                         <Ionicons
@@ -665,11 +687,31 @@ export function AssistantScreen() {
                       </Pressable>
                     ) : null}
                   </View>
-                  {whale ? <Text style={{ color: "#7696B5", fontSize: 10, marginTop: 2, letterSpacing: 0.4 }}>✦ 一起漂浮在小小鲸海里</Text> : null}
+                  {whale ? (
+                    <Text
+                      style={{
+                        color: "#7696B5",
+                        fontSize: 10,
+                        marginTop: 2,
+                        letterSpacing: 0.4,
+                      }}
+                    >
+                      ✦ 小心鲸鱼娘抢你白饭
+                    </Text>
+                  ) : null}
                 </View>
                 {whale ? (
-                  <Pressable accessibilityRole="button" accessibilityLabel="人设与记忆" onPress={() => router.push("/whale-settings")} className="mr-2 h-11 w-11 items-center justify-center rounded-full bg-sky-400/15">
-                    <Ionicons name="options-outline" size={20} color="#38BDF8" />
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="人设与记忆"
+                    onPress={() => router.push("/whale-settings")}
+                    className="mr-2 h-11 w-11 items-center justify-center rounded-full bg-sky-400/15"
+                  >
+                    <Ionicons
+                      name="options-outline"
+                      size={20}
+                      color="#38BDF8"
+                    />
                   </Pressable>
                 ) : null}
                 <View style={{ position: "relative", zIndex: 20 }}>
@@ -771,7 +813,10 @@ export function AssistantScreen() {
                       </Text>
                       {whale ? (
                         <Text className="mt-1 text-center text-[10.5px] text-slate-500 dark:text-slate-400">
-                          {renderPersonaText("{{user}}，今天想让我做点什么？下面直接说就行。", persona)}
+                          {renderPersonaText(
+                            "{{user}}，今天想让我做点什么？下面直接说就行。",
+                            persona,
+                          )}
                         </Text>
                       ) : null}
                       {whale ? null : (
@@ -808,7 +853,9 @@ export function AssistantScreen() {
                     const checkDot = selectMode ? (
                       <View className="mr-1.5 self-center">
                         <Ionicons
-                          name={checked ? "checkmark-circle" : "ellipse-outline"}
+                          name={
+                            checked ? "checkmark-circle" : "ellipse-outline"
+                          }
                           size={19}
                           color={checked ? "#0EA5E9" : "#94A3B8"}
                         />
@@ -852,89 +899,103 @@ export function AssistantScreen() {
                             </View>
                           ) : null}
                           <View
-                          className={`max-w-[78%] overflow-hidden rounded-[22px] px-4 py-3 ${
-                            isUser
-                              ? "rounded-br-md bg-sky-600/85"
-                              : whale
-                                ? "rounded-bl-md border border-sky-200/70 bg-white/80 dark:border-sky-300/25 dark:bg-sky-400/15"
-                                : "rounded-bl-md border border-white/20 bg-white/35 dark:border-white/10 dark:bg-white/[0.08]"
-                          }`}
-                        >
-                          {whale ? <Image pointerEvents="none" source={require("../../assets/stickers/bubble.png")} resizeMode="contain" style={{ position: "absolute", width: 38, height: 38, right: -4, top: -6, opacity: isUser ? 0.13 : 0.18 }} /> : null}
-                          <Text
-                            className={`text-[13px] leading-[21px] ${
+                            className={`max-w-[78%] overflow-hidden rounded-[22px] px-4 py-3 ${
                               isUser
-                                ? "text-white"
+                                ? "rounded-br-md bg-sky-600/85"
                                 : whale
-                                  ? "text-sky-900 dark:text-sky-100"
-                                  : "text-slate-700 dark:text-slate-200"
+                                  ? "rounded-bl-md border border-sky-200/70 bg-white/80 dark:border-sky-300/25 dark:bg-sky-400/15"
+                                  : "rounded-bl-md border border-white/20 bg-white/35 dark:border-white/10 dark:bg-white/[0.08]"
                             }`}
                           >
-                            {m.content}
-                          </Text>
-
-                          {m.imageUri ? (
-                            <Pressable
-                              onPress={() => setPreview(m.imageUri!)}
-                              className="mt-2"
-                            >
-                              <ChatImage
-                                uri={m.imageUri}
-                                aspectRatio={m.imageAspect ?? 1}
+                            {whale ? (
+                              <Image
+                                pointerEvents="none"
+                                source={require("../../assets/stickers/bubble.png")}
+                                resizeMode="contain"
+                                style={{
+                                  position: "absolute",
+                                  width: 38,
+                                  height: 38,
+                                  right: -4,
+                                  top: -6,
+                                  opacity: isUser ? 0.13 : 0.18,
+                                }}
                               />
-                            </Pressable>
-                          ) : null}
+                            ) : null}
+                            <Text
+                              className={`text-[13px] leading-[21px] ${
+                                isUser
+                                  ? "text-white"
+                                  : whale
+                                    ? "text-sky-900 dark:text-sky-100"
+                                    : "text-slate-700 dark:text-slate-200"
+                              }`}
+                            >
+                              {m.content}
+                            </Text>
 
-                          {m.sources?.length ? (
-                            <View className="mt-2">
-                              <Text className="text-[9px] font-semibold tracking-wide text-sky-600/80 dark:text-sky-300/80">
-                                资料来源
-                              </Text>
-                              {m.sources.map((s) => (
-                                <Pressable
-                                  key={s.url}
-                                  onPress={() =>
-                                    Linking.openURL(s.url).catch(() => {})
-                                  }
-                                >
-                                  <Text
-                                    numberOfLines={1}
-                                    className="mt-0.5 text-[9.5px] text-slate-500 underline dark:text-slate-400"
+                            {m.imageUri ? (
+                              <Pressable
+                                onPress={() => setPreview(m.imageUri!)}
+                                className="mt-2"
+                              >
+                                <ChatImage
+                                  uri={m.imageUri}
+                                  aspectRatio={m.imageAspect ?? 1}
+                                />
+                              </Pressable>
+                            ) : null}
+
+                            {m.sources?.length ? (
+                              <View className="mt-2">
+                                <Text className="text-[9px] font-semibold tracking-wide text-sky-600/80 dark:text-sky-300/80">
+                                  资料来源
+                                </Text>
+                                {m.sources.map((s) => (
+                                  <Pressable
+                                    key={s.url}
+                                    onPress={() =>
+                                      Linking.openURL(s.url).catch(() => {})
+                                    }
                                   >
-                                    {s.title}
-                                  </Text>
-                                </Pressable>
-                              ))}
-                            </View>
-                          ) : null}
+                                    <Text
+                                      numberOfLines={1}
+                                      className="mt-0.5 text-[9.5px] text-slate-500 underline dark:text-slate-400"
+                                    >
+                                      {s.title}
+                                    </Text>
+                                  </Pressable>
+                                ))}
+                              </View>
+                            ) : null}
 
-                          {m.actions?.length ? (
-                            <Pressable
-                              onPress={() => applyActions(m.actions!)}
-                              className="mt-2.5 flex-row items-center self-start rounded-full bg-emerald-400/85 px-3.5 py-1.5"
-                            >
-                              <Ionicons
-                                name="checkmark-circle"
-                                size={13}
-                                color="#fff"
-                              />
-                              <Text className="ml-1 text-[11px] font-bold text-white">
-                                {m.actions.length > 1
-                                  ? `一键应用 ${m.actions.length} 项操作`
-                                  : m.actions[0].type === "add"
-                                    ? "应用：添加这门课"
-                                    : m.actions[0].type === "remove"
-                                      ? "应用：删除这门课"
-                                      : m.actions[0].type === "update"
-                                        ? "应用：更新这门课"
-                                        : m.actions[0].type ===
-                                            "create_schedule"
-                                          ? "应用：新建课表"
-                                          : "应用：合并课表"}
-                              </Text>
-                            </Pressable>
-                          ) : null}
-                        </View>
+                            {m.actions?.length ? (
+                              <Pressable
+                                onPress={() => applyActions(m.actions!)}
+                                className="mt-2.5 flex-row items-center self-start rounded-full bg-emerald-400/85 px-3.5 py-1.5"
+                              >
+                                <Ionicons
+                                  name="checkmark-circle"
+                                  size={13}
+                                  color="#fff"
+                                />
+                                <Text className="ml-1 text-[11px] font-bold text-white">
+                                  {m.actions.length > 1
+                                    ? `一键应用 ${m.actions.length} 项操作`
+                                    : m.actions[0].type === "add"
+                                      ? "应用：添加这门课"
+                                      : m.actions[0].type === "remove"
+                                        ? "应用：删除这门课"
+                                        : m.actions[0].type === "update"
+                                          ? "应用：更新这门课"
+                                          : m.actions[0].type ===
+                                              "create_schedule"
+                                            ? "应用：新建课表"
+                                            : "应用：合并课表"}
+                                </Text>
+                              </Pressable>
+                            ) : null}
+                          </View>
                           {isUser ? checkDot : null}
                         </Animated.View>
                       </Pressable>
@@ -1021,7 +1082,11 @@ export function AssistantScreen() {
             onSend={() => send(input)}
             busy={busy}
             whaleTheme={whale}
-            placeholder={whale ? renderPersonaText("跟{{char}}说点什么吧，{{user}}…", persona) : undefined}
+            placeholder={
+              whale
+                ? renderPersonaText("跟{{char}}说点什么吧，{{user}}…", persona)
+                : undefined
+            }
             bottomInset={kbHeight > 0 ? 10 : undefined}
           />
         </Animated.View>

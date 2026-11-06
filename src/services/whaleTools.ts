@@ -44,8 +44,11 @@ function stripTags(input: string) {
     .trim();
 }
 
-async function fetchHtml(url: string) {
+async function fetchHtml(url: string, signal?: AbortSignal) {
+  if (signal?.aborted) throw new Error("搜索已取消");
   const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort, { once: true });
   const timer = setTimeout(() => controller.abort(), 15_000);
   try {
     const res = await fetch(url, { headers: HEADERS, signal: controller.signal });
@@ -53,6 +56,7 @@ async function fetchHtml(url: string) {
     return await res.text();
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
   }
 }
 
@@ -103,7 +107,7 @@ function parseDuckDuckGo(html: string): SearchHit[] {
 }
 
 /** 联网搜索，返回前 5 条结果（无需 API Key） */
-export async function searchWeb(query: string): Promise<SearchHit[]> {
+export async function searchWeb(query: string, signal?: AbortSignal): Promise<SearchHit[]> {
   const q = query.trim().slice(0, 120);
   if (!q) return [];
 
@@ -111,24 +115,25 @@ export async function searchWeb(query: string): Promise<SearchHit[]> {
     async (text) =>
       parseBing(
         await fetchHtml(
-          `https://cn.bing.com/search?q=${encodeURIComponent(text)}&setlang=zh-Hans&ensearch=0`,
+          `https://cn.bing.com/search?q=${encodeURIComponent(text)}&setlang=zh-Hans&ensearch=0`, signal,
         ),
       ),
     async (text) =>
       parseBing(
         await fetchHtml(
-          `https://www.bing.com/search?q=${encodeURIComponent(text)}&setmkt=zh-CN`,
+          `https://www.bing.com/search?q=${encodeURIComponent(text)}&setmkt=zh-CN`, signal,
         ),
       ),
     async (text) =>
       parseDuckDuckGo(
         await fetchHtml(
-          `https://html.duckduckgo.com/html/?q=${encodeURIComponent(text)}`,
+          `https://html.duckduckgo.com/html/?q=${encodeURIComponent(text)}`, signal,
         ),
       ),
   ];
 
   for (const engine of engines) {
+    if (signal?.aborted) throw new Error("搜索已取消");
     try {
       const hits = await engine(q);
       if (hits.length) return hits;

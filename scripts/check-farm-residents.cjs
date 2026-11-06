@@ -45,24 +45,35 @@ let door = memories.door;
 const oldTopic = { id: 'garden', player: '我喜欢种蓝莓', reply: '下回可以聊蓝莓怎么过冬。' };
 door = memory.recordFarmChatTurn(door, oldTopic);
 door = memory.recordFarmChatTurn(door, { ...oldTopic, id: 'duplicate', player: '我喜欢种蓝莓！' });
-assert.equal(door.affinity, 2);
+assert.equal(door.affinity, 0);
 assert.equal(memory.recordFarmChatTurn(door, oldTopic), door);
 for (let index = 0; index < 5; index += 1) {
   door = memory.recordFarmChatTurn(door, { id: 'other-' + index, player: '自定义游戏地图 ' + index, reply: '有意思。' });
 }
-assert.equal(door.affinity, 12);
+assert.equal(door.affinity, 0);
 assert.deepEqual(memories.xiaoba, { affinity: 0, turns: [] });
 assert(memory.farmChatContext(door, '蓝莓怎么过冬').some(turn => turn.id === 'garden'));
 assert.match(memory.offlineFarmRecall('door', door, '蓝莓怎么过冬'), /我喜欢种蓝莓/);
 assert(memory.isFarmChatContinuation('继续上次的话题'));
 door = memory.recordFarmChatTurn(door, { id: 'continue', player: memory.CONTINUE_FARM_CHAT, reply: '接着说地图吧。' });
-assert.equal(door.affinity, 12);
+assert.equal(door.affinity, 0);
 assert.match(memory.offlineFarmRecall('door', door, '接着上次聊'), /自定义游戏地图/);
 for (let index = 0; index < 60; index += 1) {
-  door = memory.recordFarmChatTurn(door, { id: 'later-' + index, player: '数学话题 ' + index, reply: '好。' });
+  door = memory.recordFarmChatTurn(door, { id: 'later-' + index, player: '数学话题 ' + index, reply: '好。' }, 'warm');
 }
 assert.equal(door.turns.length, 24);
 assert.equal(door.affinity, 100);
+door = memory.recordFarmChatTurn(door, { id: 'tease', player: '儿子', reply: '别这么叫我。' });
+assert.equal(door.affinity, 96);
+assert.equal(door.mood, '不悦');
+door = memory.recordFarmChatTurn(door, { id: 'insult', player: '你真是废物', reply: '这话过了。' });
+assert.equal(door.affinity, 88);
+assert.equal(door.mood, '生气');
+assert.equal(memory.localSocialReaction('我儿子今天放假'), 'neutral');
+assert.equal(memory.localSocialReaction('“你真是废物”是什么意思？'), 'neutral');
+door = memory.recordFarmChatTurn(door, { id: 'apology', player: '对不起', reply: '给我一点时间。' });
+assert.equal(door.affinity, 89);
+assert.equal(door.mood, '缓和');
 assert.deepEqual(memory.restoreFarmMemories(JSON.parse(JSON.stringify({ ...memories, door }))).door, door);
 for(const scene of life.LOCAL_SCENES)assert(life.readLifeReply(JSON.stringify({lines:scene.pair.map((speaker,i)=>({speaker,text:scene.lines[i]}))}),scene.pair));
 for(const invalid of ['no json','null','{"reply":"好","action":{"type":"coins","value":9999}}','{"reply":"好","action":{"type":"fetch_water","coins":99}}','{"reply":"好","action":{"type":"visit","target":"roof"}}','{"reply":"好","action":{"type":"talk_to","target":"hacker"}}'])assert.equal(actions.parseNpcReply(invalid),null);

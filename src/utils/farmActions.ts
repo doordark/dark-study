@@ -1,4 +1,5 @@
 import { isResidentId, RESIDENTS, RESIDENT_IDS, type ResidentId } from './farmLife';
+import { SOCIAL_REACTIONS, type SocialReaction } from './farmMemory';
 export const FARM_LOCATIONS = ['pond', 'farm', 'plaza', 'house', 'coop', 'bench', 'market'] as const;
 export type FarmLocation = typeof FARM_LOCATIONS[number];
 export type FarmDiscussionAction = { type: 'discuss'; question: string; guests: ResidentId[] };
@@ -33,21 +34,26 @@ export function validateNpcAction(raw: unknown): NpcAction | null {
   };
   return null;
 }
-export function parseNpcReply(raw: string): {
+export function parseNpcReply(raw: string, social = false): {
   reply: string;
   action: NpcAction | null;
+  reaction?: SocialReaction;
 } | null {
   try {
     const v = JSON.parse(raw);
-    if (!v || typeof v !== 'object' || Array.isArray(v) || Object.keys(v).some(k => !['reply', 'action'].includes(k)) || typeof v.reply !== 'string' || !v.reply.trim() || v.reply.length > 240 || !('action' in v)) return null;
+    if (!v || typeof v !== 'object' || Array.isArray(v) || Object.keys(v).some(k => !['reply', 'action', ...(social ? ['reaction'] : [])].includes(k)) || typeof v.reply !== 'string' || !v.reply.trim() || v.reply.length > 240 || !('action' in v)) return null;
+    if (v.reaction !== undefined && !SOCIAL_REACTIONS.includes(v.reaction)) return null;
+    const reaction = v.reaction === undefined ? {} : { reaction: v.reaction as SocialReaction };
     if (v.action === null || v.action?.type === 'none' && Object.keys(v.action).length === 1) return {
       reply: v.reply.trim(),
-      action: null
+      action: null,
+      ...reaction,
     };
     const action = validateNpcAction(v.action);
     return action ? {
       reply: v.reply.trim(),
-      action
+      action,
+      ...reaction,
     } : null;
   } catch {
     return null;

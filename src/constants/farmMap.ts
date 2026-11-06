@@ -18,7 +18,7 @@ export const PLAZA = { x: 64, y: 226, w: 66, h: 41, center: { x: 95, y: 247 } } 
 export const BENCH = { x: 100, y: 220, w: 24, h: 20, footY: 238, approach: { x: 114, y: 244 } } as const;
 export const TREE = { x: 0, y: 231, w: 59, h: 76, footY: 302 } as const;
 export const PLOTS = Array.from({ length: 16 }, (_, id) => ({
-  id, x: 86 + (id % 4) * 17.5, y: 137 + Math.floor(id / 4) * 16.5, w: 15.5, h: 14.5,
+  id, x: 85.5 + (id % 4) * 17.5, y: 142 + Math.floor(id / 4) * 15, w: 15.5, h: 13.5,
 }));
 export const PLOT_BOUNDS: FarmRect = { x: 85, y: 136, w: 70, h: 65 };
 export const PLAYER_START: FarmPoint = { x: 70, y: 151 };

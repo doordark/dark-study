@@ -1,6 +1,6 @@
 import { AtlasSprite } from '@/components/AtlasSprite';
-import type { ReactNode } from 'react';
-import { Image, Platform, Pressable, StyleSheet, Text, type StyleProp, type TextProps, type ViewStyle } from 'react-native';
+import { useState, type ReactNode } from 'react';
+import { Image, Platform, Pressable, StyleSheet, Text, View, type StyleProp, type TextProps, type ViewStyle } from 'react-native';
 
 export type FarmTone = 'paper' | 'sage' | 'rose' | 'blue';
 export const FARM_INK = '#59432E';
@@ -46,10 +46,12 @@ export function FarmFunctionIcon({ name, size = 22 }: { name: keyof typeof iconC
 export function FarmButton({ children, label, onPress, disabled, tone = 'sage', variant = 'soft', icon, style }: {
   children?: ReactNode; label?: string; onPress: () => void; disabled?: boolean; tone?: FarmTone; variant?: 'soft' | 'icon'; icon?: keyof typeof iconColumns; style?: StyleProp<ViewStyle>;
 }) {
+  const [bounds, setBounds] = useState({ width: 100, height: 44 });
   const fills = { paper: '#FFF7E5', sage: '#E1E8CF', rose: '#F4DFDF', blue: '#DDECF0' };
-  return <Pressable accessibilityRole="button" disabled={disabled} accessibilityState={{ disabled: !!disabled }} onPress={onPress}
+  return <Pressable onLayout={e => { const { width, height } = e.nativeEvent.layout; setBounds(previous => previous.width === width && previous.height === height ? previous : { width, height }); }} accessibilityRole="button" disabled={disabled} accessibilityState={{ disabled: !!disabled }} onPress={onPress}
     android_ripple={{ color: '#B9A58130' }}
     style={[{ minHeight: 44, minWidth: 44, paddingHorizontal: 12, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: fills[tone], borderWidth: 1, borderColor: '#CFBE9E', borderBottomWidth: 2, borderRadius: variant === 'icon' ? 22 : 10, overflow: 'hidden', opacity: disabled ? .48 : 1 }, style]}>
+    {variant === 'soft' ? <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0 }}><AtlasSprite source={require('../../../assets/images/farm-buttons-v7.png')} columns={2} rows={2} column={disabled || tone === 'sage' ? 1 : 0} row={disabled ? 1 : 0} width={bounds.width} height={bounds.height} /></View> : null}
     {icon ? <FarmFunctionIcon name={icon} /> : null}
     {children ?? <FarmText variant="label" numberOfLines={1} style={{ fontSize: 12, textAlign: 'center' }}>{label}</FarmText>}
   </Pressable>;
