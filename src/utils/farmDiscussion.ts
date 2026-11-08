@@ -10,16 +10,23 @@ export interface FarmDiscussion {
 }
 
 /** Reject obvious topic loss in generated request replies; keep the grounded local plan. */
-export function requestBatchOnTopic(question: string, lines: readonly { text: string }[]): boolean {
+export function requestBatchOnTopic(question: string, lines: readonly { text: string; speaker?: ResidentId }[], target?: ResidentId): boolean {
   let content = question;
   for (const resident of Object.values(RESIDENTS)) content = content.replaceAll(resident.name, ' ');
   content = content.replace(/伟刚|伟纲|唯纲|客人|帮我|替我|你去|去找|找他|问问|问一下|质问|转告|告诉|带话|传话|一下|这件事|刚才|为什么|聊聊|说说/g, ' ');
   const terms = content.match(/[\p{Script=Han}a-zA-Z0-9]+/gu) ?? [];
-  const anchors = terms.flatMap(term => term.length === 1 ? [term] : Array.from({ length: term.length - 1 }, (_, i) => term.slice(i, i + 2)));
-  const reply = lines.map(line => line.text).join('');
-  if (/骂|辱/.test(question) && /骂|辱|原话|言语/.test(reply)) return true;
-  if (/欺负|欺凌/.test(question) && /欺负|欺凌|经过|受伤/.test(reply)) return true;
-  return anchors.length === 0 || anchors.some(anchor => reply.includes(anchor));
+  const noise = /我|你|他|她|这个|那个|一下|的话|事情|怎么|什么|时候|可以|能不能|是不是|好的|问题|客人|说的|想问|喜欢|觉得/;
+  const anchors = terms.flatMap(term => Array.from({ length: Math.max(0, term.length - 1) }, (_, i) => term.slice(i, i + 2))).filter(term => !noise.test(term));
+  const semantic: [RegExp, RegExp][] = [[/骂|辱/, /骂|辱|原话|言语/], [/欺负|欺凌/, /欺负|欺凌/], [/几点|什么时候|何时/, /时间|几点|时候|点钟|安排|还没定/], [/回家/, /回家|回屋|回去/], [/浇水/, /浇水|水壶|土壤|缺水/], [/音乐|唱歌/, /音乐|唱歌|歌曲|唱|副歌/]];
+  const matches = (text: string) => anchors.some(anchor => text.includes(anchor)) || semantic.some(([source, reply]) => source.test(question) && reply.test(text));
+  const required = semantic.filter(([source]) => source.test(question));
+  const unrelated = [/游戏|关卡|地图/, /钓鱼|鱼竿|钓位/, /音乐|唱歌|副歌/, /种菜|播种|浇水/, /小说|故事|读书/, /数学|方程/, /工具|编程|电脑/].filter(topic => !topic.test(question));
+  if (!anchors.length && !semantic.some(([source]) => source.test(question))) return false;
+  return lines.length > 0 && lines.every(line => {
+    if (unrelated.some(topic => topic.test(line.text))) return false;
+    if (!target || line.speaker === target) return matches(line.text) && required.every(([, reply]) => reply.test(line.text));
+    return matches(line.text) || /核实|确认|转达|答复|原话|这件事|这个问题|不确定|没听清/.test(line.text);
+  });
 }
 
 export const RESIDENT_OUTLOOK: Record<ResidentId, { voice: string; approach: string; pushback: string; soften: string }> = {
@@ -42,16 +49,16 @@ const TOPIC_VIEWS: Record<FarmTopicId, readonly [string, string, string]> = {
   pets: ['小动物愿意走过来以前，可以先坐在它看得到的地方。', '也得留条退路，它害怕时能自己回到窝里。', '那我们坐远一点，让它自己决定什么时候过来。'],
 };
 
-export function discussionLines(participants: readonly ResidentId[], discussion: FarmDiscussion): Omit<ResidentLine, 'at'>[] {
+export function discussionLines(participants: readonly ResidentId[], discussion: FarmDiscussion, variant = 0): Omit<ResidentLine, 'at'>[] {
   if (discussion.kind === 'request' && discussion.question) {
     const [actor, target] = participants;
     const concern = /骂|欺负|质问|误会/.test(discussion.question);
-    const subject = discussion.question.slice(0, 28);
+    const subject = discussion.question.slice(-28);
     return [
       { speaker: actor, text: `客人托我来问这件事：「${subject}」` },
-      { speaker: target, text: concern ? '我听到了。能说说当时的原话和情境吗？' : '你带的话我听到了，具体想问哪一点？' },
+      { speaker: target, text: concern ? '关于骂人的转述，我想先核对原话和情境。' : `你问「${subject.slice(-18)}」，我听清了。` },
       { speaker: actor, text: concern ? '我没有亲眼见到，先来听你的说法。' : '我先确认你的意思，再如实带回去。' },
-      { speaker: target, text: concern ? '只凭转述还不能判断，要把原话核对清楚。' : '我还需要具体情况，不能随口答应。' },
+      { speaker: target, text: concern ? '骂人的事还没核实，不能只凭转述定论。' : `「${subject.slice(-18)}」我暂时不能确定答复。` },
       { speaker: actor, text: '好，我会转达：已经问过，还需要核实细节。' },
       { speaker: target, text: '嗯，请如实转达，不要替我编结论。' },
     ];
@@ -62,7 +69,12 @@ export function discussionLines(participants: readonly ResidentId[], discussion:
   const opening = discussion.question
     ? '客人请我们一起想想：' + discussion.question.slice(0, 34)
     : discussion.relayedBy ? RESIDENTS[discussion.relayedBy].name + '和我刚聊过' + topic + '。我还想听听你的看法。'
-      : participants.length === 3 ? RESIDENTS[participants[2]].name + '也来聊聊吧。我们正聊' + topic + '。' : '说到' + topic + '，我想听听你怎么想。';
+      : participants.length === 3 ? RESIDENTS[participants[2]].name + '也来聊聊吧。我们正聊' + topic + '。' : [
+        '说到' + topic + '，我想听听你怎么想。',
+        '关于' + topic + '，你最想先试哪一点？',
+        '我对' + topic + '有个没想明白的地方。',
+        '聊聊' + topic + '吧，这次我想先听你的看法。',
+      ][Math.abs(variant) % 4];
   return [
     ...participants.map((speaker, index) => ({
       speaker,

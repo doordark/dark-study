@@ -280,6 +280,7 @@ export interface ResidentConversation {
   sharedTopic?: SharedFarmTopic;
   discussion?: FarmDiscussion;
   requestOutcome?: string;
+  taskId?: string;
   activity?: 'project' | 'rest';
   online: boolean;
   lines: ResidentLine[];
@@ -343,6 +344,7 @@ export function restoreConversations(raw: unknown): ResidentConversation[] {
       } : undefined;
       if (participants.length && participants.length <= 3 && lines.length) result.push({
         ...(kind === 'request' && typeof v.requestOutcome === 'string' ? { requestOutcome: v.requestOutcome.slice(0, 240) } : {}),
+        ...(typeof v.taskId === 'string' ? { taskId: v.taskId.slice(0, 100) } : {}),
         ...(discussion ? { discussion } : {}),
         ...(v.source === 'scheduled/local' && (v.activity === 'project' || v.activity === 'rest') ? { activity: v.activity } : {}),
         ...(sharedTopic ? { sharedTopic } : {}),

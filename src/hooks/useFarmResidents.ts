@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { useReducedMotion } from 'react-native-reanimated';
 import { farmChat } from '@/services/farmChat';
-import { FarmResidentEngine, type ResidentEffect } from '@/utils/farmResidentAI';
+import { FarmResidentEngine, type ResidentEffect, type ResidentModel } from '@/utils/farmResidentAI';
 import { DEFAULT_LIFE, FARM_FAMILY_CONTEXT, FARM_TOPICS, PRESETS, RESIDENTS, normalizeLifeSettings, normalizeLifeUsage, readLifeBatch, reserveLifeRequest, restoreConversations, type LifeMode, type LifeSettings, type ResidentConversation, type ResidentId } from '@/utils/farmLife';
 import { RESIDENT_PROJECTS, readResidentBatchIntent, residentReflections } from '@/utils/farmAgency';
 import { RESIDENT_OUTLOOK } from '@/utils/farmDiscussion';
@@ -25,6 +25,7 @@ export interface FarmResidentsOptions {
   apiKey: string;
   memories: FarmMemories;
   onWork: (actor: ResidentId, action: NpcAction, id: string) => string;
+  onAssignments?: (residents: ResidentModel[], history: ResidentConversation[]) => void;
 }
 /** One 500ms scheduler, no per-frame React state, no offline AI catch-up. */
 export function useFarmResidents(options: FarmResidentsOptions) {
@@ -81,7 +82,9 @@ export function useFarmResidents(options: FarmResidentsOptions) {
     requests.current.clear();
   }, []);
   const publish = useCallback(() => {
-    setResidents(engine.snapshot());
+    const snapshot = engine.snapshot();
+    setResidents(snapshot);
+    if (Object.values(latest.current.memories).some(memory => memory.assignment && ['walking', 'talking'].includes(memory.assignment.status))) latest.current.onAssignments?.(snapshot, engine.history);
     if (revision.current !== engine.historyRevision) {
       revision.current = engine.historyRevision;
       setHistory(engine.takeHistory());
@@ -223,6 +226,9 @@ export function useFarmResidents(options: FarmResidentsOptions) {
         : '';
       const context = [
         discussion?.question ? '客人授权带给在场家人的问题：' + JSON.stringify(discussion.question) : '',
+        discussion?.kind === 'request' ? '被询问者是' + RESIDENTS[event.pair[1]].name + '。问题中的“我、我的”指客人，不是来访的家人，不得把客人的经历说成自己的经历。对方的每一次答复都要回应上述问题的具体内容，不能只用“好、知道了、再说吧”等套话代替，也不能碰一下关键词就转入闲聊。不清楚就明确说哪一点不清楚。' : '',
+        !previous.length && event.opening ? '本次从这段新开场切入，可按各自性格自然改写，不能换成无关的固定话题：\n' + event.opening : '',
+        !previous.length && event.source === 'encounter' ? '避免重复最近的开头：' + engine.history.filter(record => record.id !== event.id && event.pair.every(id => record.participants.includes(id))).slice(-3).map(record => record.lines.slice(0, 2).map(line => line.text).join(' / ')).join('；') : '',
         previous.length ? '已发生的对白：\n' + previous.map(line => RESIDENTS[line.speaker].name + '：' + line.text).join('\n') : '',
       ].filter(Boolean).join('\n');
       const raw = await farmChat([{
@@ -299,6 +305,16 @@ export function useFarmResidents(options: FarmResidentsOptions) {
     abortAll();
     publish();
   }, [engine, publish, abortAll]);
+  const cancelCommand = useCallback((who: ResidentId, id: string) => {
+    const cancelled = engine.cancelCommand(who, id, now());
+    if (cancelled) {
+      requests.current.forEach((request, key) => {
+        if (!engine.getConversation(key)) { request.abort(); requests.current.delete(key); }
+      });
+      publish();
+    }
+    return cancelled;
+  }, [engine, publish]);
   const updateSettings = useCallback((patch: Partial<LifeSettings>) => setSettings(previous => normalizeLifeSettings({
     ...previous,
     ...patch,
@@ -319,6 +335,7 @@ export function useFarmResidents(options: FarmResidentsOptions) {
     autonomous: options.autonomous,
     reducedMotion,
     command,
+    cancelCommand,
     interact,
     updateSettings,
     applyPreset

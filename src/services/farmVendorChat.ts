@@ -1,11 +1,11 @@
 import { farmChat, FarmChatError } from './farmChat';
 import { searchWeb } from './whaleTools';
-import { farmChatContext, localSocialReaction, SOCIAL_REACTIONS, type ResidentMemory, type SocialReaction } from '../utils/farmMemory';
+import { farmChatContext, localSocialReaction, SOCIAL_REACTIONS, NPC_CHAT_UNAVAILABLE, type ResidentMemory, type SocialReaction } from '../utils/farmMemory';
 import { personalityContext, personalityReply } from '../utils/farmPersonality';
 import { EXTRA_NAMES, VENDOR_NAMES, VENDOR_PERSONAS, marketOffers, vendorQuotedPrice, vendorDiscountLimit, type Vendor, type VendorPriceDeal } from '../utils/farmMarket';
 import { CROP_LABELS } from '../utils/farmEconomy';
 
-export const NPC_CHAT_UNAVAILABLE = '现在不方便聊天，稍后再来找我吧。';
+export { NPC_CHAT_UNAVAILABLE } from '../utils/farmMemory';
 export interface VendorChatReply { reply: string; reaction: SocialReaction; discountPercent?: number; unavailable?: true }
 
 export function readVendorReply(raw: string): VendorChatReply | null {

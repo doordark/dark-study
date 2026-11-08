@@ -4,7 +4,8 @@ import { farmSegmentClear, nearestFarmWaypoint, safeFarmPoint, waypointFarmRoute
 import { DEFAULT_LIFE, LONG_TALK_MAX, RESIDENTS, RESIDENT_IDS, SHORT_TALK_MAX, TALK_BATCH_ROUNDS, lifeDate, localConversation, normalizeLifeSettings, sharedTopicExchange, type FarmTopicId, type SharedFarmTopic, type LifeSettings, type ResidentId, type ResidentConversation, type ResidentLine } from './farmLife';
 import { validateNpcAction, type NpcAction, type FarmLocation } from './farmActions';
 import { discussionLines, requestBatchOnTopic, type FarmDiscussion, type ResidentMood } from './farmDiscussion';
-import { publicFarmTopic } from './farmMemory';
+import { publicFarmTopic, NPC_CHAT_UNAVAILABLE } from './farmMemory';
+import { ambientConversation } from './farmAmbientTalk';
 import { RESIDENT_PROJECTS, readResidentIntent, type ResidentIntent } from './farmAgency';
 export type ResidentState = 'idle' | 'wandering' | 'walking' | 'talking' | 'working' | 'going_home';
 export interface ResidentMotion {
@@ -62,6 +63,7 @@ export type ResidentEffect = {
   natural: boolean;
   finalBatch: boolean;
   sharedTopic?: SharedFarmTopic;
+  opening?: string;
 };
 interface PlayingConversation {
   record: ResidentConversation;
@@ -164,6 +166,7 @@ export class FarmResidentEngine {
   private effects: ResidentEffect[] = [];
   private sequence = 0;
   private encounterAt = 0;
+  private night = false;
   private pausedAt: number | null = null;
   settings: LifeSettings = {
     ...DEFAULT_LIFE
@@ -381,7 +384,7 @@ export class FarmResidentEngine {
   private recordInterruptedRequest(r: ResidentModel, at: number) {
     if (r.task?.discussion?.kind !== 'request' || r.task.phase === 'reserved' || r.task.phase === 'conversation') return;
     this.history = [...this.history, {
-      id: r.task.id + '-interrupted', participants: [r.id, ...(r.task.action.type === 'talk_to' ? [r.task.action.target] : [])],
+      id: r.task.id + '-interrupted', taskId: r.task.id, participants: [r.id, ...(r.task.action.type === 'talk_to' ? [r.task.action.target] : [])],
       discussion: r.task.discussion, startedAt: r.task.createdAt, endedAt: at, source: 'player_command' as const,
       online: false, lines: [{ speaker: r.id, text: '这次带话还没有完成。', at }],
       requestOutcome: '这次带话途中中断了，还没有问到对方，不能当作已经办好。',
@@ -416,6 +419,11 @@ export class FarmResidentEngine {
       text: text.slice(0, 80),
       until: at + 5000
     };
+  }
+  cancelCommand(who: ResidentId, id: string, at: number) {
+    if (this.residents[who].task?.id !== id) return false;
+    this.cancelTask(this.residents[who], at);
+    return true;
   }
   command(who: ResidentId, raw: unknown, at: number): {
     ok: boolean;
@@ -542,26 +550,31 @@ export class FarmResidentEngine {
     ));
     const sharedTopic = candidate && this.random() < 0.35 ? candidate : undefined;
     const opener = sharedTopic ? sharedTopicExchange(pair, sharedTopic) : [];
-    const local = discussion ? discussionLines(participants, discussion) : [];
-    const reflective = !discussion && !opener.length && first === 'xiaoba' && (a.mood === '低落' || a.mood === '平静' && this.random() < 0.25);
+    const pairHistory = this.history.filter(record => pair.every(id => record.participants.includes(id)));
+    const local = discussion ? discussionLines(participants, discussion, pairHistory.length) : [];
+    const reflective = !discussion && !opener.length && first === 'xiaoba' && !pairHistory.slice(-3).some(record => record.lines[0]?.text.includes('提不起劲')) && (a.mood === '低落' || a.mood === '平静' && this.random() < 0.25);
     if (reflective) { a.mood = '低落'; a.moodUntil = at + 90000; }
     const moodLines: Omit<ResidentLine, 'at'>[] = reflective ? [
       { speaker: first, text: '我今天有点提不起劲。能陪我坐一小会儿吗？' },
       { speaker: second, text: second === 'chicken' ? '咕，我就蹲你旁边。' : '好。我陪着你。你想说话的时候再说。' },
     ] : [];
-    const planned = [...opener, ...moodLines, ...local, ...(!requested && participants.length === 2 ? localConversation(pair, rounds, this.sequence) : [])].slice(0, rounds * participants.length);
+    const network = this.settings.online && this.settings.aiRatio > 0 && this.random() * 100 < this.settings.aiRatio;
+    const ambient = source === 'encounter' && participants.length === 2 && !discussion && !opener.length && !moodLines.length
+      ? ambientConversation(pair, this.history, a.currentWaypoint + ' ' + b.currentWaypoint, this.night, this.random()) : [];
+    const planned = requested && !network ? [local[0], { speaker: second, text: NPC_CHAT_UNAVAILABLE }]
+      : [...opener, ...moodLines, ...local, ...ambient, ...(!requested && participants.length === 2 ? localConversation(pair, rounds, this.history.filter(record => pair.every(id => record.participants.includes(id))).length) : [])].slice(0, rounds * participants.length);
     if (rounds > SHORT_TALK_MAX) this.closeLocalTalk(pair, planned);
     const record: ResidentConversation = {
       id,
       participants,
       ...(discussion ? { discussion } : {}),
+      ...(requested && a.task ? { taskId: a.task.id } : {}),
       startedAt: at,
       endedAt: null,
       source,
       online: false,
       lines: []
     };
-    const network = this.settings.online && this.settings.aiRatio > 0 && this.random() * 100 < this.settings.aiRatio;
     const conversation: PlayingConversation = {
       record,
       planned,
@@ -608,7 +621,12 @@ export class FarmResidentEngine {
   }
   private continueConversationLocally(c: PlayingConversation) {
     c.network = false;
-    if (c.record.discussion?.kind === 'request') return;
+    if (c.record.discussion?.kind === 'request') {
+      c.planned.splice(c.index, c.planned.length - c.index,
+        { speaker: c.record.participants[0], text: '这件事先不催你，有答复再如实转达。' },
+        { speaker: c.record.participants[1], text: NPC_CHAT_UNAVAILABLE });
+      return;
+    }
     if (c.record.online && c.record.participants.length === 2 && c.index < c.planned.length) {
       const pair = c.record.participants as [ResidentId, ResidentId];
       const rounds = (c.planned.length - c.index) / 2;
@@ -635,6 +653,7 @@ export class FarmResidentEngine {
       natural: c.natural,
       finalBatch: rounds === remaining,
       sharedTopic: c.sharedTopic,
+      opening: c.record.source === 'encounter' && !c.record.discussion ? c.planned.slice(0, 2).map(line => RESIDENTS[line.speaker].name + '：' + line.text).join('\n') : undefined,
     });
   }
   supplyConversation(id: string, lines: Omit<ResidentLine, 'at'>[] | null, online: boolean, at: number, done = false, next?: ResidentIntent) {
@@ -643,7 +662,8 @@ export class FarmResidentEngine {
     const expected = c.batchEnd - c.index;
     const ending = c.natural && done;
     const speakers = c.record.participants.length;
-    if (lines && (c.record.discussion?.kind !== 'request' || requestBatchOnTopic(c.record.discussion.question ?? '', lines)) && (lines.length === expected || ending && lines.length >= Math.min(2 * speakers, expected) && lines.length < expected && lines.length % speakers === 0) &&
+    const repeatedOpening = lines && c.index === 0 && c.record.source === 'encounter' && this.history.filter(record => record.id !== id && c.record.participants.every(who => record.participants.includes(who))).slice(-3).some(record => record.lines[0]?.text === lines[0]?.text);
+    if (lines && !repeatedOpening && (c.record.discussion?.kind !== 'request' || requestBatchOnTopic(c.record.discussion.question ?? '', lines, c.record.participants[1])) && (lines.length === expected || ending && lines.length >= Math.min(2 * speakers, expected) && lines.length < expected && lines.length % speakers === 0) &&
         lines.every((line, index) => (speakers === 3 && online
           ? c.record.participants.includes(line.speaker) && (index === 0 || lines[index - 1].speaker !== line.speaker)
           : line.speaker === c.record.participants[index % speakers]) && line.text.trim() && line.text.length <= 44) &&
@@ -668,7 +688,9 @@ export class FarmResidentEngine {
       const target = c.record.participants[1];
       const responses = c.record.lines.filter(line => line.speaker === target);
       const response = [...responses].reverse().find(line => !/请如实转达|不要替我编结论/.test(line.text)) ?? responses.at(-1);
-      c.record.requestOutcome = completed && response
+      c.record.requestOutcome = completed && response?.text === NPC_CHAT_UNAVAILABLE
+        ? `我找到了${RESIDENTS[target].name}，但对方现在不方便聊天，还没得到这件事的答复。`
+        : completed && response
         ? `我已经找${RESIDENTS[target].name}问过「${c.record.discussion.question?.slice(0, 40)}」。对方最后说：「${response.text}」`
         : '刚才的带话还没完成，不能当作已经问清楚。';
       this.bubble(this.residents[c.record.participants[0]], c.record.requestOutcome, at);
@@ -777,6 +799,7 @@ export class FarmResidentEngine {
     reducedMotion?: boolean;
   } = {}) {
     if (this.pausedAt !== null) return;
+    this.night = night;
     this.advancePositions(at);
     for (const c of [...this.conversations.values()]) {
       if (c.arranging) {
@@ -902,7 +925,12 @@ export class FarmResidentEngine {
       if (distance(a.logicalPosition, b.logicalPosition) > 22 || !farmSegmentClear(a.logicalPosition, b.logicalPosition)) continue;
       if (this.random() * 100 >= this.settings.encounterChance * (night ? this.settings.nightActivity / 100 : 1)) continue;
       const roll = this.random();
-      const topic = (this.settings.shareTopics ? this.publicTopics[a.id]?.[0] ?? this.publicTopics[b.id]?.[0] : undefined) ?? (a.id === 'door' ? 'tech' : a.id === 'gu' ? 'garden' : 'games');
+      const interests: Record<ResidentId, FarmTopicId[]> = { door: ['tech', 'books', 'music'], gu: ['garden', 'pets', 'music'], xiaoba: ['games', 'books', 'tech'], yujie: ['music', 'books', 'games'], weigang: ['fishing', 'math', 'books'], chicken: ['pets', 'garden'] };
+      const recentTopics = this.history.filter(record => record.participants.includes(a.id) && record.participants.includes(b.id)).slice(-2).map(record => record.discussion?.topic ?? record.sharedTopic?.topic);
+      const topics = [...(this.settings.shareTopics ? [...(this.publicTopics[a.id] ?? []), ...(this.publicTopics[b.id] ?? [])] : []), ...interests[a.id], ...interests[b.id]];
+      const fresh = topics.filter(topic => !recentTopics.includes(topic));
+      const pool = fresh.length ? fresh : topics;
+      const topic = pool[Math.floor(this.random() * pool.length) % pool.length];
       const guest = roll >= 0.12 && roll < 0.32 ? Object.values(this.residents).find(r =>
         r.id !== a.id && r.id !== b.id && !r.task && !r.conversationPartner && at - r.lastConversationAt >= this.settings.conversationCooldown * 1000 &&
         distance(a.logicalPosition, r.logicalPosition) >= 18 && distance(a.logicalPosition, r.logicalPosition) < 48 && farmSegmentClear(a.logicalPosition, r.logicalPosition)

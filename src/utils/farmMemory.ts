@@ -1,7 +1,9 @@
 import { PERSONALITIES } from './farmPersonality';
+import { restoreAssignment, type FarmAssignment } from './farmAssignment';
 import { FARM_TOPICS, RESIDENTS, RESIDENT_IDS, type FarmTopicId, type ResidentConversation, type ResidentId, type SharedFarmTopic } from './farmLife';
 
 export const CONTINUE_FARM_CHAT = '接着上次聊';
+export const NPC_CHAT_UNAVAILABLE = '现在不方便聊天，稍后再来找我吧。';
 const MAX_TURNS = 24;
 const MAX_AFFINITY = 100;
 export const SOCIAL_REACTIONS = ['neutral', 'warm', 'teasing', 'insult', 'apology'] as const;
@@ -19,6 +21,7 @@ export interface ResidentMemory {
   affinity: number;
   turns: FarmChatTurn[];
   mood?: SocialMood;
+  assignment?: FarmAssignment;
 }
 export type FarmMemories = Record<ResidentId, ResidentMemory>;
 
@@ -39,7 +42,8 @@ export function restoreFarmMemories(raw?: unknown): FarmMemories {
     const affinity = typeof record.affinity === 'number' && Number.isFinite(record.affinity)
       ? Math.min(MAX_AFFINITY, Math.max(0, Math.round(record.affinity))) : 0;
     const mood = Object.values(SOCIAL_MOODS).find(item => item === record.mood);
-    return [id, { turns, affinity, ...(mood ? { mood } : {}) }];
+    const assignment = restoreAssignment(record.assignment);
+    return [id, { turns, affinity, ...(mood ? { mood } : {}), ...(assignment ? { assignment } : {}) }];
   })) as FarmMemories;
 }
 
@@ -75,6 +79,7 @@ export function recordFarmChatTurn(memory: ResidentMemory, turn: FarmChatTurn, r
   const mood = reaction === 'neutral' || reaction === 'warm' && upset ? memory.mood : SOCIAL_MOODS[reaction];
   return {
     affinity: Math.min(MAX_AFFINITY, Math.max(0, memory.affinity + delta)),
+    ...(memory.assignment ? { assignment: memory.assignment } : {}),
     ...(mood ? { mood } : {}),
     turns: [...turns, turn].slice(-MAX_TURNS),
   };

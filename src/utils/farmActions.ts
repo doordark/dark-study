@@ -70,18 +70,18 @@ const mentionsResident = (text: string, id: ResidentId) => text.includes(RESIDEN
 /** Keep the player's actual instruction, never a model-invented reason. */
 export function bindTalkPurpose(action: NpcAction, text: string, previous: readonly { player: string }[] = []): NpcAction {
   if (action.type !== 'talk_to') return action;
-  if (!/质问|问问|问一下|询问|问清|为什么|骂|欺负|道歉|转告|告诉|带话|传话|解释|劝|安慰|这件事|刚才的事|说.*事|聊.*事/.test(text)) return { type: 'talk_to', target: action.target };
+  if (/(?:聊聊天|聊聊|聊天|说说话)[吧呀啊。！!\s]*$/.test(text) && !/关于|有关|这件事|为什么|怎么|几点|什么时候|骂|欺负|问|转告|告诉/.test(text)) return { type: 'talk_to', target: action.target };
   const prior = previous.at(-1)?.player;
   const needsContext = !/骂|欺负/.test(text) && /质问|这件事|刚才|为什么|问清|[他她]/.test(text);
   const context = needsContext && prior ? prior.slice(0, 60) + '；' : '';
-  return { type: 'talk_to', target: action.target, purpose: (context + text).slice(0, 160) };
+  return { type: 'talk_to', target: action.target, purpose: context ? context.slice(0, 40) + text.slice(-120) : text.slice(-160) };
 }
 
 export function playerTalkCommand(text: string, who: ResidentId, previous: readonly { player: string }[] = []): NpcAction | null {
   const direct = localNpcCommand(text, who);
   if (direct) return bindTalkPurpose(direct, text, previous);
   // Resolve "go ask him about it" only from an unambiguous, recent player statement.
-  if (!/^(?:请|麻烦|帮我|你|替我|去|能不能)/.test(text) || !/(?:质问|问问|问清|转告|告诉|带话|劝|安慰)(?:一下)?[他她]/.test(text) || /不要|不用|别|不需要|如果|假如/.test(text)) return null;
+  if (!/^(?:请|麻烦|帮我|你|替我|去|能不能)/.test(text) || !/(?:(?:质问|问问|问清|转告|告诉|带话|劝|安慰)(?:一下)?[他她]|找[他她].{0,8}(?:问|聊|说))/.test(text) || /不要|不用|别|不需要|如果|假如/.test(text)) return null;
   const prior = previous.at(-1)?.player ?? '';
   const targets = RESIDENT_IDS.filter(id => id !== who && mentionsResident(prior, id));
   return targets.length === 1 ? bindTalkPurpose({ type: 'talk_to', target: targets[0] }, text, previous) : null;
@@ -104,19 +104,21 @@ export function localNpcCommand(text: string, who: ResidentId): NpcAction | null
   const discussion = playerDiscussionCommand(text, who);
   if (discussion) return discussion;
   if (/怎么|如何|如果|假如|要是|会.*吗/.test(text) && !/帮|请|麻烦|(?:你|替我|去).*(?:问|质问|转告|告诉)/.test(text)) return null;
+  // A request ABOUT watering is a conversation, not an instruction to water.
+  if (/找.*聊|和.*聊|跟.*说|(?:去|帮我|请|麻烦|让|替我).*(?:问|质问|询问|转告|告诉|带话|传话|解释|劝|安慰)|(?:质问|转告|告诉|问问|询问)/.test(text)) {
+    const clause = text.match(/(?:去找|去问|去质问|帮我问|替我问|问问|问一下|质问|询问|转告|告诉|找|跟|和)(.*)/)?.[1] ?? text;
+    const target = RESIDENT_IDS.filter(id => id !== who && (mentionsResident(clause, id) || clause.includes(id))).sort((a, b) => {
+      const position = (id: ResidentId) => Math.min(...[RESIDENTS[id].name, id, ...(id === 'weigang' ? ['伟刚', '伟纲', '唯纲'] : [])].map(name => clause.indexOf(name)).filter(index => index >= 0));
+      return position(a) - position(b);
+    })[0];
+    if (target) return bindTalkPurpose({ type: 'talk_to', target }, text);
+  }
   if (/打[点些一壶]*水|取水|装[点些满]*水/.test(text)) return {
     type: 'fetch_water'
   };
   if (/浇[一下点些水地菜苗田]|帮.*浇/.test(text)) return {
     type: 'water_crops'
   };
-  if (/找.*聊|和.*聊|跟.*说|(?:去|帮我|请|麻烦|让|替我).*(?:质问|问问|问一下|问清|询问|转告|告诉|带话|传话|解释|劝|安慰)|(?:质问|转告|告诉|问问|询问)/.test(text)) {
-    const target = RESIDENT_IDS.find(id => id !== who && (mentionsResident(text, id) || text.includes(id)));
-    if (target) return bindTalkPurpose({
-      type: 'talk_to',
-      target
-    }, text);
-  }
   if (/回家|回屋|回小屋|回鸡窝/.test(text)) return {
     type: 'go_home'
   };
@@ -131,4 +133,6 @@ export function localNpcCommand(text: string, who: ResidentId): NpcAction | null
   }
   return null;
 }
-export const NPC_ACTION_SCHEMA = '严格 JSON：{"reply":"自然的中文回答，最多100字","action":null}。明确要求做事时 action 只能是 {"type":"fetch_water"}、{"type":"water_crops"}、{"type":"talk_to","target":"door|gu|xiaoba|yujie|weigang|chicken中的一个"}、{"type":"visit","target":"pond|farm|plaza|house|coop|bench|market中的一个"}、{"type":"rest"}、{"type":"go_home"}。普通聊天或提问 action=null；不要把引用、否定或假设当作命令。不能修改金币、库存、种子、奖励或升级，不能保证任务必然成功，游戏会校验并执行。不得增加其他字段。';
+const BASE_NPC_ACTION_SCHEMA = '严格 JSON：{"reply":"自然的中文回答，最多100字","action":null}。明确要求做事时 action 只能是 {"type":"fetch_water"}、{"type":"water_crops"}、{"type":"talk_to","target":"door|gu|xiaoba|yujie|weigang|chicken中的一个"}、{"type":"visit","target":"pond|farm|plaza|house|coop|bench|market中的一个"}、{"type":"rest"}、{"type":"go_home"}。普通聊天或提问 action=null；不要把引用、否定或假设当作命令。不能修改金币、库存、种子、奖励或升级，不能保证任务必然成功，游戏会校验并执行。不得增加其他字段。';
+
+export const NPC_ACTION_SCHEMA = BASE_NPC_ACTION_SCHEMA + ' 找人询问时talk_to必须额外带purpose字符串，最多160字，准确总结玩家明确交代的问题并消解代词，不能编造新目的。如果目标或问题不明，action=null并追问缺少的信息。纯闲聊可以不带purpose。';

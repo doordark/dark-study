@@ -30,6 +30,9 @@ npm-debug.*
 yarn-debug.*
 yarn-error.*
 
+# 临时调试产物（截图、备份、测试脚本）
+.tmp*
+
 # macOS
 .DS_Store
 *.pem
