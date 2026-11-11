@@ -28,7 +28,7 @@ export function buildCourseReminders(schedule: Schedule, minutes: number, count:
   const firstMonday = mondayOf(parseIsoDate(schedule.startDate));
   if (!Number.isFinite(firstMonday.getTime())) return result;
   for (const course of schedule.courses) {
-    const time = schedule.periods.find((p) => p.index === course.startPeriod)?.startTime;
+    const time = course.startTime ?? schedule.periods.find((p) => p.index === course.startPeriod)?.startTime;
     const match = time?.match(/^(\d{1,2}):(\d{2})$/);
     if (!match || +match[1] > 23 || +match[2] > 59 || !Number.isInteger(course.weekday) || course.weekday < 1 || course.weekday > 7) continue;
     for (const week of new Set(course.weeks)) {

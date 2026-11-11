@@ -22,6 +22,9 @@ export interface Course {
   /** 上课周次，如 [1,2,3,4] */
   weeks: number[];
   color: CourseColor;
+  /** 单次调课的精确时间；未设置时跟随作息表 */
+  startTime?: string;
+  endTime?: string;
   credits?: number;
   note?: string;
 }
@@ -167,6 +170,9 @@ export type ScheduleAction =
       courseId: string;
       courseName: string;
       patch: Partial<Course>;
+      /** 原记录中需要修改的周次，与 patch.weeks（修改后的周次）分开 */
+      targetWeeks?: number[];
+      targetWeekday?: number;
     }
   /** 新建一份课表（如「外教课」），并切换为当前 */
   | { type: "create_schedule"; scheduleName: string }

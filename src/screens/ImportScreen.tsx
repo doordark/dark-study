@@ -205,6 +205,7 @@ export function ImportScreen() {
 
   const onPeriods = (from: From) =>
     startTask("periods", from, async (source) => {
+      const scheduleId = useStore.getState().activeScheduleId;
       const task = useImportTask.getState();
       if (!apiKey) {
         task.fail(
@@ -223,7 +224,7 @@ export function ImportScreen() {
         return;
       }
       task.complete(
-        { type: "periods", periods },
+        { type: "periods", periods, scheduleId },
         `作息表识别完成：${periods.length} 个节次，请确认后应用`,
       );
     });

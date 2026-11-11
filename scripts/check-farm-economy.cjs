@@ -13,7 +13,8 @@ function load(name, dependencies = {}) {
 }
 const progress = load('farmProgress');
 const e = load('farmEconomy', { './farmProgress': progress });
-const market = load('farmMarket', { './farmProgress': progress, './farmEconomy': e });
+const personality = load('farmPersonality');
+const market = load('farmMarket', { './farmProgress': progress, './farmEconomy': e, './farmPersonality': personality });
 const today = new Date(2026, 10, 3, 12).getTime();
 const tomorrow = new Date(2026, 10, 4, 12).getTime();
 

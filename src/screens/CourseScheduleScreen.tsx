@@ -1,6 +1,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import React, { useMemo, useState } from "react";
 import {
+  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -165,8 +166,8 @@ export function CourseScheduleScreen({
 
   // 冲突检测：同天、节次重叠、且当前周同时上课的课程互相标记
   const conflicts = useMemo(
-    () => findConflicts(schedule.courses, activeWeek),
-    [schedule.courses, activeWeek],
+    () => findConflicts(schedule.courses, activeWeek, schedule.periods),
+    [schedule.courses, activeWeek, schedule.periods],
   );
 
   const dayCourses = useMemo(
@@ -256,15 +257,17 @@ export function CourseScheduleScreen({
     transform: [{ translateX: dayTx.value }],
   }));
 
-  const handleSave = (draft: Omit<Course, "id"> & { id?: string }) => {
+  const handleSave = (draft: Omit<Course, "id"> & { id?: string }, targetWeeks?: number[]) => {
+    try {
     if (draft.id) {
       const { id, ...patch } = draft;
-      updateCourse(id, patch);
+      updateCourse(id, patch, targetWeeks);
     } else {
       addCourse(draft);
     }
     setEditorOpen(false);
     setEditing(undefined);
+    } catch (error) { Alert.alert("保存失败", error instanceof Error ? error.message : "课程数据无效"); }
   };
 
   // 大肥鱼在场（人格形态或在屏幕边上趴着），中间主按钮的图标换成她的头像
@@ -702,6 +705,7 @@ export function CourseScheduleScreen({
         key={editorToken}
         visible={editorOpen}
         periods={schedule.periods}
+        currentWeek={activeWeek}
         totalWeeks={totalWeeks}
         course={editing}
         occurrenceCount={

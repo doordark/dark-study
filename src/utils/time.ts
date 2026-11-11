@@ -151,12 +151,13 @@ export function getCourseTime(
   periods: Period[],
   startPeriod: number,
   endPeriod: number,
+  overrides?: Pick<Course, "startTime" | "endTime">,
 ): CourseTime {
   const start = periods.find((p) => p.index === startPeriod);
   const end =
     periods.find((p) => p.index === endPeriod) ?? periods[periods.length - 1];
-  const startTime = start?.startTime ?? "--:--";
-  const endTime = end?.endTime ?? "--:--";
+  const startTime = overrides?.startTime ?? start?.startTime ?? "--:--";
+  const endTime = overrides?.endTime ?? end?.endTime ?? "--:--";
   return {
     startTime,
     endTime,
@@ -208,6 +209,7 @@ export function isCourseActive(
     periods,
     course.startPeriod,
     course.endPeriod,
+    course,
   );
   return minutes >= startMinutes && minutes <= endMinutes;
 }
@@ -225,7 +227,7 @@ export function isCourseFinished(
   const minutes = now.getHours() * 60 + now.getMinutes();
   return (
     minutes >
-    getCourseTime(periods, course.startPeriod, course.endPeriod).endMinutes
+    getCourseTime(periods, course.startPeriod, course.endPeriod, course).endMinutes
   );
 }
 
@@ -242,6 +244,7 @@ export function formatClock(date: Date = new Date()): string {
 export function findConflicts(
   courses: Course[],
   weekIndex?: number,
+  periods?: Period[],
 ): Map<string, string[]> {
   const map = new Map<string, string[]>();
   const list =
@@ -253,7 +256,11 @@ export function findConflicts(
       const a = list[i];
       const b = list[j];
       if (a.weekday !== b.weekday) continue;
-      if (a.startPeriod > b.endPeriod || a.endPeriod < b.startPeriod) continue;
+      if (periods) {
+        const at = getCourseTime(periods, a.startPeriod, a.endPeriod, a);
+        const bt = getCourseTime(periods, b.startPeriod, b.endPeriod, b);
+        if (at.startMinutes >= bt.endMinutes || at.endMinutes <= bt.startMinutes) continue;
+      } else if (a.startPeriod > b.endPeriod || a.endPeriod < b.startPeriod) continue;
       const weeksB = new Set(b.weeks);
       if (!a.weeks.some((w) => weeksB.has(w))) continue;
       map.set(a.id, [...(map.get(a.id) ?? []), b.name]);

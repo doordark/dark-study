@@ -48,7 +48,7 @@ export function CourseCard({
   const palette = coursePalette[course.color];
   const glass = useSettings((s) => s.material === "glass");
   const solidActive = active && !glass;
-  const time = getCourseTime(periods, course.startPeriod, course.endPeriod);
+  const time = getCourseTime(periods, course.startPeriod, course.endPeriod, course);
 
   /* ---------------- 按压跟手缩放（UI 线程弹簧） ---------------- */
   const scale = useSharedValue(1);

@@ -7,7 +7,7 @@ export type TaskStatus = "idle" | "analyzing" | "done" | "error";
 
 export type TaskResult =
   | { type: "schedule"; schedule: Schedule }
-  | { type: "periods"; periods: Period[] }
+  | { type: "periods"; periods: Period[]; scheduleId?: string }
   | { type: "grades"; grades: GradeDraft[]; yearId?: string }
   | { type: "count"; count: number };
 

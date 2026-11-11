@@ -38,8 +38,8 @@ export function upcomingWidgetCourses(schedule: Schedule | undefined, now = new 
   for (const course of schedule.courses) {
     const first = schedule.periods.find((p) => p.index === course.startPeriod);
     const last = schedule.periods.find((p) => p.index === course.endPeriod);
-    const from = clock(first?.startTime);
-    const to = clock(last?.endTime);
+    const from = clock(course.startTime ?? first?.startTime);
+    const to = clock(course.endTime ?? last?.endTime);
     if (from === null || to === null || to <= from || !Number.isInteger(course.weekday) || course.weekday < 1 || course.weekday > 7) continue;
     for (const week of new Set(course.weeks)) {
       if (!Number.isInteger(week) || week < 1 || week > schedule.totalWeeks) continue;
@@ -52,7 +52,7 @@ export function upcomingWidgetCourses(schedule: Schedule | undefined, now = new 
       end.setHours(Math.floor(to / 60), to % 60, 0, 0);
       if (end.getTime() <= now.getTime()) continue;
       result.push({ id: `${course.id}-${iso}`, name: course.name, classroom: course.classroom, teacher: course.teacher,
-        start: start.getTime(), end: end.getTime(), time: `${first!.startTime}–${last!.endTime}`, color: course.color });
+        start: start.getTime(), end: end.getTime(), time: `${course.startTime ?? first!.startTime}–${course.endTime ?? last!.endTime}`, color: course.color });
     }
   }
   return result.sort((a, b) => a.start - b.start || a.name.localeCompare(b.name));

@@ -317,8 +317,8 @@ export async function recognizePeriods(
           (p: any, i: number): Period => ({
             index: Number(p?.index) || i + 1,
             label: String(p?.label ?? `第${Number(p?.index) || i + 1}节`),
-            startTime: String(p?.startTime ?? ""),
-            endTime: String(p?.endTime ?? ""),
+            startTime: String(p?.startTime ?? "").padStart(5, "0"),
+            endTime: String(p?.endTime ?? "").padStart(5, "0"),
           }),
         )
         .filter(
@@ -449,7 +449,7 @@ export async function askAssistant(
   const coursesBrief = ctx.schedule.courses
     .map(
       (c) =>
-        `- [${c.id}] ${c.name} | 周${c.weekday} 第${c.startPeriod}-${c.endPeriod}节 | ${
+        `- [${c.id}] ${c.name} | 周${c.weekday} 第${c.startPeriod}-${c.endPeriod}节 ${c.startTime ?? ""}–${c.endTime ?? ""} | ${
           c.classroom || "未知教室"
         } | ${c.teacher || "未知教师"} | 周次[${c.weeks.join(",")}]`,
     )
@@ -514,12 +514,17 @@ ${!whaleContext ? `仅在召唤时使用以下角色设定，普通课表对话�
 actions 是操作数组，一次可以放多个（用户一句话提出多件事时全部放进去）；不需要改课表时返回空数组。可用操作：
   添加课程：{"type":"add","course":{"name":"","teacher":"","classroom":"","weekday":1,"startPeriod":1,"endPeriod":2,"weeks":[1,2,3],"color":"sky","credits":3,"note":""}}
   删除课程：{"type":"remove","courseId":"...","courseName":"..."}
-  修改课程：{"type":"update","courseId":"...","courseName":"...","patch":{仅需改动的字段}}
+  修改课程：{"type":"update","courseId":"...","courseName":"...","targetWeeks":[8],"targetWeekday":3,"patch":{仅需改动的字段}}
   新建课表：{"type":"create_schedule","scheduleName":"外教课"}
   合并课表：{"type":"merge_schedule","sourceScheduleName":"外教课"}（把那份课表的课程并入当前课表）
 
 规则：
 - course.weeks 是开课周次数组；用户没说周次时默认整学期 [1..${ctx.schedule.totalWeeks}]
+- 修改指定周（如第八周/本周/下周）必须设置 targetWeeks 为原课程中被修改的周次；未说周次才省略 targetWeeks。targetWeekday 为原课程星期，用于定位，调到周四则 patch.weekday=4。
+- targetWeeks 决定修改范围；patch.weeks 是修改后迁往的周次，普通单周调时不要填 patch.weeks。只改第8周不得覆盖其他周，也不得删除其他周。
+- 用户说具体起止时刻必须在 patch 同时输出 startTime/endTime，格式 HH:mm；执行层自动对照作息换算 startPeriod/endPeriod，不能只在回复里改时间，不能改全局作息表。
+- 例如「把第八周星期三的数据结构改成从8点到10点40」：定位原周三且 weeks 含8的数据结构，输出 targetWeeks:[8],targetWeekday:3,patch:{"startTime":"08:00","endTime":"10:40"}，若覆盖作息第1到3节则自动变为1–3节。其他周维持1–2节。
+- 同名多条记录时按原星期、周次和节次选择精确 id；仍不唯一就先追问，actions 返回空数组，不猜测。
 - weekday 取 1-7（周一到周日）；startPeriod/endPeriod 必须取自节次参考表
 - 删除/修改课程时 courseId 必须来自当前课程列表的 [id]；拿不准就同时写 courseName（会按名称兜底）
 - 合并/新建课表时 scheduleName 必须来自全部课表列表（新建除外，名称由用户指定）
@@ -791,7 +796,7 @@ export async function askWhalePet(
     ? ctx.schedule.courses
         .map(
           (c) =>
-            `- [${c.id}] ${c.name} | 周${c.weekday} 第${c.startPeriod}-${c.endPeriod}节 | ${
+            `- [${c.id}] ${c.name} | 周${c.weekday} 第${c.startPeriod}-${c.endPeriod}节 ${c.startTime ?? ""}–${c.endTime ?? ""} | ${
               c.classroom || "未知教室"
             } | ${c.teacher || "未知教师"} | 周次[${c.weeks.join(",")}]`,
         )
@@ -830,7 +835,7 @@ action 只能取：
 actions 是操作数组，一次可以放多个；不需要执行任何操作时返回空数组。可用操作：
   添加课程：{"type":"add","course":{"name":"","teacher":"","classroom":"","weekday":1,"startPeriod":1,"endPeriod":2,"weeks":[1,2,3],"color":"sky","credits":3,"note":""}}
   删除课程：{"type":"remove","courseId":"...","courseName":"..."}
-  修改课程：{"type":"update","courseId":"...","courseName":"...","patch":{仅需改动的字段}}
+  修改课程：{"type":"update","courseId":"...","courseName":"...","targetWeeks":[8],"targetWeekday":3,"patch":{仅需改动的字段}}
   新建课表：{"type":"create_schedule","scheduleName":"外教课"}
   合并课表：{"type":"merge_schedule","sourceScheduleName":"外教课"}（把那份课表的课程并入当前课表）
   改召唤口令：{"type":"set_summon_phrase","phrase":"新的召唤口令（2-12 个字）"}
@@ -841,6 +846,11 @@ actions 是操作数组，一次可以放多个；不需要执行任何操作时
   清空全部聊天与记忆：{"type":"forget_memory"}（仅用户明确要求清空全部时使用；忘掉某件事时引导到人设与记忆页单独删除，不能清空全部）
 规则：
 - course.weeks 是开课周次数组；用户没说周次时默认整学期 [1..${ctx?.schedule.totalWeeks ?? 18}]
+- 修改指定周（如第八周/本周/下周）必须设置 targetWeeks 为原课程中被修改的周次；未说周次才省略 targetWeeks。targetWeekday 为原课程星期，用于定位，调到周四则 patch.weekday=4。
+- targetWeeks 决定修改范围；patch.weeks 是修改后迁往的周次，普通单周调时不要填 patch.weeks。只改第8周不得覆盖其他周，也不得删除其他周。
+- 用户说具体起止时刻必须在 patch 同时输出 startTime/endTime，格式 HH:mm；执行层自动对照作息换算 startPeriod/endPeriod，不能只在回复里改时间，不能改全局作息表。
+- 例如「把第八周星期三的数据结构改成从8点到10点40」：定位原周三且 weeks 含8的数据结构，输出 targetWeeks:[8],targetWeekday:3,patch:{"startTime":"08:00","endTime":"10:40"}，若覆盖作息第1到3节则自动变为1–3节。其他周维持1–2节。
+- 同名多条记录时按原星期、周次和节次选择精确 id；仍不唯一就先追问，actions 返回空数组，不猜测。
 - weekday 取 1-7（周一到周日）；startPeriod/endPeriod 必须取自节次参考表
 - 删除/修改课程时 courseId 必须来自当前课程列表的 [id]；拿不准就同时写 courseName（会按名称兜底）
 - 改课表时 action 一般为 null，专心把操作写进 actions

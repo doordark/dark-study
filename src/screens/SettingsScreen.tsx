@@ -20,6 +20,7 @@ import {
 } from "react-native";
 import Animated, { FadeInDown, FadeOutDown } from "react-native-reanimated";
 
+import { PeriodSettings } from "@/components/PeriodSettings";
 import { CourseReminderSettings } from "@/components/CourseReminderSettings";
 import { CourseWidgetSettings } from "@/components/CourseWidgetSettings";
 import { Backdrop } from "@/components/Backdrop";
@@ -570,6 +571,7 @@ function ScheduleSettings() {
 
   return (
     <>
+      <PeriodSettings />
       {/* 学期时间 */}
       <Animated.View entering={FadeInDown.springify()}>
         <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>

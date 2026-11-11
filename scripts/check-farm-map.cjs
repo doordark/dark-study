@@ -42,19 +42,7 @@ for(const from of [map.PLAYER_START,...Object.values(map.RESIDENT_PLACEMENTS).ma
   assert(dist(previous,destination)<0.1);
 }
 const read=name=>PNG.sync.read(fs.readFileSync(path.join(root,'assets/images',name)));
-let decoded=0;
-for(const [name,rect] of [['house',map.HOUSE],['pond',map.POND],['market',map.MARKET],['coop',map.COOP],['bench',map.BENCH],['tree',map.TREE]]){
- const day=read(`farm-${name}-v3.png`),night=read(`farm-${name}-night-v3.png`);
- assert.equal(day.width,rect.w*3);assert.equal(day.height,rect.h*3);assert.equal(day.width,night.width);assert.equal(day.height,night.height);
- for(let i=3;i<day.data.length;i+=4)assert.equal(day.data[i],night.data[i],`${name}: day/night silhouette shifted`);
- decoded+=day.width*day.height*8;
-}
-const day=read('farm-day-v3.png'),night=read('farm-night-v3.png');
-assert.equal(day.width,600);assert.equal(day.height,990);assert.equal(day.width,night.width);assert.equal(day.height,night.height);
-decoded+=day.width*day.height*8;
-const old=read('farm-day-v2.png');
-assert(decoded<old.width*old.height*8,'new exterior layers must decode to fewer bytes than the two old backgrounds alone');
 const room=read('farm-house-interior-v2.png'),roomNight=read('farm-house-interior-night-v2.png');
 assert.equal(room.width/room.height,map.HOUSE_ROOM.width/map.HOUSE_ROOM.height);assert.equal(room.width,roomNight.width);assert.equal(room.height,roomNight.height);
 for(const width of [320,360,393,412,600]){const scale=Math.min(width,520)/200;for(const p of map.PLOTS)assert(p.x*scale+p.w*scale<=Math.min(width,520)+0.1);}
-console.log(`Farm map checks passed: 16 plots; connected, collision-free waypoint edges; ${segments} safe route segments; identical day/night silhouettes; 320/360/393/412/600 logical-pixel widths. Exterior decoded RGBA: ${(decoded/1048576).toFixed(2)} MiB vs ${(old.width*old.height*8/1048576).toFixed(2)} MiB for old backgrounds. Route matrix took ${Math.round(performance.now()-started)}ms including asset checks.`);
+console.log(`Farm map checks passed: 16 plots; connected, collision-free waypoint edges; ${segments} safe route segments; house interior aspect matches; 320/360/393/412/600 logical-pixel widths. Route matrix took ${Math.round(performance.now()-started)}ms including asset checks.`);

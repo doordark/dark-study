@@ -201,6 +201,7 @@ export function WeekGrid({
           periods,
           course.startPeriod,
           course.endPeriod,
+          course,
         );
         const top = yOf(startTime) + 2 * zoom;
         const height = Math.max(

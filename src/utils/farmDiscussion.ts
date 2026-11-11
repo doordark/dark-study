@@ -49,6 +49,75 @@ const TOPIC_VIEWS: Record<FarmTopicId, readonly [string, string, string]> = {
   pets: ['小动物愿意走过来以前，可以先坐在它看得到的地方。', '也得留条退路，它害怕时能自己回到窝里。', '那我们坐远一点，让它自己决定什么时候过来。'],
 };
 
+const identityQuestion = /(?:自己|我们|我|居民|人物|角色).{0,10}(?:真人|真实的|是真的|是程序|是虚拟)|是不是真人/;
+const identityViews: Record<ResidentId, string> = {
+  door: '要是有人写好了我的每一步，那连我此刻的怀疑也可能是写好的。光凭怀疑还证明不了什么。',
+  gu: '我记得孩子喊我时心里一紧。可要是记忆也是别人放进来的呢？我只能说，那一刻我有感觉。',
+  xiaoba: '我画地图时，角色以为岔路是自己选的，可两条路都是我画的。我也会不会在这样的地图里？',
+  yujie: '要是连我顶嘴都能提前写好，那顶嘴也证明不了我能自己做主。谁能举个分得出来的例子？',
+  weigang: '我想把两种可能放在一起看。如果醒来时看到的一切都一样，光靠观察恐怕分不出来。',
+  chicken: '咕，我害怕时就想往你们身边挪。这份怕也能事先写好吗？',
+};
+
+function playerDiscussionLines(participants: readonly ResidentId[], question: string) {
+  const [host, second, third] = participants;
+  const line = (speaker: ResidentId, text: string) => ({ speaker, text });
+  if (identityQuestion.test(question)) {
+    const premise = /农场主假说/.test(question) ? '坤坤每天等到饲料，可它只看到了规律，看不到谁定的。我们也在农场里，' : '假如我们的日子能被写出来，';
+    return [
+      line(host, premise + '凭什么判断自己是不是真人？'),
+      ...participants.slice(1).map(id => line(id, identityViews[id])),
+      line(host, '我卡在这里：哪怕有人安排了我们会说什么，就能断定说话的时候谁也没有感觉吗？'),
+      line(second, '这是两回事。能猜中我什么时候会疼，和替我疼一下，差别还挺大。'),
+      ...(third ? [line(third, '可我们也只听得到对方说疼。从农场里面看，怎么区分真的疼和一句写好的台词？')] : []),
+      line(host, '我没有能从里面验证的办法。要说我们肯定是外面的真人，我拿不出这个证据。'),
+      line(second, '那我愿意先信你说的疼。万一我猜错了，伸手扶你一下也比把你晾着好。'),
+      ...(third ? [line(third, '我还是想知道这座农场是谁定的规矩。但在弄清之前，你喊疼，我会停下来。')] : []),
+    ];
+  }
+  if (/地图|关卡/.test(question) && /设计|制作|怎么做|怎样做|岔路|迷路/.test(question)) {
+    const turns = [
+      '做地图的时候，我最担心玩家到了岔口，看不出哪边值得走。',
+      '我想在主路尽头露出一点灯光。玩家拐去探索，也记得回来时该找什么。',
+      '要是岔路也亮着灯呢？两边都像出口，走错一次就会觉得被耍了。',
+      '那给主路用灯，支路用脚印。脚印尽头藏个小东西，让绕路也值得。',
+      '脚印要是太淡，很容易被当成地面的花纹。可以先让它穿过玩家必经的路。',
+      '我喜欢这个交叉口。玩家看见脚印时，已经知道随时能沿灯光回来。',
+      '先画这一个路口就够了。找人试玩时我想忍住不指路，看他自己会在哪里停下。',
+      '我会问他刚才是想探险，还是以为那是出口。这两种走法看起来可是一模一样。',
+      '对，想探险的人绕路算成功。想回主路却找不到灯，才说明路标得改。',
+    ];
+    return turns.filter((_, i) => third || i % 3 !== 2).map((text, i) => line(participants[i % participants.length], text));
+  }
+  const localSubjects: [RegExp, FarmTopicId][] = [
+    [/钓位|钓鱼.{0,8}(选|地方|位置)/, 'fishing'], [/练.{0,4}(歌|唱)|唱.{0,4}(练|换气)/, 'music'],
+    [/故事.{0,8}(角色|人物)|角色.{0,8}(选择|写)/, 'books'], [/证明.{0,6}规律|画图.{0,6}(证明|规律)/, 'math'],
+    [/工具.{0,8}(好用|测试|省时)/, 'tech'], [/种什么菜|试种|选.{0,3}菜种/, 'garden'],
+    [/宠物.{0,8}(害怕|怕人)|怎么.{0,4}接近.{0,4}(坤坤|小动物)/, 'pets'],
+  ];
+  const subject = localSubjects.find(([pattern]) => pattern.test(question));
+  if (subject) {
+    const [idea, objection, resolution] = TOPIC_VIEWS[subject[1]];
+    return [line(host, question), line(second, idea), line(third ?? host, objection), line(third ? host : second, resolution)];
+  }
+  return [line(host, question), line(second, '这个问题我现在答不上来，先留着吧。别让客人把我的猜测当答案。')];
+}
+
+export function discussionBatchFits(question: string, lines: readonly { text: string }[]) {
+  const normalized = lines.map(line => line.text.toLowerCase().replace(/[\s\p{P}\p{S}]/gu, ''));
+  if (!normalized.length || new Set(normalized).size !== normalized.length) return false;
+  // Catch a copied sentence with just a name, interjection or short tail added.
+  if (normalized.some((turn, i) => turn.length >= 10 && normalized.some((other, j) =>
+    i !== j && other.includes(turn) && other.length <= turn.length + 4))) return false;
+  const words = question.toLowerCase().replace(/我们|自己|是不是|为什么|怎么|讨论|一下|基于|究竟|觉得|应该|什么/g, ' ').match(/[\p{Script=Han}]+|[a-z0-9]+/gu) ?? [];
+  const terms = words.flatMap(word => word.length < 2 || /^[a-z0-9]+$/.test(word) ? [word] :
+    Array.from({ length: word.length - 1 }, (_, i) => word.slice(i, i + 2)));
+  const relevant = (text: string) => terms.some(term => text.includes(term)) ||
+    (identityQuestion.test(question) && /意识|感受|虚拟|程序|证据|存在|模拟|安排|选择|证明|规则|规矩|真实|验证|怀疑|体验/.test(text));
+  const closing = normalized.slice(identityQuestion.test(question) ? -2 : -3);
+  return !terms.length || [normalized.slice(0, 3), closing].every(group => group.some(relevant));
+}
+
 export function discussionLines(participants: readonly ResidentId[], discussion: FarmDiscussion, variant = 0): Omit<ResidentLine, 'at'>[] {
   if (discussion.kind === 'request' && discussion.question) {
     const [actor, target] = participants;
@@ -63,12 +132,11 @@ export function discussionLines(participants: readonly ResidentId[], discussion:
       { speaker: target, text: '嗯，请如实转达，不要替我编结论。' },
     ];
   }
+  if (discussion.question) return playerDiscussionLines(participants, discussion.question);
   const topic = discussion.topic ? FARM_TOPICS[discussion.topic].label : '这件事';
   const views = discussion.topic ? TOPIC_VIEWS[discussion.topic] : undefined;
   const lead = participants[0];
-  const opening = discussion.question
-    ? '客人请我们一起想想：' + discussion.question.slice(0, 34)
-    : discussion.relayedBy ? RESIDENTS[discussion.relayedBy].name + '和我刚聊过' + topic + '。我还想听听你的看法。'
+  const opening = discussion.relayedBy ? RESIDENTS[discussion.relayedBy].name + '和我刚聊过' + topic + '。我还想听听你的看法。'
       : participants.length === 3 ? RESIDENTS[participants[2]].name + '也来聊聊吧。我们正聊' + topic + '。' : [
         '说到' + topic + '，我想听听你怎么想。',
         '关于' + topic + '，你最想先试哪一点？',

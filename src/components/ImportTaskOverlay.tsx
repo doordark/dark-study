@@ -2,6 +2,7 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import { router, usePathname } from "expo-router";
 import React from "react";
 import {
+  Alert,
   Pressable,
   ScrollView,
   Text,
@@ -625,8 +626,11 @@ function TaskDialog() {
                   </Pressable>
                   <Pressable
                     onPress={() => {
-                      setPeriods(result.periods);
-                      ack("作息表已应用到当前课表");
+                      try {
+                        if (result.scheduleId && useStore.getState().activeScheduleId !== result.scheduleId) throw new Error("课表已切换，请切回导入时的课表再应用作息");
+                        setPeriods(result.periods);
+                        ack("作息表已应用，可在设置 → 课表与学期 → 作息时间表查看和编辑");
+                      } catch (error) { Alert.alert("无法应用作息", error instanceof Error ? error.message : "作息时间无效"); }
                     }}
                     className="flex-1 items-center rounded-2xl bg-violet-500/85 py-2.5"
                   >

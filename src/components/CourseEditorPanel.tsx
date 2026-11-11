@@ -35,8 +35,9 @@ export interface CourseEditorPanelProps {
   course?: Course;
   /** 同一门课（名称 + 教师 + 教室一致）的上课记录条数 */
   occurrenceCount?: number;
+  currentWeek?: number;
   onClose: () => void;
-  onSave: (course: Omit<Course, "id"> & { id?: string }) => void;
+  onSave: (course: Omit<Course, "id"> & { id?: string }, targetWeeks?: number[]) => void;
   /** once = 只删当前这一条上课记录；all = 删除整门课 */
   onDelete?: (id: string, scope: "once" | "all") => void;
 }
@@ -93,6 +94,7 @@ export function CourseEditorPanel({
   totalWeeks = 18,
   course,
   occurrenceCount = 1,
+  currentWeek = 1,
   onClose,
   onSave,
   onDelete,
@@ -101,6 +103,9 @@ export function CourseEditorPanel({
   const [draft, setDraft] = useState<Omit<Course, "id">>(() =>
     course ? (({ id: _id, ...rest }) => rest)(course) : emptyDraft(totalWeeks),
   );
+
+  const [scope, setScope] = useState<"record" | "selected">("record");
+  const [targetWeeks, setTargetWeeks] = useState<number[]>(course?.weeks.includes(currentWeek) ? [currentWeek] : course?.weeks.slice(0, 1) ?? []);
 
   const set = <K extends keyof Omit<Course, "id">>(
     key: K,
@@ -215,6 +220,17 @@ export function CourseEditorPanel({
                     onFocus={focusField}
                   />
 
+                  {course && <View className="mb-4">
+                    <Text className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400">修改范围（本条记录：周{course.weekday} 第{course.startPeriod}–{course.endPeriod}节）</Text>
+                    <View className="flex-row gap-2">
+                      <Pressable onPress={() => setScope("record")} className="rounded-xl bg-sky-400/20 p-3"><Text className="text-sky-600 dark:text-sky-300">{scope === "record" ? "✓ " : ""}整条重复记录</Text></Pressable>
+                      <Pressable onPress={() => setScope("selected")} className="rounded-xl bg-sky-400/20 p-3"><Text className="text-sky-600 dark:text-sky-300">{scope === "selected" ? "✓ " : ""}指定周次</Text></Pressable>
+                    </View>
+                    {scope === "selected" && <>
+                      <Text className="my-2 text-xs text-slate-500 dark:text-slate-400">只修改以下周次，其余周保持原样</Text>
+                      <View className="flex-row flex-wrap gap-2">{course.weeks.map(w => <Pressable key={w} onPress={() => setTargetWeeks(prev => prev.includes(w) ? prev.filter(x => x !== w) : [...prev, w])} className={`rounded-lg p-2 ${targetWeeks.includes(w) ? "bg-sky-400/40" : "bg-slate-400/10"}`}><Text className="text-slate-700 dark:text-slate-200">第{w}周</Text></Pressable>)}</View>
+                    </>}
+                  </View>}
                   {/* 星期 */}
                   <Text className="mb-1.5 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
                     星期
@@ -267,6 +283,8 @@ export function CourseEditorPanel({
                               onPress={() =>
                                 setDraft((d) => ({
                                   ...d,
+                                  startTime: undefined,
+                                  endTime: undefined,
                                   startPeriod: p,
                                   endPeriod: Math.max(p, d.endPeriod),
                                 }))
@@ -307,7 +325,7 @@ export function CourseEditorPanel({
                             <Pressable
                               key={p}
                               disabled={p < draft.startPeriod}
-                              onPress={() => set("endPeriod", p)}
+                              onPress={() => setDraft(d => ({ ...d, endPeriod: p, startTime: undefined, endTime: undefined }))}
                               className={`h-8 w-8 items-center justify-center rounded-lg border ${
                                 draft.endPeriod === p
                                   ? "border-sky-400/70 bg-sky-400/25"
@@ -330,7 +348,10 @@ export function CourseEditorPanel({
                     </View>
                   </View>
 
+                  <Field label="精确开始时间（可选，HH:mm）" value={draft.startTime ?? ""} placeholder={periods.find(p => p.index === draft.startPeriod)?.startTime} onChange={v => set("startTime", v || undefined)} />
+                  <Field label="精确结束时间（可选，HH:mm）" value={draft.endTime ?? ""} placeholder={periods.find(p => p.index === draft.endPeriod)?.endTime} onChange={v => set("endTime", v || undefined)} />
                   {/* 周次 */}
+                  {scope === "record" && <>
                   <Text className="mb-1.5 mt-3 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
                     上课周次（已选 {draft.weeks.length} 周）
                   </Text>
@@ -359,6 +380,7 @@ export function CourseEditorPanel({
                     )}
                   </View>
 
+                  </>}
                   {/* 颜色 */}
                   <Text className="mb-1.5 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
                     主题色
@@ -380,9 +402,10 @@ export function CourseEditorPanel({
 
                   {/* 保存 / 删除 */}
                   <Pressable
-                    onPress={() =>
-                      onSave(course ? { ...draft, id: course.id } : draft)
-                    }
+                    onPress={() => {
+                      if (scope === "selected" && !targetWeeks.length) { Alert.alert("请选择修改周次"); return; }
+                      onSave(course ? { ...draft, id: course.id, weeks: scope === "selected" ? targetWeeks : draft.weeks } : draft, scope === "selected" ? targetWeeks : undefined);
+                    }}
                     className="mb-3 items-center rounded-2xl bg-sky-500/90 py-3.5"
                   >
                     <Text className="text-[15px] font-bold text-white">

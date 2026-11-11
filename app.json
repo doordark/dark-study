@@ -2,7 +2,7 @@
   "expo": {
     "name": "dark-study",
     "slug": "dark-study",
-    "version": "1.9.2",
+    "version": "1.9.4",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "dark-study",
@@ -11,13 +11,14 @@
     },
     "android": {
       "package": "com.darkstudy.app",
-      "versionCode": 34,
+      "versionCode": 35,
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO"
       ],
       "permissions": [
         "REQUEST_INSTALL_PACKAGES",
-        "SCHEDULE_EXACT_ALARM"
+        "SCHEDULE_EXACT_ALARM",
+        "com.android.alarm.permission.SET_ALARM"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#08060D",

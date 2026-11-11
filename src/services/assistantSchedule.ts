@@ -46,13 +46,15 @@ function resolveCourse(
   schedule: Schedule,
   courseId: string,
   courseName?: string,
+  weeks?: number[],
+  weekday?: number,
 ): Course | undefined {
-  return (
-    schedule.courses.find((c) => c.id === courseId) ??
-    (courseName
-      ? schedule.courses.find((c) => c.name === courseName)
-      : undefined)
-  );
+  const candidates = schedule.courses.filter(c =>
+    (!courseName || c.name === courseName) &&
+    (weekday === undefined || c.weekday === weekday) &&
+    (!weeks || weeks.every(w => c.weeks.includes(w))));
+  const byId = candidates.find(c => c.id === courseId);
+  return byId ?? (candidates.length === 1 && courseName ? candidates[0] : undefined);
 }
 
 /** 执行一条课表操作，返回给人看的结果文案 */
@@ -68,7 +70,8 @@ export function applyScheduleAction(
     case "add": {
       const draft = normalizeDraft(action.course, schedule);
       if (!draft) return "添加失败：节次数据无效";
-      store.addCourse(draft);
+      try { store.addCourse(draft); }
+      catch (error) { return `添加失败：${error instanceof Error ? error.message : "课程数据无效"}`; }
       return `已添加「${draft.name}」`;
     }
     case "remove": {
@@ -79,27 +82,17 @@ export function applyScheduleAction(
       return `已删除「${target.name}」`;
     }
     case "update": {
-      const target = resolveCourse(schedule, action.courseId, action.courseName);
+      if (!action.patch || typeof action.patch !== "object" || Array.isArray(action.patch)) return "修改失败：缺少有效的课程修改内容";
+      if (action.targetWeeks !== undefined && (!Array.isArray(action.targetWeeks) || !action.targetWeeks.length || action.targetWeeks.some(w => !Number.isInteger(w)))) return "修改失败：请选择有效的修改周次";
+      const target = resolveCourse(schedule, action.courseId, action.courseName, action.targetWeeks, action.targetWeekday);
       if (!target)
-        return `未找到课程「${action.courseName ?? action.courseId}」`;
-      const patch: Partial<Course> = { ...action.patch };
-      delete patch.id;
-      if (patch.startPeriod != null || patch.endPeriod != null) {
-        const clamped = clampPeriods(
-          schedule.periods,
-          patch.startPeriod ?? target.startPeriod,
-          patch.endPeriod ?? target.endPeriod,
-        );
-        if (clamped) Object.assign(patch, clamped);
-      }
-      if (patch.weeks) {
-        const totalWeeks = Math.max(1, schedule.totalWeeks ?? 18);
-        patch.weeks = [
-          ...new Set(patch.weeks.filter((w) => w >= 1 && w <= totalWeeks)),
-        ].sort((a, b) => a - b);
-      }
-      store.updateCourse(target.id, patch);
-      return `已更新「${target.name}」`;
+        return `课程定位不唯一或不存在，请确认原课程的星期、周次和节次后重试`;
+      try {
+        store.updateCourse(target.id, action.patch, action.targetWeeks);
+      } catch (error) { return `修改失败：${error instanceof Error ? error.message : "课程数据无效"}`; }
+      const latest = useStore.getState().schedules.find(s => s.id === schedule.id);
+      const updated = latest?.courses.find(c => c.name === (action.patch.name ?? target.name) && c.weekday === (action.patch.weekday ?? target.weekday) && (action.targetWeeks ?? target.weeks).some(w => c.weeks.includes(w)));
+      return `已更新「${target.name}」${action.targetWeeks ? `（第${action.targetWeeks.join("、")}周）` : ""}${updated ? `，周${updated.weekday} 第${updated.startPeriod}–${updated.endPeriod}节${updated.startTime ? ` ${updated.startTime}–${updated.endTime}` : ""}` : ""}`;
     }
     case "create_schedule": {
       const name = String(action.scheduleName ?? "").trim();

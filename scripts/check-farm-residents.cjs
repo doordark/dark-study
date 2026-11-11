@@ -242,6 +242,42 @@ assert.equal(life.readLifeBatch(JSON.stringify({ lines: meeting.lines.slice(0, 8
 assert(group.snapshot().every(r => !r.conversationPartner && !r.conversationSize));
 
 const abortGroup = engine();
+const philosophical = { type: 'discuss', guests: ['door', 'xiaoba'], question: '基于农场主假说 讨论自己是不是真人' };
+function commissionedMeeting(action, reply) {
+  const simulation = engine();
+  simulation.configure({ ...settings, online: !!reply, aiRatio: 100, longTalks: true, naturalTalks: true }, at);
+  assert(simulation.command('gu', action, at).ok);
+  if (reply) {
+    const [batch] = simulation.drainEffects();
+    assert.equal(batch.rounds, 3);
+    simulation.supplyConversation(batch.id, reply, true, at + 100);
+  }
+  advance(simulation, at, 110);
+  assert(simulation.history[0].endedAt);
+  return simulation.history[0];
+}
+const philosophy = commissionedMeeting(philosophical);
+assert.equal(new Set(philosophy.lines.map(line => line.text)).size, 9);
+assert.match(philosophy.lines[0].text, /规律/);
+assert.match(philosophy.lines[6].text, /真人/);
+assert(commissionedMeeting(philosophical, philosophy.lines).online);
+const petEnding = philosophy.lines.slice(0, -2).concat([
+  { speaker: 'door', text: '那坤坤算不算真？它可会抢食。' },
+  { speaker: 'xiaoba', text: '算吧，它每天等我们喂。' },
+]);
+assert.equal(commissionedMeeting(philosophical, petEnding).online, false);
+const expanded = philosophy.lines.map((line, i) => i ? line : { ...line, text: line.text + '也许要先说清楚，真实指的是谁定的规则，还是我们自己的感受。' });
+assert(expanded[0].text.length > 44);
+const expandedBatch = life.readLifeBatch(JSON.stringify({ lines: expanded }), philosophy.participants, 3, false, true, 80);
+assert(expandedBatch && commissionedMeeting(philosophical, expandedBatch.lines).online);
+const duplicate = philosophy.lines.map(line => ({ ...line, text: '我们都是真人！' }));
+assert.equal(commissionedMeeting(philosophical, duplicate).online, false);
+const drift = philosophy.lines.map((line, index) => index < 3 ? line : { ...line, text: '今天钓鱼钓了' + index + '条。' });
+assert.equal(commissionedMeeting(philosophical, drift).online, false);
+const custom = { type: 'discuss', question: '桥墩为什么要做成圆形？', guests: ['door'] };
+assert.equal(commissionedMeeting(custom).lines.length, 2);
+const bridge = ['桥墩做成圆形，对水流有什么影响？', '我想到的是水流碰到平面时得突然改变方向。', '圆面让水绕过去，能减轻冲刷吗？', '还得看水速和河底的泥沙，不能只看外形。', '所以同样的桥墩，放在不同河段也可能表现不同。', '对，要判断这座桥，还得知道当地水流和泥沙的条件。'];
+assert(commissionedMeeting(custom, bridge.map((text, i) => ({ speaker: i % 2 ? 'door' : 'gu', text }))).online);
 assert(abortGroup.command('gu', discussionAction, at).ok);
 assert(abortGroup.command('xiaoba', { type: 'rest' }, at + 1000).ok);
 assert(abortGroup.snapshot().every(r => !r.conversationPartner && !r.conversationSize));

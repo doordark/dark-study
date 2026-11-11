@@ -1,3 +1,4 @@
+import { SystemCourseReminders } from "@/components/SystemCourseReminders";
 import * as Notifications from "expo-notifications";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, AppState, Linking, Platform, Pressable, Text, View } from "react-native";
@@ -57,6 +58,7 @@ export function CourseReminderSettings() {
               <Text className="font-bold text-sky-600 dark:text-sky-300">{enabled ? "已开启" : "开启"}</Text>
             </Pressable>
           </View>
+          <SystemCourseReminders />
           {enabled && <>
             <Text className="mt-4 text-[12px] font-semibold text-slate-700 dark:text-slate-200">首次提前多久</Text>
             <View className="mt-2 flex-row flex-wrap gap-2">{[5, 10, 15, 30, 60].map((n) => <Pressable key={n} onPress={() => setReminder({ reminderMinutes: n })} className={`rounded-xl px-3 py-2 ${minutes === n ? "bg-sky-400/30" : "bg-slate-400/10"}`}><Text className="text-[12px] text-slate-700 dark:text-slate-200">{n} 分钟</Text></Pressable>)}</View>

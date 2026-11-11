@@ -285,28 +285,28 @@ export interface ResidentConversation {
   online: boolean;
   lines: ResidentLine[];
 }
-export function readLifeBatch(raw: string, pair: readonly ResidentId[], rounds: number, natural: boolean, flexible = false) {
+export function readLifeBatch(raw: string, pair: readonly ResidentId[], rounds: number, natural: boolean, flexible = false, maxLength = 44) {
   try {
     const value = object(JSON.parse(raw));
     if (natural && typeof value.done !== 'boolean') return null;
     const done = natural && value.done === true;
     const count = done && Array.isArray(value.lines) ? value.lines.length / pair.length : rounds;
     if (!Number.isInteger(count) || count < Math.min(rounds, 2) || count > rounds) return null;
-    const lines = readLifeReply(raw, pair, count, flexible);
+    const lines = readLifeReply(raw, pair, count, flexible, maxLength);
     return lines ? { lines, done } : null;
   } catch {
     return null;
   }
 }
 
-export function readLifeReply(raw: string, pair: readonly ResidentId[], rounds = 1, flexible = false): Omit<ResidentLine, 'at'>[] | null {
+export function readLifeReply(raw: string, pair: readonly ResidentId[], rounds = 1, flexible = false, maxLength = 44): Omit<ResidentLine, 'at'>[] | null {
   try {
     const v = object(JSON.parse(raw));
     if (!Array.isArray(v.lines) || v.lines.length !== rounds * pair.length) return null;
     if (!v.lines.every((raw, i) => {
       const l = object(raw);
       const validSpeaker = flexible ? isResidentId(l.speaker) && pair.includes(l.speaker) && (i === 0 || l.speaker !== object((v.lines as unknown[])[i - 1]).speaker) : l.speaker === pair[i % pair.length];
-      return validSpeaker && typeof l.text === 'string' && l.text.trim().length > 0 && l.text.length <= 44;
+      return validSpeaker && typeof l.text === 'string' && l.text.trim().length > 0 && l.text.length <= maxLength;
     })) return null;
     if (flexible && !pair.every(id => (v.lines as unknown[]).some(line => object(line).speaker === id))) return null;
     return v.lines.map(raw => {

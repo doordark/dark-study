@@ -1,13 +1,13 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const Module = require("node:module");
 const ts = require("typescript");
 const filename = path.resolve(__dirname, "../src/utils/farmLife.ts");
-const compiled = ts.transpileModule(fs.readFileSync(filename, "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } });
-const domain = new Module(filename, module);
-domain._compile(compiled.outputText, filename);
-const p = domain.exports;
+require.extensions[".ts"] = (domain, source) => {
+  const compiled = ts.transpileModule(fs.readFileSync(source, "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } });
+  domain._compile(compiled.outputText, source);
+};
+const p = require(filename);
 const at = new Date(2026, 10, 3, 12).getTime();
 const nextDay = new Date(2026, 10, 4, 12).getTime();
 const empty = p.normalizeLifeUsage(null, at);

@@ -28,6 +28,8 @@ import {
 import { migratingStorage } from "@/utils/storage";
 import { normalizeGradeInput } from "@/utils/grades";
 
+import { editCourseWeeks, normalizeCoursePatch, validatePeriods } from "@/utils/courseEditing";
+
 const uid = () =>
   `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 
@@ -96,6 +98,7 @@ function planMerge(
       src.periods,
       c.startPeriod,
       c.endPeriod,
+      c,
     );
     const startP = periodAtTime(dst.periods, startTime);
     const endP = periodEndingAtTime(dst.periods, endTime);
@@ -131,7 +134,7 @@ function planMerge(
 
   // 冲突检测（合并后的全量课程）
   const merged = [...dst.courses, ...added];
-  const conflictMap = findConflicts(merged);
+  const conflictMap = findConflicts(merged, undefined, dst.periods);
   const pairs = new Set<string>();
   for (const [id, names] of conflictMap) {
     const me = merged.find((x) => x.id === id);
@@ -195,7 +198,7 @@ interface AppState {
   /** 把识别出的课表存为一份新课表，并切换为当前 */
   addScheduleWithData: (incoming: Schedule) => string;
   addCourse: (course: Omit<Course, "id">) => string;
-  updateCourse: (id: string, patch: Partial<Course>) => void;
+  updateCourse: (id: string, patch: Partial<Course>, targetWeeks?: number[]) => void;
   removeCourse: (id: string) => void;
   /** 只删除当前这一条上课记录（同一门课的其他时段保留） */
   removeCourseOnce: (id: string) => void;
@@ -373,17 +376,19 @@ export const useStore = create<AppState>()(
         set((s) =>
           mapActive(s, (cur) => ({
             ...cur,
-            courses: [...cur.courses, { ...course, id }],
+            courses: [...cur.courses, { ...course, ...normalizeCoursePatch({ ...course, id }, course, cur), id }],
           })),
         );
         return id;
       },
 
-      updateCourse: (id, patch) =>
+      updateCourse: (id, patch, targetWeeks) =>
         set((s) =>
           mapActive(s, (cur) => {
             const target = cur.courses.find((c) => c.id === id);
-            if (!target) return cur;
+            if (!target) throw new Error("课程已不存在，请重新打开编辑");
+            patch = normalizeCoursePatch(target, patch, cur);
+            if (targetWeeks) return { ...cur, courses: editCourseWeeks(cur.courses, id, patch, targetWeeks, uid()) };
             // 共享字段（名称/教师/教室/颜色/学分/备注）同步到同一门课的
             // 全部上课时间记录，保证日视图/周视图/AI 修改看到同一份数据；
             // 时间字段（星期/节次/周次）只改本条记录
@@ -420,7 +425,12 @@ export const useStore = create<AppState>()(
         ),
 
       setPeriods: (periods) =>
-        set((s) => mapActive(s, (cur) => ({ ...cur, periods }))),
+        set((s) => mapActive(s, (cur) => {
+          const error = validatePeriods(periods, cur.courses);
+          if (error) throw new Error(error);
+          const next = { ...cur, periods };
+          return { ...next, courses: cur.courses.map(c => (c.startTime || c.endTime) ? { ...c, ...normalizeCoursePatch(c, {}, next) } : c) };
+        })),
 
       addGrade: (grade) => {
         const id = uid();
