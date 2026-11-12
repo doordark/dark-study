@@ -60,6 +60,11 @@ assert(!requestBatchOnTopic(instruction, [{ speaker: 'xiaoba', text: '客人说�
 assert(!requestBatchOnTopic('帮我问唯刚明天几点浇水', [{ speaker: 'weigang', text: '浇水我知道，先不说别的。' }], 'weigang'));
 assert(requestBatchOnTopic('帮我问唯刚明天几点浇水', [{ speaker: 'weigang', text: '浇水时间我还没定，要先看看土壤。' }], 'weigang'));
 assert(!requestBatchOnTopic('问唯刚怎么看这件事', [{ speaker: 'weigang', text: '我知道了。' }], 'weigang'));
+assert(requestBatchOnTopic(instruction, [
+  { speaker: 'weigang', text: '关于骂人的说法，我想知道具体是哪一句。' },
+  { speaker: 'xiaoba', text: '我回去问问他记得的那句话。' },
+  { speaker: 'weigang', text: '好，也问问当时是在什么情况下说的。' },
+], 'weigang'), 'follow-up pronouns do not turn an on-topic answer into a refusal');
 for (const pair of [['door', 'gu'], ['xiaoba', 'yujie'], ['weigang', 'door']]) {
   const history = [], openings = new Set();
   for (let i = 0; i < 8; i++) {
@@ -86,7 +91,8 @@ for (const actor of life.RESIDENT_IDS) for (const target of life.RESIDENT_IDS) {
   for (let t = 0; t < 150000; t += 500) e.tick(at + t, { autonomous: false });
   const record = e.history.find(r => r.discussion?.kind === 'request');
   assert(record?.endedAt); assert.equal(record.source, 'player_command');
-  assert.equal(record.discussion.question, instruction); assert.equal(record.lines.length, 2);
+  assert.equal(record.discussion.question, instruction); assert.equal(record.lines.length, 6);
+  assert(!record.lines.some(line => /不方便聊天|先不催你|答不上来/.test(line.text)));
   assert(record.lines[0].text.includes('伟刚骂我'));
   assert(!record.lines.some(line => /游戏|钓鱼|音乐|聊了好久/.test(line.text)));
   assert(record.requestOutcome.includes(life.RESIDENTS[target].name));
@@ -108,6 +114,7 @@ for (const mode of ['unrelated', 'timeout', 'accepted']) {
   const record = e.history[0]; assert(record.endedAt); assert(record.requestOutcome);
   assert(!record.lines.some(line => line.text.includes('游戏地图')));
   assert.equal(record.online, mode === 'accepted');
+  assert(!record.lines.some(line => /不方便聊天|先不催你/.test(line.text)));
 }
 const cancelled = setup('xiaoba', 'weigang');
 for (let t = 0; t < 5000; t += 500) cancelled.tick(at + t, { autonomous: false });

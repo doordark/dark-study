@@ -1,7 +1,7 @@
 import { CROP_KINDS, CROP_META, type CropKind, type Inventory } from './farmEconomy';
 import { PERSONALITIES } from './farmPersonality';
 import type { CoopSupply } from './farmCoop';
-import { finiteCount } from './farmProgress';
+import { finiteCount, realDate } from './farmProgress';
 
 export const BAG_TIERS = ['皮革', '铜制', '铁制', '金制', '钻石', 'doordoor合金'] as const;
 export const CAN_TIERS = ['木水壶', ...BAG_TIERS.slice(1)] as const;
@@ -32,6 +32,7 @@ export interface FarmGear {
   bag: number; bagWear: number; hoe: number; rust: number;
   extras: Record<Extra, number>;
   stockWindow: number; purchased: Record<string, number>;
+  rarePurchases: { day: string; count: number };
   requests: Partial<Record<Vendor, { day: string; delivered: boolean }>>;
 }
 export function restoreGear(raw?: unknown): FarmGear {
@@ -48,7 +49,8 @@ export function restoreGear(raw?: unknown): FarmGear {
   return { priceDeals, coop: { bedding: v.coop?.bedding === true, perch: v.coop?.perch === true, feeder: v.coop?.feeder === true }, lastChickenHelp: finiteCount(v.lastChickenHelp, Number.MAX_SAFE_INTEGER), bag: finiteCount(v.bag, 5), bagWear: finiteCount(v.bagWear, 100),
     hoe: v.hoe === undefined ? 40 : finiteCount(v.hoe, 40), rust: finiteCount(v.rust, 100),
     extras: { repellent: finiteCount(v.extras?.repellent), growth: finiteCount(v.extras?.growth), charm: finiteCount(v.extras?.charm) },
-    stockWindow: finiteCount(v.stockWindow, Number.MAX_SAFE_INTEGER), purchased, requests };
+    stockWindow: finiteCount(v.stockWindow, Number.MAX_SAFE_INTEGER), purchased, requests,
+    rarePurchases: { day: typeof v.rarePurchases?.day === 'string' ? v.rarePurchases.day : '', count: finiteCount(v.rarePurchases?.count, 1) } };
 }
 export interface BagStack {
   id: string;
@@ -81,18 +83,36 @@ function roll(window: number, salt: number) {
 /** Stable for the current stock window, including after reopening the market. */
 export const vendorAvailable = (vendor: Vendor, at: number) => vendor !== 'traveler' || roll(marketWindow(at), 97) < .65;
 export interface Offer { id: string; crop?: CropKind; extra?: Extra; price: number; stock: number }
+export const offerLevel = (offer: Offer) => offer.crop ? qualityOf(offer.crop) === 4 ? 9 : qualityOf(offer.crop) === 3 ? 6 : CROP_META[offer.crop].level : 1;
+export const rareOffer = (offer: Offer) => !!offer.crop && qualityOf(offer.crop) >= 3;
+export function offerRemaining(offer: Offer, vendor: Vendor, gear: FarmGear, at: number) {
+  const bought = gear.stockWindow === marketWindow(at) ? gear.purchased[vendor + ':' + offer.id] ?? 0 : 0;
+  const daily = gear.rarePurchases.day === realDate(at) ? gear.rarePurchases.count : 0;
+  return Math.max(0, Math.min(offer.stock - bought, rareOffer(offer) ? 1 - daily : offer.stock));
+}
 export function marketOffers(vendor: Vendor, at: number): Offer[] {
   const window = marketWindow(at);
   if (vendor === 'smith' || !vendorAvailable(vendor, at)) return [];
   const seed = (crop: CropKind, salt: number): Offer => ({
-    id: crop, crop, price: Math.max(1, Math.round(CROP_META[crop].price * (.85 + roll(window, salt + 30) * .35))),
-    stock: 1 + Math.floor(roll(window, salt + 17) * (vendor === 'farmer' ? 12 : 4)),
+    id: crop, crop, price: Math.max(1, Math.round(CROP_META[crop].price * (qualityOf(crop) === 4 ? 2.5 : qualityOf(crop) === 3 ? 2 : 1) *
+      (qualityOf(crop) >= 3 ? .95 + roll(window, salt + 30) * .2 : .85 + roll(window, salt + 30) * .35))),
+    stock: qualityOf(crop) >= 3 ? 1 : 1 + Math.floor(roll(window, salt + 17) * (vendor === 'farmer' ? 12 : 4)),
   });
   if (vendor === 'chemist') return EXTRAS.slice(0, 2).map((extra, i) => ({ id: extra, extra, price: [22, 48][i], stock: 3 + Math.floor(roll(window, i + 21) * 5) }));
-  const selection = CROP_KINDS.filter(k => vendor === 'farmer' ? qualityOf(k) < 3 : qualityOf(k) >= 2);
+  const selection = CROP_KINDS.filter(k => vendor === 'farmer' ? qualityOf(k) < 3 : qualityOf(k) === 2);
   const shuffled = selection.map((crop, i) => ({ crop, key: roll(window, i + (vendor === 'farmer' ? 1 : 60)) })).sort((a, b) => a.key - b.key);
   const crops = vendor === 'farmer' ? ['radish' as const, ...shuffled.map(k => k.crop).filter(k => k !== 'radish').slice(0, 3)] : shuffled.slice(0, 2).map(k => k.crop);
   const offers = crops.map((crop, i) => seed(crop, i));
+  if (vendor === 'traveler') {
+    // Rare arrivals stay fixed for a calendar day, so hourly refreshes cannot reroll them.
+    const day = [...realDate(at)].reduce((hash, c) => Math.imul(hash, 31) + c.charCodeAt(0) | 0, 7);
+    const rarity = roll(day, 109);
+    const rarePool = CROP_KINDS.filter(k => qualityOf(k) === (rarity < .12 ? 4 : 3));
+    if (rarity < .45) {
+      const crop = rarePool[Math.floor(roll(day, 113) * rarePool.length)];
+      offers.splice(1, 1, seed(crop, 117));
+    }
+  }
   if (vendor === 'traveler' && roll(window, 41) < .65) offers.push({ id: 'charm', extra: 'charm', price: 75, stock: 1 });
   return offers;
 }

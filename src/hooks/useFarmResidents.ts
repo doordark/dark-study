@@ -178,11 +178,13 @@ export function useFarmResidents(options: FarmResidentsOptions) {
     const token = epoch.current;
     if (!current.awake || !current.apiKey || blocked.current) {
       engine.supplyConversation(event.id, null, false, now());
+      if (current.awake) setDialogueHint(!current.apiKey ? '未配置 Key，本次使用本地讨论' : '联网暂不可用，本次使用本地讨论');
       return;
     }
-    const reserved = reserveLifeRequest(budget.current, current.settings, now());
+    const reserved = reserveLifeRequest(budget.current, current.settings, now(), event.source === 'player_command');
     if (!reserved) {
       engine.supplyConversation(event.id, null, false, now());
+      setDialogueHint(current.settings.online ? 'AI 请求额度或间隔限制，本次使用本地讨论' : '联网对话已关闭，本次使用本地讨论');
       return;
     }
     budget.current = reserved;
@@ -211,24 +213,24 @@ export function useFarmResidents(options: FarmResidentsOptions) {
       const setup = discussion?.kind === 'request' ? '这是玩家明确委托的带话、询问或核实任务。来访者必须先说明受托的具体事情，对方必须回应这件事，再澄清细节或说明尚未核实。全程围绕委托，禁止转入兴趣闲聊。指控只是客人的转述，不能编造认错、辱骂经过或和解结果。最后留下能如实转达的答复。'
         : discussion?.kind === 'debate' ? '你们对' + topic + '有不同看法。允许着急或反驳，随后让对方把话说完。'
         : discussion?.kind === 'followup' && discussion.relayedBy ? '主持者刚与' + RESIDENTS[discussion.relayedBy].name + '讨论过' + topic + '，现在来听另一种看法。'
-        : commissioned ? '围绕客人的完整问题展开。先给出一个有理由的判断，让另一人用反例或不同解释挑战它，再接住具体分歧，说明什么能确定、什么仍无从判断。家人的个性体现在各自关心的细节里。'
+        : commissioned ? '围绕客人的完整问题展开，每个人至少两次有内容的发言。先直接回应，再接住对方的理由或追问。闲聊、审美、偏好可以直接给个人意见、开玩笑、不同意，无需客观证明；知识问题说明已知内容；只有确实缺少的事实才澄清。不要把普通聊天变成拒答或反复要求核实。家人的个性体现在各自关心的细节里。'
         : discussion ? '每个人要发表不同的看法或追问，并回应前面的人。议题：' + topic + '。' : '';
       const direction = event.finalBatch ? '在这一段自然收尾。' : '仍有新想法就继续，避免重复开场。';
       const length = event.natural
         ? `额外输出布尔值 "done"。想结束时设为 true，可写 ${Math.min(2, event.rounds)}～${event.rounds} 轮，并自然道别；还想继续时设为 false，写满 ${event.rounds} 轮。`
-        : `写满 ${event.rounds} 轮。`;
+        : commissioned ? `写2～${event.rounds}轮，每个人至少两次发言，内容足够就自然收尾。` : `写满 ${event.rounds} 轮。`;
       const { day, season, growing, ripe } = current.scene;
       const world = `现在是第 ${day} 天，${season}，${current.night ? '夜晚' : '白天'}。田里有 ${growing} 株在长，${ripe} 株可收。`;
       const flexible = event.pair.length === 3;
       const turnOrder = flexible
-        ? '允许接话、追问或让一个人多说，但不能连续两句都由同一人说，三个人都要至少发言一次。'
+        ? '允许接话和追问，不能连续两句都由同一人说，每个人至少发言' + (commissioned ? '两次' : '一次') + '。'
         : '两人按 ' + event.pair.join(' → ') + ' 的顺序交替。';
       const closingChoice = event.source === 'encounter' && (event.finalBatch || event.natural)
         ? '只有本段是整场对话的结尾时，才可以额外选一个真实下一步，不必选。next 可为 {"actor":"在场者的ID","type":"project"}（推进自己的小目标）、{"actor":"在场者的ID","type":"rest"} 或 {"actor":"在场者的ID","type":"ask","target":"未在场家人的ID","topic":"games|fishing|music|books|math|tech|garden|pets 中的一项"}。可用人物ID：door、gu、xiaoba、yujie、weigang、chicken。没有需要就省略 next。'
         : '';
       const context = [
         discussion?.question ? '客人授权带给在场家人的问题：' + JSON.stringify(discussion.question) : '',
-        discussion?.kind === 'request' ? '被询问者是' + RESIDENTS[event.pair[1]].name + '。问题中的“我、我的”指客人，不是来访的家人，不得把客人的经历说成自己的经历。对方的每一次答复都要回应上述问题的具体内容，不能只用“好、知道了、再说吧”等套话代替，也不能碰一下关键词就转入闲聊。不清楚就明确说哪一点不清楚。' : '',
+        discussion?.kind === 'request' ? '被询问者是' + RESIDENTS[event.pair[1]].name + '。问题中的“我、我的”指客人。先回答能回答的部分，再回应来访者的追问。可以用代词承接前文，不必每句重复问题关键词。个人偏好可直接表达；核实具体经历时只使用已知记录，缺少原话就请补充原话，说明下一步要弄清什么。不能用“不方便聊天、以后再说”代替答复。' : '',
         !previous.length && event.opening ? '本次从这段新开场切入，可按各自性格自然改写，不能换成无关的固定话题：\n' + event.opening : '',
         !previous.length && event.source === 'encounter' ? '避免重复最近的开头：' + engine.history.filter(record => record.id !== event.id && event.pair.every(id => record.participants.includes(id))).slice(-3).map(record => record.lines.slice(0, 2).map(line => line.text).join(' / ')).join('；') : '',
         previous.length ? '已发生的对白：\n' + previous.map(line => RESIDENTS[line.speaker].name + '：' + line.text).join('\n') : '',
@@ -245,7 +247,7 @@ export function useFarmResidents(options: FarmResidentsOptions) {
         maxTokens: commissioned ? 1024 : Math.min(1024, 180 + event.rounds * 130)
       });
       if (token === epoch.current && alive.current && !controller.signal.aborted) {
-        const batch = readLifeBatch(raw, event.pair, event.rounds, event.natural, flexible, commissioned ? 80 : 44);
+        const batch = readLifeBatch(raw, event.pair, event.rounds, event.natural, flexible, commissioned ? 80 : 44, commissioned ? 2 : event.rounds);
         if (engine.supplyConversation(event.id, batch?.lines ?? null, true, now(), batch?.done, batch && closingChoice ? readResidentBatchIntent(raw, event.pair) : undefined)) setDialogueHint(batch && (!commissioned || engine.getConversation(event.id)?.online) ? '' : '本轮使用本地对白');
       }
     } catch {

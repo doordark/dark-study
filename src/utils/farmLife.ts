@@ -222,9 +222,10 @@ export function normalizeLifeUsage(raw: unknown, at: number): LifeUsage {
     lastAt: number(v.lastAt, 0, 0, Number.MAX_SAFE_INTEGER)
   };
 }
-export function reserveLifeRequest(raw: LifeUsage, settings: LifeSettings, at: number): LifeUsage | null {
+export function reserveLifeRequest(raw: LifeUsage, settings: LifeSettings, at: number, playerCommand = false): LifeUsage | null {
   const usage = normalizeLifeUsage(raw, at);
-  if (!settings.online || !settings.chatter || settings.aiRatio <= 0 || usage.count >= settings.dailyLimit || usage.lastAt > 0 && at - usage.lastAt < settings.aiMinutes * 60000) return null;
+  if (!settings.online || usage.count >= settings.dailyLimit || usage.lastAt > at) return null;
+  if (!playerCommand && (!settings.chatter || settings.aiRatio <= 0 || usage.lastAt > 0 && at - usage.lastAt < settings.aiMinutes * 60000)) return null;
   return {
     ...usage,
     count: usage.count + 1,
@@ -285,13 +286,13 @@ export interface ResidentConversation {
   online: boolean;
   lines: ResidentLine[];
 }
-export function readLifeBatch(raw: string, pair: readonly ResidentId[], rounds: number, natural: boolean, flexible = false, maxLength = 44) {
+export function readLifeBatch(raw: string, pair: readonly ResidentId[], rounds: number, natural: boolean, flexible = false, maxLength = 44, minimumRounds = rounds) {
   try {
     const value = object(JSON.parse(raw));
     if (natural && typeof value.done !== 'boolean') return null;
     const done = natural && value.done === true;
-    const count = done && Array.isArray(value.lines) ? value.lines.length / pair.length : rounds;
-    if (!Number.isInteger(count) || count < Math.min(rounds, 2) || count > rounds) return null;
+    const count = (done || minimumRounds < rounds) && Array.isArray(value.lines) ? value.lines.length / pair.length : rounds;
+    if (!Number.isInteger(count) || count < (done ? Math.min(rounds, 2) : minimumRounds) || count > rounds) return null;
     const lines = readLifeReply(raw, pair, count, flexible, maxLength);
     return lines ? { lines, done } : null;
   } catch {

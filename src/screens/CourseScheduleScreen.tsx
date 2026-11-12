@@ -24,6 +24,7 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { ActionBar, type ActionItem } from "@/components/ActionBar";
+import { AfterHours, type AfterHoursKind } from "@/components/AfterHours";
 import { Backdrop } from "@/components/Backdrop";
 import { CourseCard, EmptySlotCard } from "@/components/CourseCard";
 import { CourseEditorPanel } from "@/components/CourseEditorPanel";
@@ -98,6 +99,7 @@ export function CourseScheduleScreen({
   const [editorToken, setEditorToken] = useState(0);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [nightOpen, setNightOpen] = useState(false);
+  const [afterHours, setAfterHours] = useState<AfterHoursKind | null>(null);
 
   // 第二个彩蛋：同样是静默触发，不给任何提示
   const [gravityToken, setGravityToken] = useState(0);
@@ -323,6 +325,8 @@ export function CourseScheduleScreen({
                 {/* 课表名称：点按快捷切换课表 */}
                 <Pressable
                   onPress={() => setSwitcherOpen(true)}
+                  onLongPress={() => setAfterHours("platform")}
+                  delayLongPress={1600}
                   className="flex-row items-center self-start rounded-full py-0.5 pr-1.5"
                 >
                   <Text className="text-[10px] font-semibold tracking-widest text-sky-500/80 dark:text-sky-300/80">
@@ -361,6 +365,8 @@ export function CourseScheduleScreen({
                       <Pressable
                         key={key}
                         onPress={() => setMode(key)}
+                        onLongPress={() => setAfterHours("permission")}
+                        delayLongPress={1400}
                         className={`h-7 w-8 items-center justify-center rounded-[10px] ${
                           mode === key ? "bg-sky-400/85" : ""
                         }`}
@@ -461,6 +467,8 @@ export function CourseScheduleScreen({
                       <Pressable
                         key={label}
                         onPress={() => setWeekday(day)}
+                        onLongPress={day === 7 ? () => setAfterHours("coffee") : undefined}
+                        delayLongPress={1200}
                         className="flex-1"
                       >
                         <View
@@ -723,8 +731,8 @@ export function CourseScheduleScreen({
           setEditing(undefined);
         }}
         onSave={handleSave}
-        onDelete={(id, scope) => {
-          if (scope === "once") removeCourseOnce(id);
+        onDelete={(id, scope, targetWeeks) => {
+          if (scope === "once") removeCourseOnce(id, targetWeeks);
           else removeCourse(id);
           setEditorOpen(false);
           setEditing(undefined);
@@ -732,6 +740,7 @@ export function CourseScheduleScreen({
       />
 
       {/* ---------- 隐藏的夜空 ---------- */}
+      {afterHours ? <AfterHours kind={afterHours} onClose={() => setAfterHours(null)} /> : null}
       {nightOpen ? (
         <NightSky
           onClose={() => setNightOpen(false)}

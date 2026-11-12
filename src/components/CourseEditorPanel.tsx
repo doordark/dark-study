@@ -38,8 +38,8 @@ export interface CourseEditorPanelProps {
   currentWeek?: number;
   onClose: () => void;
   onSave: (course: Omit<Course, "id"> & { id?: string }, targetWeeks?: number[]) => void;
-  /** once = 只删当前这一条上课记录；all = 删除整门课 */
-  onDelete?: (id: string, scope: "once" | "all") => void;
+  /** once 按当前记录或指定周次删除；all 删除该课程全部记录 */
+  onDelete?: (id: string, scope: "once" | "all", targetWeeks?: number[]) => void;
 }
 
 const emptyDraft = (totalWeeks: number): Omit<Course, "id"> => ({
@@ -201,34 +201,49 @@ export function CourseEditorPanel({
                   <Field
                     label="课程名称"
                     value={draft.name}
-                    placeholder="如：数据结构与算法"
                     onChange={(v) => set("name", v)}
                     onFocus={focusField}
                   />
                   <Field
                     label="授课教师"
                     value={draft.teacher}
-                    placeholder="如：陈明远"
                     onChange={(v) => set("teacher", v)}
                     onFocus={focusField}
                   />
                   <Field
                     label="上课教室"
                     value={draft.classroom}
-                    placeholder="如：教三 305"
                     onChange={(v) => set("classroom", v)}
                     onFocus={focusField}
                   />
 
                   {course && <View className="mb-4">
-                    <Text className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400">修改范围（本条记录：周{course.weekday} 第{course.startPeriod}–{course.endPeriod}节）</Text>
+                    <Text className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400">修改 / 删除范围（本条记录：周{course.weekday} 第{course.startPeriod}–{course.endPeriod}节）</Text>
                     <View className="flex-row gap-2">
                       <Pressable onPress={() => setScope("record")} className="rounded-xl bg-sky-400/20 p-3"><Text className="text-sky-600 dark:text-sky-300">{scope === "record" ? "✓ " : ""}整条重复记录</Text></Pressable>
                       <Pressable onPress={() => setScope("selected")} className="rounded-xl bg-sky-400/20 p-3"><Text className="text-sky-600 dark:text-sky-300">{scope === "selected" ? "✓ " : ""}指定周次</Text></Pressable>
                     </View>
                     {scope === "selected" && <>
-                      <Text className="my-2 text-xs text-slate-500 dark:text-slate-400">只修改以下周次，其余周保持原样</Text>
+                      <Text className="my-2 text-xs text-slate-500 dark:text-slate-400">修改或删除仅作用于以下周次，其余周保持原样</Text>
                       <View className="flex-row flex-wrap gap-2">{course.weeks.map(w => <Pressable key={w} onPress={() => setTargetWeeks(prev => prev.includes(w) ? prev.filter(x => x !== w) : [...prev, w])} className={`rounded-lg p-2 ${targetWeeks.includes(w) ? "bg-sky-400/40" : "bg-slate-400/10"}`}><Text className="text-slate-700 dark:text-slate-200">第{w}周</Text></Pressable>)}</View>
+                    </>}
+                    {onDelete && <>
+                      <Text className="my-2 text-xs text-slate-500 dark:text-slate-400">该课程共有 {occurrenceCount} 条上课记录。删除按原课程范围执行，不受下方未保存修改影响。</Text>
+                      <View className="flex-row flex-wrap gap-2">
+                        {(["once", "all"] as const).map(deleteScope => <Pressable key={deleteScope}
+                          onPress={() => {
+                            if (deleteScope === "once" && scope === "selected" && !targetWeeks.length) { Alert.alert("请选择删除周次"); return; }
+                            const weeks = deleteScope === "once" && scope === "selected" ? [...targetWeeks] : undefined;
+                            const range = deleteScope === "all" ? `全部 ${occurrenceCount} 条上课记录及其全部周次` : weeks ? `本条记录的第 ${weeks.join("、")} 周` : "本条重复记录的全部周次";
+                            Alert.alert("确认删除", `将删除「${course.name}」${range}。`, [
+                              { text: "取消", style: "cancel" },
+                              { text: "确认删除", style: "destructive", onPress: () => { onDelete(course.id, deleteScope, weeks); onClose(); } },
+                            ]);
+                          }}
+                          className="rounded-xl border border-rose-400/40 bg-rose-400/10 p-3">
+                          <Text className="text-xs font-semibold text-rose-600 dark:text-rose-300">{deleteScope === "all" ? "一键删除该课程全部记录" : "删除所选范围"}</Text>
+                        </Pressable>)}
+                      </View>
                     </>}
                   </View>}
                   {/* 星期 */}
@@ -413,45 +428,6 @@ export function CourseEditorPanel({
                     </Text>
                   </Pressable>
 
-                  {course && onDelete ? (
-                    <Pressable
-                      onPress={() => {
-                        // 同一门课可能有多个上课时段，让用户选择删除范围
-                        if (occurrenceCount <= 1) {
-                          onDelete(course.id, "all");
-                          onClose();
-                          return;
-                        }
-                        Alert.alert(
-                          "删除课程",
-                          `「${course.name}」共有 ${occurrenceCount} 条上课记录，要删除哪些？`,
-                          [
-                            { text: "取消", style: "cancel" },
-                            {
-                              text: "只删这一次",
-                              onPress: () => {
-                                onDelete(course.id, "once");
-                                onClose();
-                              },
-                            },
-                            {
-                              text: "删除整门课",
-                              style: "destructive",
-                              onPress: () => {
-                                onDelete(course.id, "all");
-                                onClose();
-                              },
-                            },
-                          ],
-                        );
-                      }}
-                      className="mb-2 items-center rounded-2xl border border-rose-400/40 bg-rose-400/15 py-3"
-                    >
-                      <Text className="text-[14px] font-semibold text-rose-300">
-                        删除课程
-                      </Text>
-                    </Pressable>
-                  ) : null}
                 </ScrollView>
               </GlassContainer>
             </Animated.View>

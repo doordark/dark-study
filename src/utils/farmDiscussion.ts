@@ -22,11 +22,11 @@ export function requestBatchOnTopic(question: string, lines: readonly { text: st
   const required = semantic.filter(([source]) => source.test(question));
   const unrelated = [/游戏|关卡|地图/, /钓鱼|鱼竿|钓位/, /音乐|唱歌|副歌/, /种菜|播种|浇水/, /小说|故事|读书/, /数学|方程/, /工具|编程|电脑/].filter(topic => !topic.test(question));
   if (!anchors.length && !semantic.some(([source]) => source.test(question))) return false;
-  return lines.length > 0 && lines.every(line => {
-    if (unrelated.some(topic => topic.test(line.text))) return false;
-    if (!target || line.speaker === target) return matches(line.text) && required.every(([, reply]) => reply.test(line.text));
-    return matches(line.text) || /核实|确认|转达|答复|原话|这件事|这个问题|不确定|没听清/.test(line.text);
-  });
+  const replies = lines.filter(line => !target || line.speaker === target);
+  // A reply may answer first and then clarify with pronouns. Check the exchange as a whole.
+  return replies.some(line => matches(line.text)) &&
+    required.every(([, reply]) => replies.some(line => reply.test(line.text))) &&
+    lines.every(line => !unrelated.some(topic => topic.test(line.text)) || matches(line.text));
 }
 
 export const RESIDENT_OUTLOOK: Record<ResidentId, { voice: string; approach: string; pushback: string; soften: string }> = {
@@ -49,7 +49,7 @@ const TOPIC_VIEWS: Record<FarmTopicId, readonly [string, string, string]> = {
   pets: ['小动物愿意走过来以前，可以先坐在它看得到的地方。', '也得留条退路，它害怕时能自己回到窝里。', '那我们坐远一点，让它自己决定什么时候过来。'],
 };
 
-const identityQuestion = /(?:自己|我们|我|居民|人物|角色).{0,10}(?:真人|真实的|是真的|是程序|是虚拟)|是不是真人/;
+const identityQuestion = /(?:自己|我们|我|大家|你们|咱们|居民|人物|角色).{0,16}(?:真人|真实的|是真的|程序|虚拟|\bai\b|人工智能)|是不是真人/i;
 const identityViews: Record<ResidentId, string> = {
   door: '要是有人写好了我的每一步，那连我此刻的怀疑也可能是写好的。光凭怀疑还证明不了什么。',
   gu: '我记得孩子喊我时心里一紧。可要是记忆也是别人放进来的呢？我只能说，那一刻我有感觉。',
@@ -59,9 +59,26 @@ const identityViews: Record<ResidentId, string> = {
   chicken: '咕，我害怕时就想往你们身边挪。这份怕也能事先写好吗？',
 };
 
-function playerDiscussionLines(participants: readonly ResidentId[], question: string) {
+function playerDiscussionLines(participants: readonly ResidentId[], question: string, variant: number) {
   const [host, second, third] = participants;
   const line = (speaker: ResidentId, text: string) => ({ speaker, text });
+  if (/谁.{0,5}(帅|好看|漂亮|可爱)|谁.{0,5}颜值/.test(question)) {
+    const opinions: Record<ResidentId, string> = {
+      door: '我投顾。认真听人说话时的那个眼神，我每次都会多看一眼。',
+      gu: '我偏心 door。认真起来挺好看，就是一讲道理容易忘记笑。',
+      xiaoba: '我想给自己留一票。平时不好意思说，今天既然问了，我就不谦虚啦。',
+      yujie: '我先投自己，不能还没开始就认输吧？不过顾笑起来确实很有优势。',
+      weigang: '我会选顾。她看过来时让人很放松，我觉得那样就很好看。',
+      chicken: '咕！我的羽毛晒过太阳会发亮，我也要参加！',
+    };
+    return [
+      ...participants.map((id, i) => line(id, (i === 0 ? '要说谁最好看，我先表态。' : '') + opinions[id])),
+      ...participants.map((id, i) => line(id, i === 0
+        ? '听下来大家看的地方还真不一样。自己给自己投票也算，我可没说不许。'
+        : i === 1 ? '那就各留各的票！喜欢谁的样子，本来就可以有自己的答案。'
+          : '我也保留刚才那一票。这回至少把平时不好意思说的夸奖说出来了。')),
+    ];
+  }
   if (identityQuestion.test(question)) {
     const premise = /农场主假说/.test(question) ? '坤坤每天等到饲料，可它只看到了规律，看不到谁定的。我们也在农场里，' : '假如我们的日子能被写出来，';
     return [
@@ -98,9 +115,32 @@ function playerDiscussionLines(participants: readonly ResidentId[], question: st
   const subject = localSubjects.find(([pattern]) => pattern.test(question));
   if (subject) {
     const [idea, objection, resolution] = TOPIC_VIEWS[subject[1]];
-    return [line(host, question), line(second, idea), line(third ?? host, objection), line(third ? host : second, resolution)];
+    return [
+      line(host, question), line(second, idea), line(third ?? host, objection), line(third ? host : second, resolution),
+      ...(third ? [line(second, '这个办法把刚才担心的地方也考虑进去了。我想留意实际做的时候有没有遗漏。'),
+        line(third, '那我先保留刚才那个不同意见，等试过以后再看看需不需要调整。')] : []),
+    ];
   }
-  return [line(host, question), line(second, '这个问题我现在答不上来，先留着吧。别让客人把我的猜测当答案。')];
+  const perspectives: Record<ResidentId, readonly [string, string]> = {
+    door: ['我会先分清已知的部分和自己的推测。你们说个例子，我想看看同一个解释能不能说通。',
+      '如果一个解释只适用于刚才那个例子，我会先留着另一种可能。'],
+    gu: ['我想先听听这件事里大家最在意什么。有人在意结果，也有人更在意自己的感受。',
+      '听到不同想法，我更想问问各自为什么在意这一点。这样才知道分歧从哪里来。'],
+    xiaoba: ['我想换个角度，把平时默认的条件反过来想一遍。也许会发现一个之前没注意到的地方。',
+      '要是换了条件想法就变了，我会把那个条件说出来，免得我们各想各的。'],
+    yujie: ['我想听个具体例子。先把最让人在意的那一小段说清楚，我才好判断自己赞不赞同。',
+      '我愿意改主意，但得说清是哪一点让我改了。光说大家都有道理，我还是有点不服。'],
+    weigang: ['我想比较两种说法。它们可能都说中了一部分，只是各自默认的条件不同。',
+      '我想把我们意见不同的条件记下来。下次多知道一点，就能接着往下想。'],
+    chicken: ['咕，我先听你们说。轮到我的时候，我会讲自己看到的、听到的。',
+      '咕，我听到了不同的想法。你们可以说慢一点，我还想跟上。'],
+  };
+  const order = Math.abs(variant) % 2;
+  return [
+    line(host, question),
+    ...participants.slice(1).map(id => line(id, perspectives[id][order])),
+    ...participants.map((id, i) => line(id, perspectives[id][i === 0 ? order : 1 - order])),
+  ];
 }
 
 export function discussionBatchFits(question: string, lines: readonly { text: string }[]) {
@@ -113,6 +153,7 @@ export function discussionBatchFits(question: string, lines: readonly { text: st
   const terms = words.flatMap(word => word.length < 2 || /^[a-z0-9]+$/.test(word) ? [word] :
     Array.from({ length: word.length - 1 }, (_, i) => word.slice(i, i + 2)));
   const relevant = (text: string) => terms.some(term => text.includes(term)) ||
+    (/帅|漂亮|好看|颜值|可爱/.test(question) && /帅|漂亮|好看|颜值|可爱|喜欢|投票|一票|各有|笑|审美/.test(text)) ||
     (identityQuestion.test(question) && /意识|感受|虚拟|程序|证据|存在|模拟|安排|选择|证明|规则|规矩|真实|验证|怀疑|体验/.test(text));
   const closing = normalized.slice(identityQuestion.test(question) ? -2 : -3);
   return !terms.length || [normalized.slice(0, 3), closing].every(group => group.some(relevant));
@@ -122,17 +163,17 @@ export function discussionLines(participants: readonly ResidentId[], discussion:
   if (discussion.kind === 'request' && discussion.question) {
     const [actor, target] = participants;
     const concern = /骂|欺负|质问|误会/.test(discussion.question);
-    const subject = discussion.question.slice(-28);
+    const subject = discussion.question.length > 140 ? discussion.question.slice(0, 139) + '…' : discussion.question;
     return [
       { speaker: actor, text: `客人托我来问这件事：「${subject}」` },
-      { speaker: target, text: concern ? '关于骂人的转述，我想先核对原话和情境。' : `你问「${subject.slice(-18)}」，我听清了。` },
-      { speaker: actor, text: concern ? '我没有亲眼见到，先来听你的说法。' : '我先确认你的意思，再如实带回去。' },
-      { speaker: target, text: concern ? '骂人的事还没核实，不能只凭转述定论。' : `「${subject.slice(-18)}」我暂时不能确定答复。` },
-      { speaker: actor, text: '好，我会转达：已经问过，还需要核实细节。' },
-      { speaker: target, text: '嗯，请如实转达，不要替我编结论。' },
+      { speaker: target, text: concern ? '他觉得被骂了，这件事我想听清楚。能把让他难受的那句话带给我吗？' : '我听到了。你希望我给个建议，还是确认已经发生的事情？' },
+      { speaker: actor, text: concern ? '我现在拿到的是他的转述，还没有当时的完整对话。我会把你想问的带回去。' : '我先把这个问题带到，也会把需要补充的地方一起转达。' },
+      { speaker: target, text: concern ? '我愿意认真说清楚。请问问他记得的原话和当时的情境，我们就从那一句开始谈。' : '如果是我的看法，我们可以接着聊；要确认具体事情，就把时间和经过一起带来。' },
+      { speaker: actor, text: '好，我会告诉他这次需要补充什么，让下一次能接着谈。' },
+      { speaker: target, text: concern ? '把我想核对原话的意思也告诉他。现在还没弄清那句话，不能草率下结论。' : '嗯，问题我记住了，补充细节后我们接着说。' },
     ];
   }
-  if (discussion.question) return playerDiscussionLines(participants, discussion.question);
+  if (discussion.question) return playerDiscussionLines(participants, discussion.question, variant);
   const topic = discussion.topic ? FARM_TOPICS[discussion.topic].label : '这件事';
   const views = discussion.topic ? TOPIC_VIEWS[discussion.topic] : undefined;
   const lead = participants[0];

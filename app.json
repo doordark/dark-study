@@ -2,7 +2,7 @@
   "expo": {
     "name": "dark-study",
     "slug": "dark-study",
-    "version": "1.9.4",
+    "version": "1.9.6",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "dark-study",
@@ -11,7 +11,7 @@
     },
     "android": {
       "package": "com.darkstudy.app",
-      "versionCode": 35,
+      "versionCode": 36,
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO"
       ],
@@ -69,7 +69,13 @@
       ],
       "expo-secure-store",
       "expo-asset",
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "允许 Dark Study 将选中的课程导入系统日历。"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

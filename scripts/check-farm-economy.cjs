@@ -105,4 +105,29 @@ for (const at of travelerWindows) {
 assert(!market.pestAt(44, 100, false));
 assert(market.pestAt(45, 100, false));
 assert(!market.pestAt(100, 100, true));
+let legendaryDays = 0, collectionDays = 0;
+for (let day = 0; day < 365; day++) {
+  const date = today + day * 86400000;
+  const dailyRare = new Set();
+  for (let hour = 0; hour < 12; hour++) {
+    const at = date + hour * 3600000;
+    for (const offer of market.marketOffers('traveler', at)) {
+      if (!market.rareOffer(offer)) continue;
+      dailyRare.add(offer.id);
+      assert.equal(offer.stock, 1);
+      assert(market.offerLevel(offer) >= 6);
+      assert(offer.price >= Math.round(e.CROP_META[offer.crop].price * 1.9));
+      const used = market.restoreGear({ rarePurchases: { day: progress.realDate(at), count: 1 } });
+      assert.equal(market.offerRemaining(offer, 'traveler', used, at), 0, 'refresh cannot bypass daily cap');
+      assert.equal(market.offerRemaining(offer, 'traveler', market.restoreGear(JSON.parse(JSON.stringify(used))), at), 0);
+      assert.equal(market.offerRemaining(offer, 'traveler', used, at + 86400000), 1);
+    }
+  }
+  assert(dailyRare.size <= 1);
+  if (dailyRare.has('star')) collectionDays++;
+  else if (dailyRare.size) legendaryDays++;
+}
+assert(collectionDays > 15 && collectionDays < 65, 'collection arrivals remain scarce');
+assert(legendaryDays > 70 && legendaryDays < 160);
+assert.equal(market.offerLevel({ crop: 'star' }), 9);
 console.log('Farm economy checks passed: 12 crops, stacking, gear migration, stock rotation, pests, persistent requests, processing and irrigation.');

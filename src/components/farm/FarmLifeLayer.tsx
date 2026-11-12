@@ -1,5 +1,6 @@
 import { FARM_BODY_FONT, FarmText as Text } from './FarmSkin';
 import { useState } from 'react';
+import { useSettings } from '@/store/useSettings';
 import { Image, Modal, Pressable, ScrollView, Switch, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FARM_TOPICS, MODE_NAMES, PRESETS, RESIDENT_IDS, RESIDENTS, SETTING_RANGES, SHORT_TALK_MAX, normalizeLifeUsage, type NumericLifeSetting, type ResidentId, type LifeMode } from '@/utils/farmLife';
@@ -85,8 +86,8 @@ const LABELS: Record<NumericLifeSetting, string> = {
   encounterChance: '偶遇聊天概率（%）',
   conversationCooldown: '聊天冷却（秒）',
   rounds: '对话轮数（每人发言一次算一轮）',
-  aiRatio: '联网对话比例（%）',
-  aiMinutes: 'AI 最短间隔（分钟）',
+  aiRatio: '自动闲聊联网比例（%）',
+  aiMinutes: '自动闲聊 AI 间隔（分钟）',
   dailyLimit: '每日 AI 请求上限',
   nightActivity: '夜间活跃程度（%）'
 };
@@ -112,6 +113,8 @@ export function FarmLifeLayer({
   at: number;
 }) {
   const insets = useSafeAreaInsets();
+  const farmWebSearch = useSettings(s => s.farmWebSearch);
+  const setFarmWebSearch = useSettings(s => s.setFarmWebSearch);
   const [advanced, setAdvanced] = useState(false);
   const [filter, setFilter] = useState<'all' | 'encounter' | 'ai' | 'command'>('all');
   const [person, setPerson] = useState<ResidentId | 'all'>('all');
@@ -175,6 +178,14 @@ export function FarmLifeLayer({
               fontSize: 12,
               lineHeight: 20
             }}>居民在路上自然偶遇，不会被定时召集。日常生活默认使用本地对白；开启联网或选择 AI 小镇后，只有部分偶遇会请求 AI。</Text>
+            <View style={{ padding: 13, borderRadius: 14, backgroundColor: '#F0E8DA' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <Text style={{ flex: 1, color: ink, fontSize: 14, fontWeight: '700' }}>居民联网搜索</Text>
+                <Switch accessibilityLabel="居民联网搜索" value={farmWebSearch} onValueChange={setFarmWebSearch}
+                  trackColor={{ false: '#DED3C7', true: '#B8C79F' }} thumbColor={farmWebSearch ? '#667F50' : '#FFF8EF'} />
+              </View>
+              <Text style={{ color: muted, fontSize: 12, lineHeight: 19, marginTop: 5 }}>明确请居民查资料时，将搜索词发送给搜索引擎。与居民自动 AI 对话分别控制。{hasApiKey ? '' : '请先在设置 → AI 与桌宠中配置共用的 DeepSeek API Key。'}</Text>
+            </View>
             {(['roaming', 'chatter', 'online', 'longTalks', 'naturalTalks', 'shareTopics'] as const).map((key, i) => <View key={key} style={{
               flexDirection: 'row',
               justifyContent: 'space-between',
@@ -190,7 +201,7 @@ export function FarmLifeLayer({
               color: '#6F7A50',
               fontSize: 12,
               lineHeight: 19
-            }}>今日 AI：{usage.count}/{settings.dailyLimit} 次 · 最短间隔 {settings.aiMinutes} 分钟 · 比例 {settings.aiRatio}%{!hasApiKey ? '\n未配置 Key，当前全部使用本地对白。' : ''}</Text>
+            }}>今日 AI：{usage.count}/{settings.dailyLimit} 次 · 自动闲聊间隔 {settings.aiMinutes} 分钟 · 比例 {settings.aiRatio}%{'\n开启联网后，主动委托优先联网，与自动闲聊共用每日额度。'}{!hasApiKey ? '\n未配置 Key，当前全部使用本地对白。' : ''}</Text>
             <Text style={{
               color: muted,
               fontSize: 11,

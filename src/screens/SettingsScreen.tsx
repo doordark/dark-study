@@ -786,23 +786,12 @@ function AiSettings() {
   const personaName = useWhalePersona((s) => s.persona.name);
   const apiKey = useSettings((s) => s.apiKey);
   const setApiKey = useSettings((s) => s.setApiKey);
-  const farmWebSearch = useSettings((s) => s.farmWebSearch);
-  const setFarmWebSearch = useSettings((s) => s.setFarmWebSearch);
   const [draft, setDraft] = useState<string | null>(null);
   const editing = draft ?? apiKey;
   const [saved, setSaved] = useState(false);
 
   return (
     <>
-      <Pressable accessibilityRole="switch" accessibilityState={{ checked: farmWebSearch }}
-        onPress={() => setFarmWebSearch(!farmWebSearch)}>
-        <GlassContainer radius={20} intensity={42} borderOpacity={0.22}>
-          <View className="px-4 py-3">
-            <Text className="font-bold text-slate-800 dark:text-white">农场居民联网搜索 · {farmWebSearch ? "开启" : "关闭"}</Text>
-            <Text className="text-xs text-slate-500 dark:text-slate-400">明确请居民查资料时，将搜索词发送给搜索引擎。需要配置 DeepSeek API Key。</Text>
-          </View>
-        </GlassContainer>
-      </Pressable>
       {/* DeepSeek Key */}
       <Animated.View entering={FadeInDown.springify()}>
         <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>

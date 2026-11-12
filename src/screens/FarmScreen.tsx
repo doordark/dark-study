@@ -110,6 +110,9 @@ import {
   canCapacity,
   marketOffers,
   marketWindow,
+  offerLevel,
+  offerRemaining,
+  rareOffer,
   pestAt,
   qualityOf,
   restoreGear,
@@ -1591,8 +1594,10 @@ export function FarmScreen() {
     const window = marketWindow(eventTime());
     if (window !== marketWindow(now)) return;
     const key = vendor + ":" + offer.id;
+    const currentOffer = marketOffers(vendor, eventTime()).find(item => item.id === offer.id);
+    if (!currentOffer || level < offerLevel(currentOffer) || !offerRemaining(currentOffer, vendor, gear, eventTime())) return;
+    offer = currentOffer;
     const purchases = gear.stockWindow === window ? gear.purchased : {};
-    if ((purchases[key] ?? 0) >= offer.stock) return;
     const price = vendorPrice(vendor, offer.price);
     if (coins < price) return;
     const nextSeeds = offer.crop
@@ -1614,6 +1619,7 @@ export function FarmScreen() {
       extras: nextExtras,
       stockWindow: window,
       purchased: { ...purchases, [key]: (purchases[key] ?? 0) + 1 },
+      rarePurchases: rareOffer(offer) ? { day: realDate(eventTime()), count: 1 } : g.rarePurchases,
     }));
   };
 
@@ -1842,15 +1848,12 @@ export function FarmScreen() {
             <FarmButton label={gear.coop[id] ? "已安装" : vendorPrice(vendor, COOP_SUPPLIES[id].price) + " 金币"} disabled={Boolean(gear.coop[id]) || coins < vendorPrice(vendor, COOP_SUPPLIES[id].price)} onPress={() => buyCoopSupply(id)} />
           </View>)}
         </View> : null}
+        {vendor === "traveler" && section === "trade" ? (
+          <Text>稀有到货按现实日期更新；传说与珍藏每日合计限购1份。</Text>
+        ) : null}
         {section === "trade" &&
           marketOffers(vendor, now).map((offer) => {
-            const left = Math.max(
-              0,
-              offer.stock -
-                (gear.stockWindow === marketWindow(now)
-                  ? (gear.purchased[vendor + ":" + offer.id] ?? 0)
-                  : 0),
-            );
+            const left = offerRemaining(offer, vendor, gear, now);
             const name = offer.crop
               ? CROP_ART[offer.crop].label + "种子"
               : EXTRA_NAMES[offer.extra!];
@@ -1882,13 +1885,15 @@ export function FarmScreen() {
                     <Text>
                       {QUALITY[qualityOf(offer.crop)].label} · Lv.
                       {CROP_META[offer.crop].level} 可播种
+                      {rareOffer(offer) ? ' · Lv.' + offerLevel(offer) + ' 可购买 · 稀有商品每日共限购1份' : ''}
                     </Text>
                   ) : null}
                 </View>
                 <FarmButton
-                  label={left ? price + " 金币 · 买 1" : "售罄"}
+                  label={level < offerLevel(offer) ? 'Lv.' + offerLevel(offer) + ' 解锁' : left ? price + " 金币 · 买 1" : "售罄"}
                   disabled={
                     !left ||
+                    level < offerLevel(offer) ||
                     coins < price ||
                     gear.bagWear >= 100 ||
                     stacks.length > bagCap ||
@@ -2345,7 +2350,7 @@ export function FarmScreen() {
           </Pressable>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="居民设置"
+            accessibilityLabel="农场菜单"
             onPress={() => setLifeOpen(true)}
             style={{
               width: 44,

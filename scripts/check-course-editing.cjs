@@ -97,6 +97,23 @@ async function run() {
   assert.equal(intents[1][1].extra["android.intent.extra.alarm.HOUR"],7);
   assert.equal(intents[1][1].extra["android.intent.extra.alarm.MINUTES"],55);
   await assert.rejects(system.openCourseAlarm(movedRow,15,new Date("2026-10-26T00:00:00")),/24/);
+  // Range deletion removes only selected teaching weeks and never sibling records.
+  reset();
+  store.getState().removeCourseOnce("ds", [8]);
+  assert.deepEqual(current().courses.find(c => c.id === "ds").weeks, [7,9]);
+  assert.deepEqual(current().courses.find(c => c.id === "ds-mon").weeks, [7,8,9]);
+  const beforeInvalidDelete = JSON.stringify(current());
+  assert.throws(() => store.getState().removeCourseOnce("ds", []), /周次/);
+  assert.throws(() => store.getState().removeCourseOnce("ds", [8]), /周次/);
+  assert.equal(JSON.stringify(current()), beforeInvalidDelete);
+  store.getState().removeCourseOnce("ds", [7,9]);
+  assert.deepEqual(current().courses.map(c => c.id), ["ds-mon"]);
+  reset();
+  store.getState().removeCourse("ds");
+  assert.equal(current().courses.length, 0);
+  reset();
+  store.getState().removeCourseOnce("ds");
+  assert.deepEqual(current().courses.map(c => c.id), ["ds-mon"]);
   reminders.syncCourseReminders(current(),true,15,1);
   await new Promise(r => setTimeout(r,20));
   assert.deepEqual(cancelled,["old"]); // Unrelated scheduled notifications remain intact.

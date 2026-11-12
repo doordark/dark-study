@@ -200,8 +200,8 @@ interface AppState {
   addCourse: (course: Omit<Course, "id">) => string;
   updateCourse: (id: string, patch: Partial<Course>, targetWeeks?: number[]) => void;
   removeCourse: (id: string) => void;
-  /** 只删除当前这一条上课记录（同一门课的其他时段保留） */
-  removeCourseOnce: (id: string) => void;
+  /** 删除当前记录的指定周次，省略周次时删除整条记录；保留同课程其他时段 */
+  removeCourseOnce: (id: string, targetWeeks?: number[]) => void;
   setPeriods: (periods: Schedule["periods"]) => void;
 
   /* ---------------- 成绩与绩点 ---------------- */
@@ -416,12 +416,21 @@ export const useStore = create<AppState>()(
           }),
         ),
 
-      removeCourseOnce: (id) =>
+      removeCourseOnce: (id, targetWeeks) =>
         set((s) =>
-          mapActive(s, (cur) => ({
-            ...cur,
-            courses: cur.courses.filter((c) => c.id !== id),
-          })),
+          mapActive(s, (cur) => {
+            const target = cur.courses.find(c => c.id === id);
+            if (!target) return cur;
+            if (targetWeeks && (!targetWeeks.length || targetWeeks.some(w => !target.weeks.includes(w)))) throw new Error("请选择原课程中的有效删除周次");
+            return {
+              ...cur,
+              courses: cur.courses.flatMap(c => {
+                if (c.id !== id) return [c];
+                const weeks = targetWeeks ? c.weeks.filter(w => !targetWeeks.includes(w)) : [];
+                return weeks.length ? [{ ...c, weeks }] : [];
+              }),
+            };
+          }),
         ),
 
       setPeriods: (periods) =>

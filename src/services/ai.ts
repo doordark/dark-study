@@ -32,6 +32,7 @@ import { createWhaleContext } from "@/services/whaleContext";
 import { recentWhaleHistory, type WhaleHistoryMessage } from "@/utils/whaleMemory";
 import { buildWhalePersonaPrompt, renderPersonaText } from "@/utils/whalePersona";
 import { useWhalePersona } from "@/store/useWhalePersona";
+import { validClock } from "@/utils/courseEditing";
 
 const COLOR_VALUES: CourseColor[] = [
   "sky",
@@ -98,8 +99,7 @@ function ensureTarget(parsed: any, message: string): void {
 function parseWeeksValue(input: unknown, totalWeeks: number): number[] {
   const out: number[] = [];
   const push = (n: number) => {
-    const w = Math.round(n);
-    if (w >= 1 && w <= totalWeeks) out.push(w);
+    if (Number.isInteger(n) && n >= 1 && n <= totalWeeks) out.push(n);
   };
   const collect = (v: unknown) => {
     if (Array.isArray(v)) {
@@ -111,14 +111,17 @@ function parseWeeksValue(input: unknown, totalWeeks: number): number[] {
       return;
     }
     if (typeof v !== "string") return;
-    // 去掉「第 / 周 / 到 / 空白」，再按分隔符拆成区间
+    // 去掉「第 / 周 / 空白」，再按分隔符拆成区间
     const norm = v.replace(/[第周\s]/g, "");
     for (const part of norm.split(/[,，、;；]/)) {
-      const m = part.match(/^(\d+)(?:[-~至](\d+))?$/);
+      const m = part.match(/^(\d+)(?:[-~至到—–](\d+))?$/);
       if (!m) continue;
       const a = Number(m[1]);
       const b = m[2] ? Number(m[2]) : a;
-      for (let w = Math.min(a, b); w <= Math.max(a, b); w++) push(w);
+      // Bound work by the semester, even when the model returns a huge range.
+      const first = Math.max(1, Math.min(a, b));
+      const last = Math.min(totalWeeks, Math.max(a, b));
+      for (let w = first; w <= last; w++) push(w);
     }
   };
   collect(input);
@@ -138,8 +141,13 @@ function weeksFromDates(
   for (const raw of dates) {
     const m = String(raw).match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
     if (!m) continue;
-    const t = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
-    if (Number.isNaN(t)) continue;
+    const date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    if (
+      date.getFullYear() !== Number(m[1]) ||
+      date.getMonth() !== Number(m[2]) - 1 ||
+      date.getDate() !== Number(m[3])
+    ) continue;
+    const t = date.getTime();
     const w = Math.floor((t - start) / 86400000 / 7) + 1;
     if (w >= 1 && w <= totalWeeks) out.push(w);
   }
@@ -160,17 +168,19 @@ function normalizeCourses(
       const weekday = Number(c?.weekday);
       const start = Number(c?.startPeriod);
       const end = Number(c?.endPeriod);
-      if (!weekday || weekday < 1 || weekday > 7) return null;
-      const s = Number.isFinite(start) ? Math.max(1, start) : 1;
-      const e = Number.isFinite(end) ? Math.max(s, end) : s;
+      if (!Number.isInteger(weekday) || weekday < 1 || weekday > 7) return null;
+      const s = Number.isInteger(start) ? Math.max(1, start) : 1;
+      const e = Number.isInteger(end) ? Math.max(s, end) : s;
       // 优先用具体日期换算周次（最精确）；否则用 weeks，最后才默认整学期
-      const fromDates = weeksFromDates(c?.dates, ctx?.startDate, totalWeeks);
-      const fromWeeks = parseWeeksValue(c?.weeks, totalWeeks);
-      const weeks = fromDates.length
-        ? fromDates
-        : fromWeeks.length
-          ? fromWeeks
-          : allWeeks;
+      const hasDates = Array.isArray(c?.dates) && c.dates.length > 0;
+      const hasWeeks = Array.isArray(c?.weeks)
+        ? c.weeks.length > 0
+        : c?.weeks != null && String(c.weeks).trim() !== "";
+      const weeks = hasDates
+        ? weeksFromDates(c.dates, ctx?.startDate, totalWeeks)
+        : hasWeeks ? parseWeeksValue(c.weeks, totalWeeks) : allWeeks;
+      // Explicit dates/weeks outside this semester must never become weekly classes.
+      if (!weeks.length) return null;
       const color: CourseColor = COLOR_VALUES.includes(c?.color)
         ? (c.color as CourseColor)
         : COLOR_VALUES[i % COLOR_VALUES.length];
@@ -184,7 +194,9 @@ function normalizeCourses(
         endPeriod: e,
         weeks,
         color,
-        credits: Number.isFinite(Number(c?.credits))
+        credits: c?.credits != null &&
+          String(c.credits).trim() !== "" &&
+          Number.isFinite(Number(c.credits))
           ? Number(c.credits)
           : undefined,
         note: "",
@@ -323,8 +335,8 @@ export async function recognizePeriods(
         )
         .filter(
           (p: Period) =>
-            /^\d{1,2}:\d{2}$/.test(p.startTime) &&
-            /^\d{1,2}:\d{2}$/.test(p.endTime),
+            validClock(p.startTime) && validClock(p.endTime) &&
+            p.endTime > p.startTime,
         )
         .map((p: Period, i: number) => ({ ...p, index: i + 1 }))
     : [];

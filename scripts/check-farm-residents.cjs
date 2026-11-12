@@ -275,7 +275,39 @@ assert.equal(commissionedMeeting(philosophical, duplicate).online, false);
 const drift = philosophy.lines.map((line, index) => index < 3 ? line : { ...line, text: '今天钓鱼钓了' + index + '条。' });
 assert.equal(commissionedMeeting(philosophical, drift).online, false);
 const custom = { type: 'discuss', question: '桥墩为什么要做成圆形？', guests: ['door'] };
-assert.equal(commissionedMeeting(custom).lines.length, 2);
+assert.equal(commissionedMeeting(custom).lines.length, 4);
+for (const question of ['谁最帅', '大家是 ai 还是真人', '你们是AI吗', '这件事情你们怎么看', '怎么选钓位']) {
+  const record = commissionedMeeting({ type: 'discuss', question, guests: ['door', 'xiaoba'] });
+  assert(record.participants.every(id => record.lines.filter(line => line.speaker === id).length >= 2), question);
+  assert(!record.lines.some(line => /答不上来|不方便聊天/.test(line.text)), question);
+  assert.equal(new Set(record.lines.map(line => line.text)).size, record.lines.length, question);
+  assert.deepEqual(life.restoreConversations(JSON.parse(JSON.stringify([record]))), JSON.parse(JSON.stringify([record])), question);
+}
+const beauty = commissionedMeeting({ type: 'discuss', question: '谁最帅', guests: ['door', 'xiaoba'] });
+const shortBatch = life.readLifeBatch(JSON.stringify({ lines: beauty.lines }), beauty.participants, 3, false, true, 80, 2);
+assert(shortBatch, 'a complete two-round meeting is valid');
+assert(commissionedMeeting({ type: 'discuss', question: '谁最帅', guests: ['door', 'xiaoba'] }, shortBatch.lines).online);
+const silentThird = beauty.lines.map(line => ({ ...line, speaker: line.speaker === 'xiaoba' ? 'gu' : line.speaker }));
+assert.equal(commissionedMeeting({ type: 'discuss', question: '谁最帅', guests: ['door', 'xiaoba'] }, silentThird).online, false);
+for (const actor of life.RESIDENT_IDS) {
+  const guests = life.RESIDENT_IDS.filter(id => id !== actor).slice(0, 2);
+  for (const question of ['谁最帅', '大家是 ai 还是真人', '没听过的新议题']) {
+    const e = engine();
+    assert(e.command(actor, { type: 'discuss', question, guests }, at).ok);
+    advance(e, at, 110);
+    assert(e.history[0].participants.every(id => e.history[0].lines.filter(line => line.speaker === id).length >= 2));
+  }
+}
+const priority = new FarmResidentEngine(at, () => .99);
+priority.configure({ ...settings, online: true, chatter: false, aiRatio: 0 }, at);
+assert(priority.command('yujie', { type: 'discuss', question: '谁最帅', guests: ['door', 'gu'] }, at).ok);
+assert.equal(priority.drainEffects().filter(event => event.type === 'conversation').length, 1, 'explicit commands bypass automatic chatter sampling');
+const manualSettings = { ...life.DEFAULT_LIFE, online: true, chatter: false, aiRatio: 0, dailyLimit: 3 };
+const recentUsage = { date: life.lifeDate(at), count: 1, lastAt: at - 100 };
+assert.equal(life.reserveLifeRequest(recentUsage, manualSettings, at, true).count, 2);
+assert.equal(life.reserveLifeRequest(recentUsage, manualSettings, at), null);
+assert.equal(life.reserveLifeRequest({ ...recentUsage, count: 3 }, manualSettings, at, true), null);
+assert.equal(life.reserveLifeRequest(recentUsage, { ...manualSettings, online: false }, at, true), null);
 const bridge = ['桥墩做成圆形，对水流有什么影响？', '我想到的是水流碰到平面时得突然改变方向。', '圆面让水绕过去，能减轻冲刷吗？', '还得看水速和河底的泥沙，不能只看外形。', '所以同样的桥墩，放在不同河段也可能表现不同。', '对，要判断这座桥，还得知道当地水流和泥沙的条件。'];
 assert(commissionedMeeting(custom, bridge.map((text, i) => ({ speaker: i % 2 ? 'door' : 'gu', text }))).online);
 assert(abortGroup.command('gu', discussionAction, at).ok);

@@ -4,7 +4,7 @@ import { farmSegmentClear, nearestFarmWaypoint, safeFarmPoint, waypointFarmRoute
 import { DEFAULT_LIFE, LONG_TALK_MAX, RESIDENTS, RESIDENT_IDS, SHORT_TALK_MAX, TALK_BATCH_ROUNDS, lifeDate, localConversation, normalizeLifeSettings, sharedTopicExchange, type FarmTopicId, type SharedFarmTopic, type LifeSettings, type ResidentId, type ResidentConversation, type ResidentLine } from './farmLife';
 import { validateNpcAction, type NpcAction, type FarmLocation } from './farmActions';
 import { discussionBatchFits, discussionLines, requestBatchOnTopic, type FarmDiscussion, type ResidentMood } from './farmDiscussion';
-import { publicFarmTopic, NPC_CHAT_UNAVAILABLE } from './farmMemory';
+import { publicFarmTopic } from './farmMemory';
 import { ambientConversation } from './farmAmbientTalk';
 import { RESIDENT_PROJECTS, readResidentIntent, type ResidentIntent } from './farmAgency';
 export type ResidentState = 'idle' | 'wandering' | 'walking' | 'talking' | 'working' | 'going_home';
@@ -559,10 +559,10 @@ export class FarmResidentEngine {
       { speaker: first, text: '我今天有点提不起劲。能陪我坐一小会儿吗？' },
       { speaker: second, text: second === 'chicken' ? '咕，我就蹲你旁边。' : '好。我陪着你。你想说话的时候再说。' },
     ] : [];
-    const network = this.settings.online && this.settings.aiRatio > 0 && this.random() * 100 < this.settings.aiRatio;
+    const network = this.settings.online && (source === 'player_command' || this.settings.aiRatio > 0 && this.random() * 100 < this.settings.aiRatio);
     const ambient = source === 'encounter' && participants.length === 2 && !discussion && !opener.length && !moodLines.length
       ? ambientConversation(pair, this.history, a.currentWaypoint + ' ' + b.currentWaypoint, this.night, this.random()) : [];
-    const planned = commissioned ? local : requested && !network ? [local[0], { speaker: second, text: NPC_CHAT_UNAVAILABLE }]
+    const planned = commissioned || requested ? local
       : [...opener, ...moodLines, ...local, ...ambient, ...(!requested && participants.length === 2 ? localConversation(pair, rounds, this.history.filter(record => pair.every(id => record.participants.includes(id))).length) : [])].slice(0, rounds * participants.length);
     if (!commissioned && rounds > SHORT_TALK_MAX) this.closeLocalTalk(pair, planned);
     const record: ResidentConversation = {
@@ -585,7 +585,7 @@ export class FarmResidentEngine {
       deadline: 0,
       arranging: true,
       network,
-      batchEnd: requested ? 2 : opener.length + moodLines.length,
+      batchEnd: opener.length + moodLines.length,
       natural,
       sharedTopic,
     };
@@ -623,9 +623,8 @@ export class FarmResidentEngine {
   private continueConversationLocally(c: PlayingConversation) {
     c.network = false;
     if (c.record.discussion?.kind === 'request') {
-      c.planned.splice(c.index, c.planned.length - c.index,
-        { speaker: c.record.participants[0], text: '这件事先不催你，有答复再如实转达。' },
-        { speaker: c.record.participants[1], text: NPC_CHAT_UNAVAILABLE });
+      const local = discussionLines(c.record.participants, c.record.discussion);
+      c.planned.splice(c.index, c.planned.length - c.index, ...local.slice(c.index));
       return;
     }
     if (c.record.online && c.record.participants.length === 2 && c.index < c.planned.length) {
@@ -663,7 +662,7 @@ export class FarmResidentEngine {
     const c = this.conversations.get(id);
     if (!c || !c.waiting) return false;
     const expected = c.batchEnd - c.index;
-    const ending = c.natural && done;
+    const ending = c.natural && done || c.record.discussion?.kind === 'discussion' && !!c.record.discussion.question;
     const speakers = c.record.participants.length;
     const repeatedOpening = lines && c.index === 0 && c.record.source === 'encounter' && this.history.filter(record => record.id !== id && c.record.participants.every(who => record.participants.includes(who))).slice(-3).some(record => record.lines[0]?.text === lines[0]?.text);
     const question = c.record.discussion?.kind === 'discussion' ? c.record.discussion.question : undefined;
@@ -671,7 +670,7 @@ export class FarmResidentEngine {
         lines.every((line, index) => (speakers === 3 && online
           ? c.record.participants.includes(line.speaker) && (index === 0 || lines[index - 1].speaker !== line.speaker)
           : line.speaker === c.record.participants[index % speakers]) && line.text.trim() && line.text.length <= (question ? 80 : 44)) &&
-        c.record.participants.every(id => lines.some(line => line.speaker === id))) {
+        c.record.participants.every(id => lines.filter(line => line.speaker === id).length >= (question ? 2 : 1))) {
       c.planned.splice(c.index, ending ? c.planned.length - c.index : expected, ...lines);
       c.record.online ||= online;
       if (online && c.record.source === 'encounter' && (ending || c.batchEnd === c.planned.length)) {
@@ -692,8 +691,8 @@ export class FarmResidentEngine {
       const target = c.record.participants[1];
       const responses = c.record.lines.filter(line => line.speaker === target);
       const response = [...responses].reverse().find(line => !/请如实转达|不要替我编结论/.test(line.text)) ?? responses.at(-1);
-      c.record.requestOutcome = completed && response?.text === NPC_CHAT_UNAVAILABLE
-        ? `我找到了${RESIDENTS[target].name}，但对方现在不方便聊天，还没得到这件事的答复。`
+      c.record.requestOutcome = completed && !c.record.online
+        ? `我把问题带给了${RESIDENTS[target].name}，还没得到明确结论，需要补充细节。${response ? '对方说：「' + response.text + '」' : ''}`
         : completed && response
         ? `我已经找${RESIDENTS[target].name}问过「${c.record.discussion.question?.slice(0, 40)}」。对方最后说：「${response.text}」`
         : '刚才的带话还没完成，不能当作已经问清楚。';

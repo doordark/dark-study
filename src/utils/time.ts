@@ -247,24 +247,32 @@ export function findConflicts(
   periods?: Period[],
 ): Map<string, string[]> {
   const map = new Map<string, string[]>();
+  const addConflict = (id: string, name: string) => {
+    const names = map.get(id);
+    if (names) names.push(name);
+    else map.set(id, [name]);
+  };
   const list =
     weekIndex == null
       ? courses
       : courses.filter((c) => c.weeks.includes(weekIndex));
+  const entries = list.map((course) => ({
+    weeks: new Set(course.weeks),
+    time: periods ? getCourseTime(periods, course.startPeriod, course.endPeriod, course) : undefined,
+  }));
   for (let i = 0; i < list.length; i++) {
     for (let j = i + 1; j < list.length; j++) {
       const a = list[i];
       const b = list[j];
       if (a.weekday !== b.weekday) continue;
-      if (periods) {
-        const at = getCourseTime(periods, a.startPeriod, a.endPeriod, a);
-        const bt = getCourseTime(periods, b.startPeriod, b.endPeriod, b);
+      const at = entries[i].time;
+      const bt = entries[j].time;
+      if (at && bt) {
         if (at.startMinutes >= bt.endMinutes || at.endMinutes <= bt.startMinutes) continue;
       } else if (a.startPeriod > b.endPeriod || a.endPeriod < b.startPeriod) continue;
-      const weeksB = new Set(b.weeks);
-      if (!a.weeks.some((w) => weeksB.has(w))) continue;
-      map.set(a.id, [...(map.get(a.id) ?? []), b.name]);
-      map.set(b.id, [...(map.get(b.id) ?? []), a.name]);
+      if (!a.weeks.some((w) => entries[j].weeks.has(w))) continue;
+      addConflict(a.id, b.name);
+      addConflict(b.id, a.name);
     }
   }
   return map;
