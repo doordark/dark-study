@@ -1,6 +1,6 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { coordinatedJSONStorage } from "@/utils/storage";
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 import type { WidgetAccent } from "@/constants/widgetPalette";
 import type { WidgetShape, WidgetTheme } from "@/utils/courseWidget";
 
@@ -21,4 +21,4 @@ export const useWidgetSettings = create<WidgetSettings>()(persist((set) => ({
   setTheme: (theme) => set({ theme }),
   setAccent: (accent) => set({ accent }),
   setCount: (count) => set({ count: Math.max(1, Math.min(5, Math.round(count))) }),
-}), { name: "dark-study-widget-settings", storage: createJSONStorage(() => AsyncStorage) }));
+}), { name: "dark-study-widget-settings", storage: coordinatedJSONStorage("dark-study-widget-settings") }));

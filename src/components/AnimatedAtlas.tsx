@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { AppState, View, type ImageSourcePropType } from "react-native";
+import { View, type ImageSourcePropType } from "react-native";
+import { foregroundStore } from '@/utils/foreground';
 import Animated, { runOnJS, useAnimatedStyle, useFrameCallback, useReducedMotion, useSharedValue, type SharedValue } from "react-native-reanimated";
 import { atlasPose, atlasTimeline } from "@/utils/atlasTimeline";
 
@@ -46,13 +47,13 @@ export function AnimatedAtlas({ source, columns, rows, frames, holds, frameDurat
     pose.set(timeline.frames[0]);
   }, [timeline, signature, sequence, elapsed, ended, pose]);
   useEffect(() => {
-    const resume = (state: string | null | undefined) => {
+    const resume = () => {
       if (reduced) pose.set(timeline.frames[0]);
-      clock.setActive(active && timeline.frames.length > 1 && !reduced && (!ended.value || loop) && (!state || state === "active"));
+      clock.setActive(active && timeline.frames.length > 1 && !reduced && (!ended.value || loop) && foregroundStore.getSnapshot());
     };
-    resume(AppState.currentState);
-    const subscription = AppState.addEventListener("change", resume);
-    return () => { subscription.remove(); clock.setActive(false); };
+    const unsubscribe = foregroundStore.subscribe(resume);
+    resume();
+    return () => { unsubscribe(); clock.setActive(false); };
   }, [active, clock, timeline, loop, reduced, ended, pose]);
   const style = useAnimatedStyle(() => ({ transform: [
     { translateX: -(pose.value % cols) * width },

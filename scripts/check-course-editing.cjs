@@ -24,6 +24,7 @@ function load(relative) {
   new Function("require","module","exports",compiled)(name => {
     if (Object.hasOwn(mocks,name)) return mocks[name];
     if (name.endsWith(".json")) return JSON.parse(fs.readFileSync(path.resolve(path.dirname(filename), name),"utf8"));
+    if (name.startsWith('.')) return load(path.relative(path.resolve(__dirname, '..'), path.resolve(path.dirname(filename), name + '.ts')));
     return name.startsWith("@/") ? load(`src/${name.slice(2)}.ts`) : require(name);
   },mod,mod.exports);
   return mod.exports;

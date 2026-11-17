@@ -1,3 +1,4 @@
+import { runAIRequest, type RequestPriority } from "../utils/requestCoordinator";
 import { extractJson } from "@/utils/base64";
 
 /**
@@ -162,7 +163,7 @@ async function requestOnce(
 }
 
 /** 发起 chat completion：临时故障自动退避重试，仍失败则抛出可读的错误 */
-export async function chat(
+async function chatDirect(
   messages: ChatContent[],
   apiKey: string,
   opts: {
@@ -172,6 +173,7 @@ export async function chat(
     timeoutMs?: number;
     maxTokens?: number;
     signal?: AbortSignal;
+    priority?: RequestPriority;
   } = {},
 ): Promise<string> {
   let lastError: unknown;
@@ -189,6 +191,10 @@ export async function chat(
   throw lastError instanceof Error ? lastError : new DeepSeekError("请求失败，请重试");
 }
 
+export function chat(messages: ChatContent[], apiKey: string, opts: Parameters<typeof chatDirect>[2] = {}): Promise<string> {
+  return runAIRequest(signal => chatDirect(messages, apiKey, { ...opts, signal }), { signal: opts.signal, priority: opts.priority, label: '助手/识别' });
+}
+
 /** 调用模型并解析 JSON：优先用 JSON 输出模式，失败自动降级重试一次 */
 export async function chatJson<T>(
   messages: ChatContent[],
@@ -199,12 +205,15 @@ export async function chatJson<T>(
     timeoutMs?: number;
     /** 最多尝试次数，默认 3；成绩识别等交互任务可缩短，避免长时间转圈 */
     attempts?: number;
+    signal?: AbortSignal;
+    priority?: RequestPriority;
   } = {},
 ): Promise<T> {
   let lastError: unknown = null;
   const attempts = Math.max(1, opts.attempts ?? 3);
 
   for (let attempt = 0; attempt < attempts; attempt++) {
+    if (opts.signal?.aborted) throw new DeepSeekError("请求已取消");
     // 第 1 次走 JSON 输出模式，后续降级为普通模式（个别模型/场景对 json_object 支持不稳）
     const jsonMode = attempt === 0;
     const reqMessages: ChatContent[] =
@@ -217,6 +226,8 @@ export async function chatJson<T>(
 
     try {
       const raw = await chat(reqMessages, apiKey, {
+        signal: opts.signal,
+        priority: opts.priority,
         model: opts.model,
         jsonMode,
         timeoutMs: opts.timeoutMs,
@@ -227,6 +238,7 @@ export async function chatJson<T>(
       lastError = new DeepSeekError("无法解析模型输出为结构化数据");
     } catch (e) {
       lastError = e;
+      if (opts.signal?.aborted || e instanceof Error && e.name === 'AbortError') throw e;
       // chat() 内部已对 5xx/429/网络抖动做过退避重试，这类错误换模式再试也没用；
       // 只有 400（可能是 json_object 不被支持）和解析失败才值得降级重试
       if (e instanceof DeepSeekError && e.status !== 400) break;

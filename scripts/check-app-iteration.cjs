@@ -16,6 +16,10 @@ function loader(mocks = {}, timers = {}) {
     const local = (name) => {
       if (Object.hasOwn(mocks, name)) return mocks[name];
       if (name.startsWith('@/')) return load(`src/${name.slice(2)}.ts`);
+      if (name.startsWith('.')) {
+        const resolved = path.resolve(path.dirname(filename), name);
+        if (fs.existsSync(`${resolved}.ts`)) return load(path.relative(root, `${resolved}.ts`));
+      }
       return require(name);
     };
     new Function('require', 'module', 'exports', 'setInterval', 'clearInterval', source)(local, mod, mod.exports,

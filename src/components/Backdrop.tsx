@@ -14,6 +14,7 @@ import {
 import { GlassTargetProvider } from "@/components/GlassContainer";
 import { useReducedTransparency } from "@/hooks/useReducedTransparency";
 import { useSettings } from "@/store/useSettings";
+import { renderQuality } from '@/utils/renderQuality';
 
 /**
  * 沉浸式底色与连续衰减的径向光场，为玻璃提供柔和的透射色。
@@ -27,8 +28,9 @@ export function Backdrop({ children }: { children?: React.ReactNode }) {
   const tint = useSettings((s) => s.backgroundTint);
   const effect = useSettings((s) => s.backgroundEffect);
   const glass = useSettings((s) => s.material === "glass");
+  const quality = useSettings(s => s.renderQuality);
   const reduceTransparency = useReducedTransparency();
-  const blurEnabled = glass && !reduceTransparency;
+  const blurEnabled = glass && !reduceTransparency && renderQuality(quality).blur;
   const glowId = React.useId().replace(/:/g, "");
   const insets = useSafeAreaInsets();
   // 玻璃材质下，这层背景会被本页所有玻璃卡片当作模糊源

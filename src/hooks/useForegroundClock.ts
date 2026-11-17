@@ -3,9 +3,10 @@ import { useCallback, useState } from "react";
 import { AppState } from "react-native";
 
 /** Refresh immediately on return; hidden screens and background apps do no polling. */
-export function useForegroundClock(intervalMs = 30_000) {
+export function useForegroundClock(intervalMs = 30_000, enabled = true) {
   const [now, setNow] = useState(() => new Date());
   useFocusEffect(useCallback(() => {
+    if (!enabled) return;
     let timer: ReturnType<typeof setInterval> | undefined;
     const stop = () => { clearInterval(timer); timer = undefined; };
     const resume = () => {
@@ -19,6 +20,6 @@ export function useForegroundClock(intervalMs = 30_000) {
     });
     resume();
     return () => { stop(); sub.remove(); };
-  }, [intervalMs]));
+  }, [intervalMs, enabled]));
   return now;
 }

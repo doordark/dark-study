@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 
 import {
   resolveEffect,
@@ -7,9 +7,12 @@ import {
   type BackgroundEffect,
   type BackgroundTint,
 } from "@/constants/backgrounds";
-import { migratingStorage } from "@/utils/storage";
+import { coordinatedJSONStorage } from "@/utils/storage";
+import type { RenderQuality } from '@/utils/renderQuality';
 
 interface SettingsState {
+  renderQuality: RenderQuality;
+  setRenderQuality: (quality: RenderQuality) => void;
   apiKey: string;
   farmWebSearch: boolean;
   setFarmWebSearch: (enabled: boolean) => void;
@@ -41,6 +44,8 @@ interface SettingsState {
 export const useSettings = create<SettingsState>()(
   persist(
     (set) => ({
+      renderQuality: 'standard',
+      setRenderQuality: (renderQuality) => set({ renderQuality }),
       // 默认为空：API Key 由用户在「设置」中填写，只存本地，
       // 永远不要把真实 Key 写进代码或提交到仓库
       apiKey: "",
@@ -71,7 +76,7 @@ export const useSettings = create<SettingsState>()(
     }),
     {
       name: "dark-study-settings",
-      storage: createJSONStorage(() => migratingStorage("courseflow-settings")),
+      storage: coordinatedJSONStorage("courseflow-settings"),
     },
   ),
 );

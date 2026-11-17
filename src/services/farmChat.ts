@@ -1,3 +1,4 @@
+import { runAIRequest, type RequestPriority } from "../utils/requestCoordinator";
 import { TEXT_MODEL, type ChatContent } from './deepseek';
 
 /** 农场对话错误：区分可重试的临时故障与需要用户处理的配置问题 */
@@ -143,8 +144,10 @@ async function requestOnce(messages: ChatContent[], apiKey: string, options: {
  * 默认单次请求：自动居民对话每次额度预留对应一次 HTTP 调用。
  * 玩家主动聊天可传 `retries` 开启短退避重试；JSON 模式偶发返回空内容时
  * （DeepSeek 已知问题）会降级为普通模式补一次请求，避免直接掉进本地台词。 */
-export async function farmChat(messages: ChatContent[], apiKey: string, options: {
+async function farmChatDirect(messages: ChatContent[], apiKey: string, options: {
   signal?: AbortSignal;
+  priority?: RequestPriority;
+  beforeStart?: () => Promise<void>;
   timeoutMs?: number;
   maxTokens?: number;
   /** 临时故障的额外重试次数，默认 0（自动对话用） */
@@ -187,4 +190,12 @@ export async function farmChat(messages: ChatContent[], apiKey: string, options:
       await wait(600 + Math.floor(Math.random() * 250), options.signal);
     }
   }
+}
+
+export function farmChat(messages: ChatContent[], apiKey: string, options: Parameters<typeof farmChatDirect>[2] = {}): Promise<string> {
+  return runAIRequest(async signal => {
+    if (signal.aborted) throw cancelled();
+    await options.beforeStart?.();
+    return farmChatDirect(messages, apiKey, { ...options, signal });
+  }, { signal: options.signal, priority: options.priority, label: options.priority === 'background' ? '居民闲聊' : '农场聊天' });
 }

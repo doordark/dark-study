@@ -1,0 +1,47 @@
+[
+  {
+    "file": "farm-people-family-v3.png",
+    "columns": 8,
+    "rows": 5,
+    "width": 1152,
+    "height": 720,
+    "sourceRGBABytes": 6293248,
+    "runtimeRGBABytes": 3317760
+  },
+  {
+    "file": "farm-people-family-idle-v3.png",
+    "columns": 8,
+    "rows": 5,
+    "width": 1152,
+    "height": 720,
+    "sourceRGBABytes": 6289280,
+    "runtimeRGBABytes": 3317760
+  },
+  {
+    "file": "farm-people-family-talk-v3.png",
+    "columns": 8,
+    "rows": 5,
+    "width": 1152,
+    "height": 720,
+    "sourceRGBABytes": 6289280,
+    "runtimeRGBABytes": 3317760
+  },
+  {
+    "file": "vendors.png",
+    "columns": 8,
+    "rows": 4,
+    "width": 1152,
+    "height": 768,
+    "sourceRGBABytes": 6291456,
+    "runtimeRGBABytes": 3538944
+  },
+  {
+    "file": "hero-walk.png",
+    "columns": 8,
+    "rows": 1,
+    "width": 1152,
+    "height": 180,
+    "sourceRGBABytes": 6290112,
+    "runtimeRGBABytes": 829440
+  }
+]

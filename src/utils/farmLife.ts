@@ -224,13 +224,22 @@ export function normalizeLifeUsage(raw: unknown, at: number): LifeUsage {
 }
 export function reserveLifeRequest(raw: LifeUsage, settings: LifeSettings, at: number, playerCommand = false): LifeUsage | null {
   const usage = normalizeLifeUsage(raw, at);
-  if (!settings.online || usage.count >= settings.dailyLimit || usage.lastAt > at) return null;
-  if (!playerCommand && (!settings.chatter || settings.aiRatio <= 0 || usage.lastAt > 0 && at - usage.lastAt < settings.aiMinutes * 60000)) return null;
+  if (lifeRequestBlockReason(usage, settings, at, playerCommand)) return null;
   return {
     ...usage,
     count: usage.count + 1,
     lastAt: at
   };
+}
+export function lifeRequestBlockReason(raw: LifeUsage, settings: LifeSettings, at: number, priority = false): string {
+  const usage = normalizeLifeUsage(raw, at);
+  if (!settings.online) return '居民联网对话已关闭';
+  if (usage.count >= settings.dailyLimit) return '今日 AI 请求额度已用完';
+  if (usage.lastAt > at) return '设备时间早于上次请求时间';
+  if (!priority && !settings.chatter) return '自主聊天已关闭';
+  if (!priority && settings.aiRatio <= 0) return '自动闲聊联网比例为 0%';
+  if (!priority && usage.lastAt > 0 && at - usage.lastAt < settings.aiMinutes * 60000) return '自动闲聊 AI 间隔尚未到';
+  return '';
 }
 export interface ResidentLine {
   speaker: ResidentId;
@@ -284,6 +293,8 @@ export interface ResidentConversation {
   taskId?: string;
   activity?: 'project' | 'rest';
   online: boolean;
+  aiPending?: boolean;
+  localReason?: string;
   lines: ResidentLine[];
 }
 export function readLifeBatch(raw: string, pair: readonly ResidentId[], rounds: number, natural: boolean, flexible = false, maxLength = 240, minimumRounds = rounds) {
@@ -349,6 +360,7 @@ export function restoreConversations(raw: unknown): ResidentConversation[] {
         ...(discussion ? { discussion } : {}),
         ...(v.source === 'scheduled/local' && (v.activity === 'project' || v.activity === 'rest') ? { activity: v.activity } : {}),
         ...(sharedTopic ? { sharedTopic } : {}),
+        ...(typeof v.localReason === 'string' ? { localReason: v.localReason.slice(0, 160) } : {}),
         id: v.id.slice(0, 100),
         participants,
         startedAt: number(v.startedAt, lines[0].at, 0, Number.MAX_SAFE_INTEGER),

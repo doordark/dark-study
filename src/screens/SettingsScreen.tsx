@@ -1,4 +1,6 @@
 import { useWhalePersona } from "@/store/useWhalePersona";
+import { PerformanceSettings } from '@/components/PerformanceSettings';
+import { BackupSettings } from '@/components/BackupSettings';
 import Ionicons from "@expo/vector-icons/Ionicons";
 import DateTimePicker, {
   DateTimePickerAndroid,
@@ -982,6 +984,14 @@ function OverviewStat({
 }
 
 const SETTINGS_GROUPS = [
+  {
+    id: 'backup', title: '备份与恢复', description: '课表、成绩、农场与人物记忆',
+    icon: 'save-outline', Content: BackupSettings,
+  },
+  {
+    id: 'performance', title: '性能与诊断', description: '画面表现、AI 请求状态与耗时',
+    icon: 'speedometer-outline', Content: PerformanceSettings,
+  },
   {
     id: "schedule",
     title: "课表与学期",

@@ -5,7 +5,8 @@ const Module = require("node:module");
 const ts = require("typescript");
 const filename = path.resolve(__dirname, "../src/services/deepseek.ts");
 const domain = new Module(filename, module);
-domain.require = (id) => id === "@/utils/base64" ? { extractJson: JSON.parse } : require(id);
+const coordinator = require('./load-project-ts.cjs')()('src/utils/requestCoordinator.ts');
+domain.require = (id) => id === "../utils/requestCoordinator" ? coordinator : id === "@/utils/base64" ? { extractJson: JSON.parse } : require(id);
 domain._compile(ts.transpileModule(fs.readFileSync(filename, "utf8"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
 }).outputText, filename);
@@ -31,6 +32,8 @@ async function main() {
   });
   const close = new AbortController();
   const pending = chat(messages, "test-only-placeholder", { signal: close.signal });
+  // let the coordinator start the request so the transport captures the signal
+  await new Promise((resolve) => setTimeout(resolve, 0));
   close.abort();
   await assert.rejects(pending);
   assert.equal(capturedSignal.aborted, true, "closing the sky cancels the transport");

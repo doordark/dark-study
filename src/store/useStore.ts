@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 
 import { DEFAULT_GRADE_RULES, DEFAULT_GRADE_TYPES, DEFAULT_GRADE_YEARS, SAMPLE_SCHEDULE } from "@/constants/sample";
 import type {
@@ -25,7 +25,7 @@ import {
   toIsoDate,
   weeksFromDates,
 } from "@/utils/time";
-import { migratingStorage } from "@/utils/storage";
+import { coordinatedJSONStorage } from "@/utils/storage";
 import { normalizeGradeInput } from "@/utils/grades";
 
 import { editCourseWeeks, normalizeCoursePatch, validatePeriods } from "@/utils/courseEditing";
@@ -595,7 +595,7 @@ export const useStore = create<AppState>()(
     {
       name: "dark-study-storage",
       version: 6,
-      storage: createJSONStorage(() => migratingStorage("courseflow-storage")),
+      storage: coordinatedJSONStorage("courseflow-storage"),
       migrate: (persisted, version) => {
         const s = (persisted ?? {}) as Record<string, any>;
         let legacy = s.schedule as Schedule | undefined;

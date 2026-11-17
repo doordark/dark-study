@@ -149,6 +149,7 @@ export async function answerFromSearch(
   question: string,
   hits: SearchHit[],
   apiKey: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   const brief = hits
     .map(
@@ -169,7 +170,7 @@ export async function answerFromSearch(
       },
     ],
     apiKey,
-    { temperature: 0.7, timeoutMs: 45_000 },
+    { temperature: 0.7, timeoutMs: 45_000, signal },
   );
   return text.trim();
 }

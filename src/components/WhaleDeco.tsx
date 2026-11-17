@@ -1,6 +1,12 @@
+import { useSettings } from "@/store/useSettings";
+import { renderQuality } from "@/utils/renderQuality";
+import { useIsFocused } from 'expo-router';
+import { useAnimationActive } from '@/hooks/useAnimationActive';
 import { useEffect } from "react";
 import { View } from "react-native";
 import Animated, {
+  cancelAnimation,
+  useReducedMotion,
   Easing,
   useAnimatedStyle,
   useSharedValue,
@@ -114,10 +120,13 @@ const ITEMS: DecoItem[] = [
 ];
 
 /** 单个漂浮贴图：上下缓慢浮动 + 轻微摆动，互不打扰 */
-function Floating({ item }: { item: DecoItem }) {
+function Floating({ item, active }: { item: DecoItem; active: boolean }) {
   const t = useSharedValue(0);
+  const reduced = useReducedMotion();
+  const awake = useAnimationActive(active && !reduced);
 
   useEffect(() => {
+    if (!awake) return;
     t.value = withDelay(
       item.delay,
       withRepeat(
@@ -129,7 +138,8 @@ function Floating({ item }: { item: DecoItem }) {
         true,
       ),
     );
-  }, [t, item.delay, item.duration]);
+    return () => cancelAnimation(t);
+  }, [t, item.delay, item.duration, awake]);
 
   const style = useAnimatedStyle(() => {
     return {
@@ -163,6 +173,10 @@ function Floating({ item }: { item: DecoItem }) {
 
 /** 鲸鱼模式下聊天区的可爱装饰层：浅蓝薄雾 + 漂来漂去的小贴图 */
 export function WhaleDeco() {
+  const focused = useIsFocused();
+  const quality = useSettings(s => s.renderQuality);
+  const count = renderQuality(quality).particles;
+  if (!count) return null;
   return (
     <View
       pointerEvents="none"
@@ -178,8 +192,8 @@ export function WhaleDeco() {
           backgroundColor: "rgba(56,189,248,0.06)",
         }}
       />
-      {ITEMS.map((item) => (
-        <Floating key={item.key} item={item} />
+      {ITEMS.slice(0, count).map((item) => (
+        <Floating key={item.key} item={item} active={focused} />
       ))}
     </View>
   );

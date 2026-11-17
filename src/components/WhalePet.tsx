@@ -1,5 +1,7 @@
+import { createRequestSession, type RequestTicket } from "@/utils/requestSession";
+import { foregroundStore } from "@/utils/foreground";
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Keyboard,
   Platform,
@@ -9,7 +11,6 @@ import {
   Text,
   View,
   useWindowDimensions,
-  type ScrollViewInstance,
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -31,7 +32,8 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColorScheme } from "nativewind";
 
-import { ChatImage } from "@/components/ChatImage";
+import { ChatMessageList } from "@/components/ChatMessageList";
+import { PetChatMessage } from "@/components/PetChatMessage";
 import { PetAnimation, type PetAnimationKind } from "@/components/PetAnimation";
 import { useAnimationActive } from "@/hooks/useAnimationActive";
 import { useDesktopPetSync } from "@/hooks/useDesktopPetSync";
@@ -311,6 +313,15 @@ function WhalePetLayer() {
   const setChatMsgs = useWhaleMemory((s) => s.setPetMessages);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [chatSession] = useState(createRequestSession);
+  const stopChatRequest = useCallback(() => {
+    chatSession.cancel(); setBusy(false); stopWhaleVoice();
+  }, [chatSession]);
+  useEffect(() => {
+    const foreground = foregroundStore.subscribe(() => { if (!foregroundStore.getSnapshot()) stopChatRequest(); });
+    const memory = useWhaleMemory.subscribe((next, previous) => { if (next.epoch !== previous.epoch) stopChatRequest(); });
+    return () => { foreground(); memory(); chatSession.cancel(); };
+  }, [chatSession, stopChatRequest]);
   const [panelPos, setPanelPos] = useState({ left: 12, top: 120 });
   const [kbHeight, setKbHeight] = useState(0);
 
@@ -320,7 +331,6 @@ function WhalePetLayer() {
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sleepTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const chatRef = useRef<ScrollViewInstance>(null);
   const taps = useRef({ count: 0, at: 0 });
   const lastPat = useRef(0);
   const lastSpoke = useRef(0);
@@ -931,6 +941,7 @@ function WhalePetLayer() {
   };
 
   const closeChat = () => {
+    stopChatRequest();
     chatOpenRef.current = false;
     setChatOpen(false);
     wake();
@@ -983,10 +994,11 @@ function WhalePetLayer() {
   const runWhaleActions = async (
     actions: WhaleAction[],
     userText: string,
+    ticket: RequestTicket,
   ) => {
     const memoryEpoch = useWhaleMemory.getState().epoch;
     for (const action of actions) {
-      if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
+      if (!ticket.isCurrent() || useWhaleMemory.getState().epoch !== memoryEpoch) return;
       if (action.type === "set_summon_phrase") {
         const phrase = String(action.phrase ?? "")
           .replace(/[\s「」"“”'']/g, "")
@@ -1033,17 +1045,17 @@ function WhalePetLayer() {
         const query = String(action.query ?? "").trim();
         if (!query) continue;
         try {
-          const hits = await searchWeb(query);
+          const hits = await searchWeb(query, ticket.signal);
           if (!hits.length) throw new Error("没有结果");
-          const answer = await answerFromSearch(userText, hits, apiKey);
-          if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
+          const answer = await answerFromSearch(userText, hits, apiKey, ticket.signal);
+          if (!ticket.isCurrent() || useWhaleMemory.getState().epoch !== memoryEpoch) return;
           setChatMsgs((prev) =>
             [...prev, petMsg("assistant", answer)].slice(-200),
           );
           showBubble(answer, 3000);
           say(answer);
         } catch {
-          if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
+          if (!ticket.isCurrent() || useWhaleMemory.getState().epoch !== memoryEpoch) return;
           setChatMsgs((prev) =>
             [
               ...prev,
@@ -1055,7 +1067,7 @@ function WhalePetLayer() {
           );
         }
       } else if (action.type === "dismiss_pet") {
-        setTimeout(() => dismiss(), 700);
+        chatSession.defer(ticket, () => dismiss(), 700);
       } else if (action.type === "forget_memory") {
         useWhaleMemory.getState().clearMemory();
         stopWhaleVoice();
@@ -1067,8 +1079,10 @@ function WhalePetLayer() {
   };
 
   /** 确认执行小对话框里挂起的课表操作 */
-  const applyPending = (id: string) => {
-    const msg = chatMsgs.find((m) => m.id === id);
+  const pendingFeedback = useRef({ showBubble, say });
+  useEffect(() => { pendingFeedback.current = { showBubble, say }; });
+  const applyPending = useCallback((id: string) => {
+    const msg = useWhaleMemory.getState().petMessages.find((m) => m.id === id);
     if (!msg?.actions?.length) return;
     const results = applyScheduleActions(msg.actions, schedule);
     if (results.some((r) => r.includes("失败") || r.includes("未找到"))) {
@@ -1085,22 +1099,26 @@ function WhalePetLayer() {
         petMsg("assistant", `课表改好啦：${summary}`),
       ].slice(-200),
     );
-    showBubble(summary, 2800);
-    say("改好啦，{{user}}。");
-  };
+    pendingFeedback.current.showBubble(summary, 2800);
+    pendingFeedback.current.say("改好啦，{{user}}。");
+  }, [schedule, setChatMsgs]);
+
+  const renderPetMessage = useCallback((message: ChatMessage) => <PetChatMessage
+    message={message} isDark={isDark} onApply={applyPending} />, [isDark, applyPending]);
 
   /** 发一句话：动作口令 / 喂饭 / 摸头走本地，日常闲聊交给模型 */
   const sendChat = (text?: string) => {
     const content = (text ?? input).trim();
-    if (!content || busy) return;
+    if (!content || chatSession.pending || !chatOpenRef.current || !foregroundStore.getSnapshot()) return;
+    let ticket = chatSession.begin(false);
     setInput("");
     const userMsg: ChatMessage = { id: uid(), role: "user", content, timestamp: nowMs() };
     setChatMsgs((prev) => [...prev, userMsg]);
     const memoryEpoch = useWhaleMemory.getState().epoch;
 
     const reply = (line: string) => {
-      setTimeout(() => {
-        if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
+      chatSession.defer(ticket, () => {
+        if (!ticket.isCurrent() || useWhaleMemory.getState().epoch !== memoryEpoch) return;
         setChatMsgs((prev) => [...prev, petMsg("assistant", line)].slice(-200));
         showBubble(line, 2400);
         say(line);
@@ -1109,8 +1127,8 @@ function WhalePetLayer() {
 
     /** 只往对话里补一句，气泡和语音交给动作本身 */
     const pushReply = (line: string) => {
-      setTimeout(() => {
-        if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
+      chatSession.defer(ticket, () => {
+        if (!ticket.isCurrent() || useWhaleMemory.getState().epoch !== memoryEpoch) return;
         setChatMsgs((prev) => [...prev, petMsg("assistant", line)].slice(-200));
       }, 220);
     };
@@ -1124,7 +1142,7 @@ function WhalePetLayer() {
     // 想让她回去：桌宠自己收起来
     if (/^(请|你)?(回去|退下|收起来|藏起来|走吧|变回去|别陪我)(吧|啦|了|休息吧)?[。！!～~]*$/.test(content)) {
       reply("呜…那我先回水里啦，{{user}}记得再叫我。");
-      setTimeout(() => dismiss(), 900);
+      chatSession.defer(ticket, () => dismiss(), 900);
       return;
     }
     if (!apiKey && !looksLikeSchedule && /^(喂你|给你|吃饭|吃点|吃个|吃吧)/.test(content)) {
@@ -1143,7 +1161,7 @@ function WhalePetLayer() {
       : LOCAL_ACTIONS.find((a) => a.re.test(content));
     if (local) {
       pushReply(local.reply);
-      setTimeout(() => playAction(local.action), 240);
+      chatSession.defer(ticket, () => playAction(local.action), 240);
       return;
     }
 
@@ -1152,6 +1170,7 @@ function WhalePetLayer() {
       return;
     }
 
+    ticket = chatSession.begin();
     setBusy(true);
     const history = [
       ...chatMsgs,
@@ -1167,9 +1186,10 @@ function WhalePetLayer() {
     askWhalePet(history, apiKey, {
       status: careHint(useWhalePet.getState().care),
       ctx,
+      signal: ticket.signal,
     })
       .then(async (res) => {
-        if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
+        if (!ticket.isCurrent() || useWhaleMemory.getState().epoch !== memoryEpoch) return;
         const scheduleActions = res.actions.filter(isScheduleAction);
         const whaleActions = res.actions.filter(isWhaleAction);
         setChatMsgs((prev) =>
@@ -1185,10 +1205,10 @@ function WhalePetLayer() {
         say(res.reply);
         // 回复已经念过一遍，动作只播画面，不再重复念台词
         if (res.action) playAction(res.action, true);
-        if (whaleActions.length) await runWhaleActions(whaleActions, content);
+        if (whaleActions.length) await runWhaleActions(whaleActions, content, ticket);
       })
       .catch((e) => {
-        if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
+        if (!ticket.isCurrent() || useWhaleMemory.getState().epoch !== memoryEpoch) return;
         setChatMsgs((prev) =>
           [
             ...prev,
@@ -1199,7 +1219,7 @@ function WhalePetLayer() {
           ].slice(-200),
         );
       })
-      .finally(() => setBusy(false));
+      .finally(() => { if (chatSession.finish(ticket)) setBusy(false); });
   };
 
   const dismiss = () => {
@@ -1477,78 +1497,8 @@ function WhalePetLayer() {
             />
           </View>
 
-          <ScrollView
-            ref={chatRef}
-            style={{ maxHeight: 96, marginTop: 10, marginHorizontal: 10, borderRadius: 16, backgroundColor: isDark ? "rgba(255,255,255,0.035)" : "rgba(255,255,255,0.65)" }}
-            contentContainerStyle={{ padding: 8, gap: 7 }}
-            showsVerticalScrollIndicator={false}
-            onContentSizeChange={() =>
-              chatRef.current?.scrollToEnd({ animated: true })
-            }
-          >
-            {chatMsgs.map((m) => (
-              <View
-                key={m.id}
-                style={{
-                  alignItems: m.role === "user" ? "flex-end" : "flex-start",
-                }}
-              >
-                {m.imageUri ? (
-                  <View style={{ marginBottom: 6 }}>
-                    <ChatImage uri={m.imageUri} aspectRatio={m.imageAspect} />
-                  </View>
-                ) : null}
-                <View
-                  style={{
-                    maxWidth: "92%",
-                    borderRadius: 16,
-                    borderBottomRightRadius: m.role === "user" ? 5 : 16,
-                    borderBottomLeftRadius: m.role === "user" ? 16 : 5,
-                    paddingHorizontal: 11,
-                    paddingVertical: 8,
-                    backgroundColor:
-                      m.role === "user"
-                        ? "rgba(56,189,248,0.82)"
-                        : isDark
-                          ? "rgba(125,211,252,0.14)"
-                          : "rgba(14,165,233,0.1)",
-                  }}
-                >
-                  <Text
-                    style={{
-                    fontSize: 11.5,
-                    lineHeight: 17,
-                      color:
-                        m.role === "user"
-                          ? "#FFFFFF"
-                          : isDark
-                            ? "#E4F2FF"
-                            : "#0F172A",
-                    }}
-                  >
-                    {m.content}
-                  </Text>
-                  {m.actions?.length ? (
-                    <Pressable
-                      onPress={() => applyPending(m.id)}
-                      style={{
-                        marginTop: 6,
-                        alignSelf: "flex-start",
-                        borderRadius: 999,
-                        paddingHorizontal: 9,
-                        paddingVertical: 4,
-                        backgroundColor: "rgba(52,211,153,0.9)",
-                      }}
-                    >
-                      <Text style={{ fontSize: 10, color: "#062B23" }}>
-                        确认修改课表 · {m.actions.length} 项
-                      </Text>
-                    </Pressable>
-                  ) : null}
-                </View>
-              </View>
-            ))}
-          </ScrollView>
+          <ChatMessageList messages={chatMsgs} renderMessage={renderPetMessage} maxHeight={96}
+            style={{ marginTop: 10, marginHorizontal: 10, borderRadius: 16, backgroundColor: isDark ? "rgba(255,255,255,0.035)" : "rgba(255,255,255,0.65)" }} />
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingHorizontal: 12, paddingTop: 9 }}>
             {PET_CHIPS.map((label) => (
@@ -1585,6 +1535,7 @@ function WhalePetLayer() {
             onChangeText={setInput}
             onSend={() => sendChat()}
             busy={busy}
+            onStop={stopChatRequest}
             placeholder="跟她说点什么…"
             bottomInset={6}
           />

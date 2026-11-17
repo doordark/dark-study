@@ -1,7 +1,7 @@
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 
-import { migratingStorage } from "@/utils/storage";
+import { coordinatedJSONStorage } from "@/utils/storage";
 
 /** 大肥鱼的养护状态：饱食度 / 心情 / 好感，全部 0-100 */
 export interface WhaleCare {
@@ -89,7 +89,7 @@ export const useWhalePet = create<WhalePetState>()(
     }),
     {
       name: "dark-study-whale-pet",
-      storage: createJSONStorage(() => migratingStorage("courseflow-whale-pet")),
+      storage: coordinatedJSONStorage("courseflow-whale-pet"),
       // 只记住养护数值；visible 不落盘，退出应用后桌宠自然收回
       partialize: (s) => ({ care: s.care }),
     },

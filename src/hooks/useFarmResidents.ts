@@ -1,10 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { setStoredJSON } from '@/utils/coordinatedStorage';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { useReducedMotion } from 'react-native-reanimated';
 import { farmChat, FarmChatError } from '@/services/farmChat';
 import { FarmResidentEngine, type ResidentEffect, type ResidentModel } from '@/utils/farmResidentAI';
-import { DEFAULT_LIFE, FARM_FAMILY_CONTEXT, FARM_TOPICS, PRESETS, RESIDENTS, normalizeLifeSettings, normalizeLifeUsage, readLifeBatch, reserveLifeRequest, restoreConversations, type LifeMode, type LifeSettings, type ResidentConversation, type ResidentId } from '@/utils/farmLife';
+import { DEFAULT_LIFE, FARM_FAMILY_CONTEXT, FARM_TOPICS, PRESETS, RESIDENTS, normalizeLifeSettings, normalizeLifeUsage, readLifeBatch, reserveLifeRequest, lifeRequestBlockReason, restoreConversations, type LifeMode, type LifeSettings, type ResidentConversation, type ResidentId } from '@/utils/farmLife';
 import { RESIDENT_PROJECTS, readResidentBatchIntent, residentReflections } from '@/utils/farmAgency';
 import { RESIDENT_OUTLOOK } from '@/utils/farmDiscussion';
 import { residentPublicTopics, type FarmMemories } from '@/utils/farmMemory';
@@ -32,7 +33,22 @@ export function useFarmResidents(options: FarmResidentsOptions) {
   const [engine] = useState(() => new FarmResidentEngine(now()));
   const { memories } = options;
   useEffect(() => engine.setPublicTopics(residentPublicTopics(memories)), [engine, memories]);
-  const [residents, setResidents] = useState(() => engine.snapshot());
+  // Simulation updates belong to the resident layer, not the entire farm screen.
+  const [residentStore] = useState(() => {
+    let snapshot = engine.snapshot();
+    const listeners = new Set<() => void>();
+    return {
+      getSnapshot: () => snapshot,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => { listeners.delete(listener); };
+      },
+      publish: (next: ResidentModel[]) => {
+        snapshot = next;
+        listeners.forEach(listener => listener());
+      },
+    };
+  });
   const [settings, setSettings] = useState<LifeSettings>({
     ...DEFAULT_LIFE
   });
@@ -51,7 +67,6 @@ export function useFarmResidents(options: FarmResidentsOptions) {
   const blocked = useRef(false);
   const budget = useRef(usage);
   const requests = useRef(new Map<string, AbortController>());
-  const writes = useRef(Promise.resolve());
   const revision = useRef(-1);
   const alive = useRef(true);
   const epoch = useRef(0);
@@ -71,9 +86,7 @@ export function useFarmResidents(options: FarmResidentsOptions) {
     };
   });
   const persist = useCallback((key: string, value: unknown) => {
-    const write = writes.current.catch(() => {}).then(() => AsyncStorage.setItem(key, JSON.stringify(value)));
-    writes.current = write;
-    return write;
+    return setStoredJSON(key, value);
   }, []);
   const abortAll = useCallback(() => {
     epoch.current++;
@@ -83,13 +96,13 @@ export function useFarmResidents(options: FarmResidentsOptions) {
   }, []);
   const publish = useCallback(() => {
     const snapshot = engine.snapshot();
-    setResidents(snapshot);
+    residentStore.publish(snapshot);
     if (Object.values(latest.current.memories).some(memory => memory.assignment && ['walking', 'talking'].includes(memory.assignment.status))) latest.current.onAssignments?.(snapshot, engine.history);
     if (revision.current !== engine.historyRevision) {
       revision.current = engine.historyRevision;
       setHistory(engine.takeHistory());
     }
-  }, [engine]);
+  }, [engine, residentStore]);
   useEffect(() => {
     alive.current = true;
     let active = true;
@@ -177,23 +190,15 @@ export function useFarmResidents(options: FarmResidentsOptions) {
     const current = latest.current;
     const token = epoch.current;
     if (!current.awake || !current.apiKey || blocked.current) {
-      engine.supplyConversation(event.id, null, false, now());
-      if (current.awake) setDialogueHint(!current.apiKey ? '未配置 Key，本次使用本地讨论' : '联网暂不可用，本次使用本地讨论');
+      const reason = !current.apiKey ? '未配置 API Key' : '联网暂不可用';
+      engine.supplyConversation(event.id, null, false, now(), false, undefined, reason);
+      if (current.awake) setDialogueHint(reason + '；本次使用本地讨论');
       return;
     }
-    const reserved = reserveLifeRequest(budget.current, current.settings, now(), event.source === 'player_command' || engine.getConversation(event.id)?.online === true);
-    if (!reserved) {
-      engine.supplyConversation(event.id, null, false, now());
-      setDialogueHint(current.settings.online ? 'AI 请求额度或间隔限制，本次使用本地讨论' : '联网对话已关闭，本次使用本地讨论');
-      return;
-    }
-    budget.current = reserved;
-    setUsage(reserved);
+    const priority = event.source === 'player_command' || engine.getConversation(event.id)?.online === true;
     const controller = new AbortController();
     requests.current.set(event.id, controller);
     try {
-      // Reserve durably before the only HTTP attempt, including failures/cancellation.
-      await persist(KEYS.usage, reserved);
       if (!alive.current || token !== epoch.current || controller.signal.aborted || !engine.getConversation(event.id) || !latest.current.awake) return;
       const profiles = event.pair.map((id, index) => {
         const project = RESIDENT_PROJECTS[id];
@@ -243,16 +248,31 @@ export function useFarmResidents(options: FarmResidentsOptions) {
         content: context || '你们刚在农场碰面，开始聊天。'
       }], current.apiKey, {
         signal: controller.signal,
+        priority: event.source === 'player_command' ? 'interactive' : 'background',
+        beforeStart: async () => {
+          if (!alive.current || token !== epoch.current || controller.signal.aborted || !engine.getConversation(event.id) || !latest.current.awake) throw new FarmChatError('对话已中断');
+          const settings = latest.current.settings;
+          const reserved = reserveLifeRequest(budget.current, settings, now(), priority);
+          if (!reserved) throw new FarmChatError(lifeRequestBlockReason(budget.current, settings, now(), priority));
+          budget.current = reserved;
+          setUsage(reserved);
+          // Queued/cancelled jobs consume no quota. Persist before the HTTP attempt.
+          await persist(KEYS.usage, reserved);
+        },
         timeoutMs: 24000,
         maxTokens: Math.min(4096, 400 + event.rounds * event.pair.length * 280)
       });
       if (token === epoch.current && alive.current && !controller.signal.aborted) {
         const batch = readLifeBatch(raw, event.pair, event.rounds, event.natural, flexible, 240, commissioned ? 2 : event.rounds);
-        if (engine.supplyConversation(event.id, batch?.lines ?? null, true, now(), batch?.done, batch && closingChoice ? readResidentBatchIntent(raw, event.pair) : undefined)) setDialogueHint(batch && (!commissioned || engine.getConversation(event.id)?.online) ? '' : '本轮使用本地对白');
+        if (engine.supplyConversation(event.id, batch?.lines ?? null, true, now(), batch?.done, batch && closingChoice ? readResidentBatchIntent(raw, event.pair) : undefined)) {
+          const record = engine.getConversation(event.id);
+          setDialogueHint(record?.localReason ? record.localReason + '；本轮已结束或使用本地对白' : '');
+        }
       }
     } catch (error) {
       if (!controller.signal.aborted && alive.current && token === epoch.current) {
-        if (engine.supplyConversation(event.id, null, false, now())) setDialogueHint(error instanceof FarmChatError ? error.message + '；本轮使用本地对白' : '请求失败；本轮使用本地对白');
+        const reason = error instanceof Error ? error.message : '请求失败';
+        if (engine.supplyConversation(event.id, null, false, now(), false, undefined, reason)) setDialogueHint(reason + '；本轮使用本地对白');
       }
     } finally {
       requests.current.delete(event.id);
@@ -329,7 +349,8 @@ export function useFarmResidents(options: FarmResidentsOptions) {
     shareTopics: previous.shareTopics,
   })), []);
   return {
-    residents,
+    getResidents: residentStore.getSnapshot,
+    subscribeResidents: residentStore.subscribe,
     settings,
     history,
     usage,

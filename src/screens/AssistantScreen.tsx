@@ -1,23 +1,23 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { router, useIsFocused } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import { router, useFocusEffect, useIsFocused } from "expo-router";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  AppState,
+  FlatList,
   Image,
   Keyboard,
-  Linking,
   Modal,
   Platform,
   Pressable,
   ScrollView,
   Text,
   View,
-  type ScrollViewInstance,
 } from "react-native";
 import Animated, { FadeIn, FadeInDown, FadeOut } from "react-native-reanimated";
 
 import { Backdrop } from "@/components/Backdrop";
-import { ChatImage } from "@/components/ChatImage";
+import { AssistantMessage } from "@/components/AssistantMessage";
 import { ChatInputBar } from "@/components/ChatInputBar";
 import { GlassContainer } from "@/components/GlassContainer";
 import { SuggestionButton } from "@/components/SuggestionButton";
@@ -25,7 +25,6 @@ import { WhaleAvatar } from "@/components/WhaleAvatar";
 import { WhaleDeco } from "@/components/WhaleDeco";
 import { WhaleLeaveFX, WhaleSummonFX } from "@/components/WhaleSummonFX";
 import { BACKGROUND_PRESETS, resolveTint } from "@/constants/backgrounds";
-import { WHALE_STICKERS } from "@/constants/whaleStickers";
 import type { WhaleStickerId } from "@/constants/whaleStickers";
 import { askAssistant } from "@/services/ai";
 import type { AssistantResult } from "@/services/ai";
@@ -98,6 +97,8 @@ const AVATAR_TAPS = [
 const SUMMON_ALIASES = ["召唤大肥鱼", "大肥鱼出来", "肥鱼出来", "whaletest"];
 const DISMISS_ALIASES = ["大爹走了", "退下吧", "变回课表助手"];
 
+const messageKey = (message: ChatMessage) => message.id;
+
 const normalizeCmd = (text: string) => text.trim().replace(/[!！。.~～]+$/, "");
 
 const SCHEDULE_TYPES = new Set([
@@ -137,14 +138,32 @@ export function AssistantScreen() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const pendingRequest = useRef<AbortController | null>(null);
+  const stopRequest = useCallback(() => {
+    pendingRequest.current?.abort(); pendingRequest.current = null;
+    setBusy(false);
+  }, []);
   const [notice, setNotice] = useState<{
     type: "error" | "success";
     text: string;
   } | null>(null);
   const [kbHeight, setKbHeight] = useState(0);
-  const scrollRef = useRef<ScrollViewInstance>(null);
+  const scrollRef = useRef<FlatList<ChatMessage>>(null);
+  const followLatest = useRef(true);
+  const displayMessages = useMemo(() => messages.slice().reverse(), [messages]);
+  const onSelectMessage = useCallback((id: string, long: boolean) => {
+    if (long) { longPressAt.current = Date.now(); setSelectMode(true); setSelectedIds([id]); bumpHaptic(); return; }
+    if (Date.now() - longPressAt.current < 600) return;
+    if (selectMode) setSelectedIds(previous => previous.includes(id) ? previous.filter(value => value !== id) : [...previous, id]);
+  }, [selectMode]);
   const voiceOn = useWhaleVoice((s) => s.on);
   const voiceScreenFocused = useIsFocused();
+  useFocusEffect(useCallback(() => () => stopRequest(), [stopRequest]));
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', state => { if (state !== 'active') stopRequest(); });
+    const forget = useWhaleMemory.subscribe((next, previous) => { if (next.epoch !== previous.epoch) stopRequest(); });
+    return () => { sub.remove(); forget(); pendingRequest.current?.abort(); pendingRequest.current = null; };
+  }, [stopRequest]);
   const toggleVoiceStore = useWhaleVoice((s) => s.toggle);
   const hydrateVoice = useWhaleVoice((s) => s.hydrate);
   const spokenId = useRef<string | null>(null);
@@ -226,18 +245,6 @@ export function AssistantScreen() {
     setReaction(text);
     reactionTimer.current = setTimeout(() => setReaction(null), 2800);
   };
-
-  /** 长按任意一条消息：进入多选并勾上它 */
-  const enterSelect = (id: string) => {
-    tapHaptic();
-    setSelectMode(true);
-    setSelectedIds([id]);
-  };
-
-  const toggleSelect = (id: string) =>
-    setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-    );
 
   const exitSelect = () => {
     setSelectMode(false);
@@ -376,7 +383,7 @@ export function AssistantScreen() {
 
   const send = async (text: string) => {
     const content = text.trim();
-    if (!content || busy) return;
+    if (!content || pendingRequest.current) return;
     // 用户开口时先让鱼闭嘴，免得两边同时说话
     stopWhaleVoice();
 
@@ -417,6 +424,9 @@ export function AssistantScreen() {
       content,
       timestamp: nowTs(),
     };
+    const controller = new AbortController();
+    pendingRequest.current = controller;
+    followLatest.current = true;
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
     setBusy(true);
@@ -439,8 +449,9 @@ export function AssistantScreen() {
           persona: whale ? "whale" : undefined,
         },
         apiKey,
+        controller.signal,
       );
-      if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
+      if (controller.signal.aborted || useWhaleMemory.getState().epoch !== memoryEpoch) return;
 
       const scheduleActions = result.actions.filter(isScheduleAction);
       // 收回人格的那一句不执行任何用户专属操作
@@ -471,26 +482,24 @@ export function AssistantScreen() {
 
       // 用户权限自动执行：改口令 / 改背景 / 生图 / 联网
       if (whaleActions.length) {
-        await runWhaleActions(whaleActions, content);
+        await runWhaleActions(whaleActions, content, controller.signal);
       }
     } catch (e) {
+      if (controller.signal.aborted) return;
       setNotice({
         type: "error",
         text: e instanceof Error ? e.message : "助手调用失败，请重试",
       });
     } finally {
-      setBusy(false);
-      requestAnimationFrame(() =>
-        scrollRef.current?.scrollToEnd({ animated: true }),
-      );
+      if (pendingRequest.current === controller) { pendingRequest.current = null; setBusy(false); }
     }
   };
 
   /** 执行用户专属操作：改口令 / 改背景 / 生图 / 联网，全程自动 */
-  async function runWhaleActions(actions: WhaleAction[], userText: string) {
+  async function runWhaleActions(actions: WhaleAction[], userText: string, signal: AbortSignal) {
     const memoryEpoch = useWhaleMemory.getState().epoch;
     for (const action of actions) {
-      if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
+      if (signal.aborted || useWhaleMemory.getState().epoch !== memoryEpoch) return;
       if (action.type === "set_summon_phrase") {
         const phrase = String(action.phrase ?? "")
           .replace(/[\s「」"“”'']/g, "")
@@ -533,10 +542,10 @@ export function AssistantScreen() {
         const query = String(action.query ?? "").trim();
         if (!query) continue;
         try {
-          const hits = await searchWeb(query);
+          const hits = await searchWeb(query, signal);
           if (!hits.length) throw new Error("没有结果");
-          const answer = await answerFromSearch(userText, hits, apiKey);
-          if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
+          const answer = await answerFromSearch(userText, hits, apiKey, signal);
+          if (signal.aborted || useWhaleMemory.getState().epoch !== memoryEpoch) return;
           const unique = Array.from(
             new Map(hits.map((h) => [h.url, h])).values(),
           ).slice(0, 3);
@@ -548,7 +557,7 @@ export function AssistantScreen() {
             },
           ]);
         } catch {
-          if (useWhaleMemory.getState().epoch !== memoryEpoch) return;
+          if (signal.aborted || useWhaleMemory.getState().epoch !== memoryEpoch) return;
           setMessages((prev) => [
             ...prev,
             localMsg(
@@ -583,11 +592,11 @@ export function AssistantScreen() {
       }
     }
     requestAnimationFrame(() =>
-      scrollRef.current?.scrollToEnd({ animated: true }),
+      followLatest.current && scrollRef.current?.scrollToOffset({ offset: 0, animated: true }),
     );
   }
 
-  const applyActions = (actions: ScheduleAction[]) => {
+  const applyActions = useCallback((actions: ScheduleAction[]) => {
     const results = applyScheduleActions(actions, schedule);
     const failed = results.some(
       (r) => r.includes("失败") || r.includes("未找到"),
@@ -600,7 +609,7 @@ export function AssistantScreen() {
         m.actions === actions ? { ...m, actions: undefined } : m,
       ),
     );
-  };
+  }, [schedule, setMessages]);
 
   return (
     <View className="flex-1">
@@ -755,16 +764,27 @@ export function AssistantScreen() {
                 </View>
               </View>
             ) : null}
-            <ScrollView
+            <FlatList
               ref={scrollRef}
+              data={displayMessages}
+              inverted
+              keyExtractor={messageKey}
               className="flex-1 px-5"
-              contentContainerStyle={{ paddingBottom: 16 }}
+              contentContainerStyle={{ paddingVertical: 16 }}
+              initialNumToRender={12}
+              maxToRenderPerBatch={6}
+              windowSize={7}
+              removeClippedSubviews={false}
+              keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
-              onContentSizeChange={() =>
-                scrollRef.current?.scrollToEnd({ animated: true })
-              }
-            >
-              {messages.length === 0 ? (
+              onScroll={event => { followLatest.current = event.nativeEvent.contentOffset.y < 100; }}
+              scrollEventThrottle={100}
+              onContentSizeChange={() => { if (followLatest.current) scrollRef.current?.scrollToOffset({ offset: 0, animated: false }); }}
+              renderItem={({ item }) => <View style={{ marginBottom: 16 }}><AssistantMessage
+                message={item} whale={whale} selectMode={selectMode} checked={selectedIds.includes(item.id)}
+                onSelect={onSelectMessage} onPreview={setPreview} onApply={applyActions}
+              /></View>}
+              ListEmptyComponent={
                 <Animated.View entering={FadeInDown.springify()}>
                   <GlassContainer
                     radius={24}
@@ -812,175 +832,8 @@ export function AssistantScreen() {
                     </View>
                   </GlassContainer>
                 </Animated.View>
-              ) : (
-                <View className="gap-y-4 pt-2">
-                  {messages.map((m) => {
-                    const isUser = m.role === "user";
-                    const checked = selectedIds.includes(m.id);
-                    const rowGesture = {
-                      delayLongPress: 280,
-                      onLongPress: () => {
-                        longPressAt.current = Date.now();
-                        enterSelect(m.id);
-                      },
-                      onPress: () => {
-                        // 长按松手时系统还会补一次 onPress，跳过它免得刚勾上又被取消
-                        if (Date.now() - longPressAt.current < 600) return;
-                        if (selectMode) toggleSelect(m.id);
-                      },
-                    };
-                    const checkDot = selectMode ? (
-                      <View className="mr-1.5 self-center">
-                        <Ionicons
-                          name={
-                            checked ? "checkmark-circle" : "ellipse-outline"
-                          }
-                          size={19}
-                          color={checked ? "#0EA5E9" : "#94A3B8"}
-                        />
-                      </View>
-                    ) : null;
-                    // 表情包消息：只有图，没有气泡
-                    if (m.sticker) {
-                      return (
-                        <Pressable key={m.id} {...rowGesture}>
-                          <Animated.View
-                            entering={FadeInDown.springify()}
-                            className="flex-row justify-start"
-                          >
-                            {checkDot}
-                            {whale ? (
-                              <View className="mr-2.5 self-end">
-                                <WhaleAvatar size={44} />
-                              </View>
-                            ) : null}
-                            <Image
-                              source={
-                                WHALE_STICKERS[m.sticker as WhaleStickerId]
-                              }
-                              resizeMode="contain"
-                              style={{ width: 126, height: 126 }}
-                            />
-                          </Animated.View>
-                        </Pressable>
-                      );
-                    }
-                    return (
-                      <Pressable key={m.id} {...rowGesture}>
-                        <Animated.View
-                          entering={FadeInDown.springify()}
-                          className={`flex-row ${isUser ? "justify-end" : "justify-start"}`}
-                        >
-                          {!isUser ? checkDot : null}
-                          {!isUser && whale ? (
-                            <View className="mr-2.5 self-end">
-                              <WhaleAvatar size={44} />
-                            </View>
-                          ) : null}
-                          <View
-                            className={`max-w-[78%] overflow-hidden rounded-[22px] px-4 py-3 ${
-                              isUser
-                                ? "rounded-br-md bg-sky-600/85"
-                                : whale
-                                  ? "rounded-bl-md border border-sky-200/70 bg-white/80 dark:border-sky-300/25 dark:bg-sky-400/15"
-                                  : "rounded-bl-md border border-white/20 bg-white/35 dark:border-white/10 dark:bg-white/[0.08]"
-                            }`}
-                          >
-                            {whale ? (
-                              <Image
-                                pointerEvents="none"
-                                source={require("../../assets/stickers/bubble.png")}
-                                resizeMode="contain"
-                                style={{
-                                  position: "absolute",
-                                  width: 38,
-                                  height: 38,
-                                  right: -4,
-                                  top: -6,
-                                  opacity: isUser ? 0.13 : 0.18,
-                                }}
-                              />
-                            ) : null}
-                            <Text
-                              className={`text-[13px] leading-[21px] ${
-                                isUser
-                                  ? "text-white"
-                                  : whale
-                                    ? "text-sky-900 dark:text-sky-100"
-                                    : "text-slate-700 dark:text-slate-200"
-                              }`}
-                            >
-                              {m.content}
-                            </Text>
-
-                            {m.imageUri ? (
-                              <Pressable
-                                onPress={() => setPreview(m.imageUri!)}
-                                className="mt-2"
-                              >
-                                <ChatImage
-                                  uri={m.imageUri}
-                                  aspectRatio={m.imageAspect ?? 1}
-                                />
-                              </Pressable>
-                            ) : null}
-
-                            {m.sources?.length ? (
-                              <View className="mt-2">
-                                <Text className="text-[9px] font-semibold tracking-wide text-sky-600/80 dark:text-sky-300/80">
-                                  资料来源
-                                </Text>
-                                {m.sources.map((s) => (
-                                  <Pressable
-                                    key={s.url}
-                                    onPress={() =>
-                                      Linking.openURL(s.url).catch(() => {})
-                                    }
-                                  >
-                                    <Text
-                                      numberOfLines={1}
-                                      className="mt-0.5 text-[9.5px] text-slate-500 underline dark:text-slate-400"
-                                    >
-                                      {s.title}
-                                    </Text>
-                                  </Pressable>
-                                ))}
-                              </View>
-                            ) : null}
-
-                            {m.actions?.length ? (
-                              <Pressable
-                                onPress={() => applyActions(m.actions!)}
-                                className="mt-2.5 flex-row items-center self-start rounded-full bg-emerald-400/85 px-3.5 py-1.5"
-                              >
-                                <Ionicons
-                                  name="checkmark-circle"
-                                  size={13}
-                                  color="#fff"
-                                />
-                                <Text className="ml-1 text-[11px] font-bold text-white">
-                                  {m.actions.length > 1
-                                    ? `一键应用 ${m.actions.length} 项操作`
-                                    : m.actions[0].type === "add"
-                                      ? "应用：添加这门课"
-                                      : m.actions[0].type === "remove"
-                                        ? "应用：删除这门课"
-                                        : m.actions[0].type === "update"
-                                          ? "应用：更新这门课"
-                                          : m.actions[0].type ===
-                                              "create_schedule"
-                                            ? "应用：新建课表"
-                                            : "应用：合并课表"}
-                                </Text>
-                              </Pressable>
-                            ) : null}
-                          </View>
-                          {isUser ? checkDot : null}
-                        </Animated.View>
-                      </Pressable>
-                    );
-                  })}
-
+              }
+              ListHeaderComponent={<View>
                   {busy ? (
                     <Animated.View
                       entering={FadeInDown.springify()}
@@ -1002,9 +855,6 @@ export function AssistantScreen() {
                       </View>
                     </Animated.View>
                   ) : null}
-                </View>
-              )}
-
               {notice ? (
                 <Animated.View
                   entering={FadeInDown.springify()}
@@ -1029,7 +879,8 @@ export function AssistantScreen() {
                   </View>
                 </Animated.View>
               ) : null}
-            </ScrollView>
+              </View>}
+            />
           </View>
 
           {/* 用户专属：大肥鱼的额外玩法快捷入口 */}
@@ -1060,6 +911,7 @@ export function AssistantScreen() {
             onChangeText={setInput}
             onSend={() => send(input)}
             busy={busy}
+            onStop={stopRequest}
             whaleTheme={whale}
             placeholder={
               whale

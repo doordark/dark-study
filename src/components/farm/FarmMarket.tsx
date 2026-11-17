@@ -19,10 +19,15 @@ import { vendorCanTrade } from '@/utils/farmMarket';
 import { FarmNPCSheet } from './FarmNPCSheet';
 import { FarmTabButton } from './FarmTabButton';
 import { CROP_ART } from './sprites';
+import { MARKET_PEOPLE } from './marketAssets';
+import { useSettings } from '@/store/useSettings';
+import { renderQuality } from '@/utils/renderQuality';
 
 const eventTime = () => Date.now();
 const ITEMS = require('../../../assets/images/farm-market-items.png');
-const PEOPLE = require('../../../assets/images/farm-market-vendors-idle-alpha-v6.png');
+const PEOPLE = MARKET_PEOPLE;
+const VENDOR_FRAMES = VENDORS.map((_, row) => Array.from({ length: 8 }, (_, frame) => row * 8 + frame));
+const VENDOR_HOLDS = [1100, 180, 100, 160, 240, 220, 250, 400];
 
 const BAG_SLOT_SKIN = require('../../../assets/images/farm-bag-slots-v6.png');
 const GEAR = require('../../../assets/images/farm-market-gear.png');
@@ -90,12 +95,23 @@ export function FarmMarket({ visible, onClose, at, paused = false, vendorMemorie
   onDiscount: (vendor: Vendor, percent: number) => string;
   renderShop: (vendor: Vendor, section: "trade" | "requests" | "sell" | "guide" | "craft") => ReactNode;
 }) {
+  const quality = useSettings(s => s.renderQuality);
   const [section, setSection] = useState<'chat' | 'trade' | 'requests' | 'sell' | 'guide' | 'craft'>('trade');
   const [vendor, setVendor] = useState<Vendor | null>(null);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [pendingMessage, setPendingMessage] = useState<{ id: string; text: string } | null>(null);
   const request = useRef<AbortController | null>(null);
+  const [terrainReady, setTerrainReady] = useState(false);
+  const [castReady, setCastReady] = useState(false);
+  const [animationReady, setAnimationReady] = useState(false);
+  useEffect(() => {
+    if (!visible || paused || !terrainReady) return;
+    // Present the background before mounting sprites, then start their clocks.
+    const cast = setTimeout(() => setCastReady(true), 80);
+    const animation = setTimeout(() => setAnimationReady(true), 320);
+    return () => { clearTimeout(cast); clearTimeout(animation); };
+  }, [visible, paused, terrainReady]);
   const { width, height } = useWindowDimensions();
   const mapWidth = width, scale = width / 200;
   const x = useSharedValue(100), y = useSharedValue(295);
@@ -178,15 +194,17 @@ export function FarmMarket({ visible, onClose, at, paused = false, vendorMemorie
   return <View style={{ position: 'absolute', inset: 0, backgroundColor: '#F5EDD8', zIndex: 2000 }}>
     <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
       <View style={{ width: mapWidth, height: scale * 330 }}>
-        <Image source={MARKET_SCENES[lighting.sceneVariant]} resizeMode="cover" style={{ position: 'absolute', width: '100%', height: '100%' }} />
+        <Image source={MARKET_SCENES[lighting.sceneVariant]} resizeMode="cover" fadeDuration={0}
+          onLoad={() => setTerrainReady(true)} onError={() => setTerrainReady(true)}
+          style={{ position: 'absolute', width: '100%', height: '100%' }} />
         <Pressable accessibilityLabel="集市道路" style={{ position: 'absolute', inset: 0 }} onPress={e => { const point = farmPressPoint(e, scale); if (point) travel({ x: Math.max(75, Math.min(130, point.x)), y: Math.max(125, Math.min(310, point.y)) }); }} />
-        {VENDORS.map((id, index) => vendorAvailable(id, at) ? <Pressable key={id} accessibilityRole="button" accessibilityLabel={VENDOR_NAMES[id]} onPress={() => travel({ x: positions[index].x + (index % 2 ? -15 : 15), y: positions[index].y + 3 }, () => { setSection('trade'); setVendor(id); })}
+        {castReady ? VENDORS.map((id, index) => vendorAvailable(id, at) ? <Pressable key={id} accessibilityRole="button" accessibilityLabel={VENDOR_NAMES[id]} onPress={() => travel({ x: positions[index].x + (index % 2 ? -15 : 15), y: positions[index].y + 3 }, () => { setSection('trade'); setVendor(id); })}
           style={{ position: 'absolute', left: (positions[index].x - 11) * scale, top: (positions[index].y - 28) * scale, width: 22 * scale }}>
-          <AnimatedAtlas source={PEOPLE} columns={8} rows={4} frames={Array.from({ length: 8 }, (_, frame) => index * 8 + frame)} holds={[1100, 180, 100, 160, 240, 220, 250, 400]} width={22 * scale} height={22 * scale * 4 / 3} active={visible && !vendor && !paused} />
-        </Pressable> : null)}
-        <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 0, top: 0 }, playerStyle]}><Animated.View style={facingStyle}><FarmPersonSprite who="hero" size={20 * scale} activity={walking ? 'walk' : 'idle'} active={visible && !vendor && !paused} /></Animated.View></Animated.View>
+          <AnimatedAtlas source={PEOPLE} columns={8} rows={4} frames={VENDOR_FRAMES[index]} holds={VENDOR_HOLDS} width={22 * scale} height={22 * scale * 4 / 3} active={renderQuality(quality).idleAnimation && animationReady && visible && !vendor && !paused} />
+        </Pressable> : null) : null}
+        {castReady ? <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 0, top: 0 }, playerStyle]}><Animated.View style={facingStyle}><FarmPersonSprite who="hero" size={20 * scale} activity={walking ? 'walk' : 'idle'} active={animationReady && visible && !vendor && !paused} /></Animated.View></Animated.View> : null}
         <Pressable accessibilityRole="button" accessibilityLabel="走出集市返回农场" onPress={() => travel({ x: 100, y: 316 }, onClose)} style={{ position: 'absolute', bottom: 0, left: 0, width: mapWidth, height: 25 * scale }} />
-        <FarmRain width={mapWidth} height={330 * scale} active={visible && !vendor && !paused && lighting.weather === 'rain'} />
+        <FarmRain width={mapWidth} height={330 * scale} active={animationReady && visible && !vendor && !paused && lighting.weather === 'rain'} />
       </View>
     </ScrollView>
     <FarmNPCSheet visible={Boolean(vendor && memory)} onClose={back}>

@@ -256,7 +256,10 @@ export class FarmResidentEngine {
   }
   fallbackPending(at: number) {
     for (const c of this.conversations.values()) {
-      c.network = false;
+      if (!c.network && !c.waiting) continue;
+      this.continueConversationLocally(c);
+      c.record.localReason = '联网或自主聊天已关闭';
+      this.historyRevision++;
       if (c.waiting) {
         c.waiting = false;
         c.nextAt = at + 200;
@@ -564,7 +567,7 @@ export class FarmResidentEngine {
       ? ambientConversation(pair, this.history, a.currentWaypoint + ' ' + b.currentWaypoint, this.night, this.random()) : [];
     const planned = commissioned || requested ? local
       : (opener.length ? opener : moodLines.length ? moodLines : local.length ? local : ambient.length ? ambient : localConversation(pair, rounds, pairHistory.length)).slice(0, rounds * participants.length);
-    if (network && natural && planned.length < rounds * participants.length) {
+    if (network && !commissioned && !requested && planned.length < rounds * participants.length) {
       // Reserve streaming capacity only; these slots are never used as local dialogue.
       while (planned.length < rounds * participants.length) planned.push({ speaker: participants[planned.length % participants.length], text: "" });
     }
@@ -577,6 +580,8 @@ export class FarmResidentEngine {
       endedAt: null,
       source,
       online: false,
+      ...(network ? { aiPending: true } : {}),
+      ...(!network ? { localReason: this.settings.online ? '本次未命中自动闲聊联网比例' : '居民联网对话已关闭' } : {}),
       lines: []
     };
     const conversation: PlayingConversation = {
@@ -588,7 +593,9 @@ export class FarmResidentEngine {
       deadline: 0,
       arranging: true,
       network,
-      batchEnd: opener.length + moodLines.length,
+      // Online dialogue must start with a request, even if the local fallback
+      // consists of just one mood exchange or a short shared-topic opener.
+      batchEnd: network ? 0 : opener.length + moodLines.length,
       natural,
       sharedTopic,
     };
@@ -625,6 +632,7 @@ export class FarmResidentEngine {
   }
   private continueConversationLocally(c: PlayingConversation) {
     c.network = false;
+    delete c.record.aiPending;
     if (c.record.discussion?.kind === 'request') {
       const local = discussionLines(c.record.participants, c.record.discussion);
       c.planned.splice(c.index, c.planned.length - c.index, ...local.slice(c.index));
@@ -646,6 +654,8 @@ export class FarmResidentEngine {
     const rounds = Math.min(TALK_BATCH_ROUNDS, remaining);
     c.batchEnd = c.index + rounds * speakers;
     c.waiting = true;
+    c.record.aiPending = true;
+    this.historyRevision++;
     c.deadline = at + 26000;
     this.effects.push({
       type: 'conversation',
@@ -661,7 +671,7 @@ export class FarmResidentEngine {
       opening: c.record.source === 'encounter' && !c.record.discussion ? c.planned.slice(0, 2).map(line => RESIDENTS[line.speaker].name + '：' + line.text).join('\n') : undefined,
     });
   }
-  supplyConversation(id: string, lines: Omit<ResidentLine, 'at'>[] | null, online: boolean, at: number, done = false, next?: ResidentIntent) {
+  supplyConversation(id: string, lines: Omit<ResidentLine, 'at'>[] | null, online: boolean, at: number, done = false, next?: ResidentIntent, localReason?: string) {
     const c = this.conversations.get(id);
     if (!c || !c.waiting) return false;
     const expected = c.batchEnd - c.index;
@@ -676,13 +686,17 @@ export class FarmResidentEngine {
         c.record.participants.every(id => lines.filter(line => line.speaker === id).length >= (question ? 2 : 1))) {
       c.planned.splice(c.index, ending ? c.planned.length - c.index : expected, ...lines);
       c.record.online ||= online;
+      delete c.record.localReason;
       if (online && c.record.source === 'encounter' && (ending || c.batchEnd === c.planned.length)) {
         c.next = readResidentIntent(next, c.record.participants);
       }
     } else {
+      c.record.localReason = localReason ?? 'AI 回复格式或内容不符合本轮对话要求';
       this.continueConversationLocally(c);
     }
     c.waiting = false;
+    delete c.record.aiPending;
+    this.historyRevision++;
     c.nextAt = at + 200;
     return true;
   }
@@ -690,6 +704,8 @@ export class FarmResidentEngine {
     const c = this.conversations.get(id);
     if (!c) return;
     c.record.endedAt = at;
+    if (c.record.aiPending) c.record.localReason = '对话在 AI 回复前被暂停或中断';
+    delete c.record.aiPending;
     if (c.record.discussion?.kind === 'request') {
       const target = c.record.participants[1];
       const responses = c.record.lines.filter(line => line.speaker === target);
@@ -820,7 +836,9 @@ export class FarmResidentEngine {
       if (c.waiting) {
         if (at >= c.deadline) {
           c.waiting = false;
+          c.record.localReason = 'AI 回复超时';
           this.continueConversationLocally(c);
+          this.historyRevision++;
           c.nextAt = at;
         } else continue;
       }

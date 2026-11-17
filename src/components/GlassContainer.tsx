@@ -14,6 +14,7 @@ import Svg, { Defs, LinearGradient as SvgGradient, Rect, Stop } from "react-nati
 
 import { useReducedTransparency } from "@/hooks/useReducedTransparency";
 import { useSettings } from "@/store/useSettings";
+import { renderQuality } from '@/utils/renderQuality';
 
 export type GlassTargetRef = RefObject<ComponentRef<typeof RNView> | null>;
 const GlassTargetContext = createContext<GlassTargetRef | null>(null);
@@ -86,8 +87,9 @@ export function GlassContainer({
   const isDark = colorScheme !== "light";
   const darkGlass = tint === "dark" || (tint !== "light" && isDark);
   const selectedMaterial = useSettings((s) => s.material);
+  const quality = useSettings(s => s.renderQuality);
   const reduceTransparency = useReducedTransparency();
-  const glass = (material ?? selectedMaterial) === "glass" && !reduceTransparency;
+  const glass = (material ?? selectedMaterial) === "glass" && !reduceTransparency && renderQuality(quality).blur;
   const glassTarget = useGlassTarget();
   const depth = DEPTH[variant];
   const rimId = useId().replace(/[^\w-]/g, "");

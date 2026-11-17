@@ -112,4 +112,13 @@ export const FarmResident = memo(function FarmResident({
       <Animated.View style={facing}><FarmPersonSprite who={who} activity={walking ? 'walk' : talking ? 'talk' : 'idle'} size={22 * scale} active={active && !reducedMotion} walkSpeed={motion?.speed ?? 22} /></Animated.View>
     </Pressable>
   </Animated.View>;
+}, (previous, next) => {
+  const a = previous.resident, b = next.resident;
+  return previous.scale === next.scale && previous.active === next.active &&
+    previous.reducedMotion === next.reducedMotion && previous.onTalk === next.onTalk &&
+    a.id === b.id && a.motion === b.motion && a.state === b.state && a.face === b.face &&
+    a.conversationPartner === b.conversationPartner && a.conversationSize === b.conversationSize &&
+    a.bubble === b.bubble && a.task?.action.type === b.task?.action.type &&
+    // The UI thread owns position while moving; logical ticks must not rerender sprites.
+    (!!b.motion && !next.reducedMotion || a.logicalPosition.x === b.logicalPosition.x && a.logicalPosition.y === b.logicalPosition.y);
 });

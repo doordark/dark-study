@@ -9,6 +9,7 @@ export interface ChatInputBarProps {
   value: string;
   onChangeText: (text: string) => void;
   onSend: () => void;
+  onStop?: () => void;
   busy?: boolean;
   placeholder?: string;
   /** 覆盖底部安全区（键盘弹出时由页面传入，避免重复留白） */
@@ -24,6 +25,7 @@ export function ChatInputBar({
   value,
   onChangeText,
   onSend,
+  onStop,
   busy = false,
   placeholder = "例如：把周四的课和周五的换一下…",
   bottomInset,
@@ -79,11 +81,11 @@ export function ChatInputBar({
         />
 
         <Pressable
-          onPress={onSend}
-          disabled={!canSend}
+          onPress={busy && onStop ? onStop : onSend}
+          disabled={!canSend && !(busy && onStop)}
           accessibilityRole="button"
-          accessibilityLabel="发送消息"
-          accessibilityState={{ disabled: !canSend, busy }}
+          accessibilityLabel={busy && onStop ? "停止生成" : "发送消息"}
+          accessibilityState={{ disabled: !canSend && !(busy && onStop), busy }}
           hitSlop={8}
           style={{
             width: 36,
@@ -98,7 +100,7 @@ export function ChatInputBar({
                 : "rgba(148,163,184,0.18)",
           }}
         >
-          {busy ? (
+          {busy && onStop ? <Ionicons name="stop" size={16} color="#64748B" /> : busy ? (
             <ActivityIndicator size="small" color="#94A3B8" />
           ) : (
             <Ionicons

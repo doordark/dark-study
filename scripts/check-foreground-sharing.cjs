@@ -1,0 +1,18 @@
+const assert = require('node:assert/strict');
+let listener, attached = 0, detached = 0;
+const app = { currentState: 'active', addEventListener: (_event, fn) => { attached++; listener = fn; return { remove() { detached++; listener = undefined; } }; } };
+const load = require('./load-project-ts.cjs')({ 'react-native': { AppState: app } });
+const { foregroundStore } = load('src/utils/foreground.ts');
+let updates = 0;
+const unsubs = Array.from({ length: 40 }, () => foregroundStore.subscribe(() => updates++));
+assert.equal(attached, 1, 'forty animation consumers share one native lifecycle listener');
+app.currentState = 'background'; listener('background');
+assert.equal(foregroundStore.getSnapshot(), false); assert.equal(updates, 40);
+app.currentState = 'inactive'; listener('inactive'); assert.equal(updates, 40, 'equivalent inactive states do not notify twice');
+app.currentState = 'active'; listener('active'); assert.equal(updates, 80);
+unsubs.forEach(stop => stop()); assert.equal(detached, 1);
+app.currentState = 'background';
+assert.equal(foregroundStore.getSnapshot(), false, 'unsubscribed consumers do not leave a stale foreground value');
+const stop = foregroundStore.subscribe(() => updates++);
+assert.equal(attached, 2); assert.equal(foregroundStore.getSnapshot(), false); stop();
+console.log('PASS: shared foreground subscription, deduplicated updates, last-consumer teardown and background remount');

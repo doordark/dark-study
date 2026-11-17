@@ -1,12 +1,8 @@
-import { useEffect, useState } from "react";
-import { AppState } from "react-native";
+import { useSyncExternalStore } from "react";
+import { foregroundStore } from '@/utils/foreground';
 
 /** Lifecycle state changes only; never used as a sprite frame clock. */
 export function useAnimationActive(active = true) {
-  const [foreground, setForeground] = useState(() => !AppState.currentState || AppState.currentState === "active");
-  useEffect(() => {
-    const sub = AppState.addEventListener("change", (state) => setForeground(state === "active"));
-    return () => sub.remove();
-  }, []);
+  const foreground = useSyncExternalStore(foregroundStore.subscribe, foregroundStore.getSnapshot, foregroundStore.getServerSnapshot);
   return active && foreground;
 }

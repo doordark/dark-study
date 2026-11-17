@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
+import { setStoredText } from '@/utils/coordinatedStorage';
 
 /** 大肥鱼语音开关：助手页与桌宠共用同一份，静音后两边都不出声 */
 const VOICE_KEY = "dark-study-whale-voice";
@@ -29,6 +30,6 @@ export const useWhaleVoice = create<WhaleVoiceState>((set, get) => ({
   toggle: () => {
     const on = !get().on;
     set({ on });
-    AsyncStorage.setItem(VOICE_KEY, on ? "1" : "0").catch(() => {});
+    void setStoredText(VOICE_KEY, on ? "1" : "0").catch(() => {});
   },
 }));

@@ -1,5 +1,5 @@
 import { FARM_BODY_FONT, FarmText as Text } from './FarmSkin';
-import { useState } from 'react';
+import { memo, useState, useSyncExternalStore } from 'react';
 import { useSettings } from '@/store/useSettings';
 import { Image, Modal, Pressable, ScrollView, Switch, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -92,6 +92,17 @@ const LABELS: Record<NumericLifeSetting, string> = {
   nightActivity: '夜间活跃程度（%）'
 };
 const COLORS = ['#5E7D45', '#A65D78', '#527C9F', '#9B7437', '#87639B', '#85763F'];
+const FarmResidentActors = memo(function FarmResidentActors({ getResidents, subscribeResidents, scale, awake, autonomous, reducedMotion, onTalk }: {
+  getResidents: FarmResidentsController['getResidents'];
+  subscribeResidents: FarmResidentsController['subscribeResidents'];
+  scale: number; awake: boolean; autonomous: boolean; reducedMotion: boolean;
+  onTalk: (who: ResidentId, position: { x: number; y: number }) => void;
+}) {
+  const residents = useSyncExternalStore(subscribeResidents, getResidents, getResidents);
+  return <>{residents.map(resident => <FarmResident key={resident.id} resident={resident} scale={scale}
+    active={awake && (autonomous || Boolean(resident.task) || resident.conversationSize > 0)}
+    reducedMotion={reducedMotion} onTalk={onTalk} />)}</>;
+});
 export function FarmLifeLayer({
   scale,
   controller,
@@ -125,10 +136,11 @@ export function FarmLifeLayer({
     history
   } = controller;
   const usage = normalizeLifeUsage(controller.usage, at);
-  const records = history.filter(c => (person === 'all' || c.participants.includes(person)) && (filter === 'all' || filter === 'ai' && c.online || filter === 'encounter' && c.source === 'encounter' || filter === 'command' && c.source === 'player_command')).slice().reverse();
+  const records = panelOpen ? history.filter(c => (person === 'all' || c.participants.includes(person)) && (filter === 'all' || filter === 'ai' && c.online || filter === 'encounter' && c.source === 'encounter' || filter === 'command' && c.source === 'player_command')).slice().reverse() : [];
   return <>
-    {controller.residents.map(resident => <FarmResident key={resident.id} resident={resident} scale={scale} active={controller.awake && (controller.autonomous || Boolean(resident.task) || resident.conversationSize > 0)} reducedMotion={controller.reducedMotion} onTalk={onTalk} />)}
-    <Modal visible={panelOpen} transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={onClosePanel}>
+    <FarmResidentActors getResidents={controller.getResidents} subscribeResidents={controller.subscribeResidents}
+      scale={scale} awake={controller.awake} autonomous={controller.autonomous} reducedMotion={controller.reducedMotion} onTalk={onTalk} />
+    {panelOpen ? <Modal visible transparent statusBarTranslucent navigationBarTranslucent animationType="slide" onRequestClose={onClosePanel}>
       <View style={{
         flex: 1,
         justifyContent: 'flex-end',
@@ -260,7 +272,8 @@ export function FarmLifeLayer({
               }}>{new Date(record.startedAt).toLocaleTimeString([], {
                   hour: '2-digit',
                   minute: '2-digit'
-                })} · {record.source === 'player_command' ? '我的命令' : record.source === 'encounter' ? '偶遇' : record.activity === 'project' ? '自主行动 · 小目标' : record.activity === 'rest' ? '自主行动 · 休息' : record.discussion?.kind === 'followup' ? '接着讨论' : '旧本地记录'} · {record.online ? 'AI' : '本地'}{record.endedAt === null ? ' · 进行中' : ''}{record.sharedTopic ? ' · 聊到客人：' + FARM_TOPICS[record.sharedTopic.topic].label : ''}{record.discussion?.kind === 'debate' ? ' · 有不同意见' : record.participants.length > 2 ? ' · 多人讨论' : ''}</Text>
+                })} · {record.source === 'player_command' ? '我的命令' : record.source === 'encounter' ? '偶遇' : record.activity === 'project' ? '自主行动 · 小目标' : record.activity === 'rest' ? '自主行动 · 休息' : record.discussion?.kind === 'followup' ? '接着讨论' : '旧本地记录'} · {record.aiPending ? 'AI 请求中' : record.online ? 'AI' : '本地'}{record.endedAt === null ? ' · 进行中' : ''}{record.sharedTopic ? ' · 聊到客人：' + FARM_TOPICS[record.sharedTopic.topic].label : ''}{record.discussion?.kind === 'debate' ? ' · 有不同意见' : record.participants.length > 2 ? ' · 多人讨论' : ''}</Text>
+              {record.localReason ? <Text style={{ color: muted, fontSize: 12 }}>{record.localReason}{record.online ? '，已保留 AI 对话' : '，使用本地对白'}</Text> : null}
               {record.discussion?.question ? <Text style={{ color: muted, fontSize: 12 }}>{record.discussion.question}</Text> : null}
               {!record.lines.length ? <Text style={{
                 color: muted,
@@ -285,6 +298,6 @@ export function FarmLifeLayer({
           </ScrollView>
         </View>
       </View>
-    </Modal>
+    </Modal> : null}
   </>;
 }

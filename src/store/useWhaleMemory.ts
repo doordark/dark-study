@@ -1,8 +1,8 @@
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 
 import type { ChatMessage } from "@/types";
-import { migratingStorage } from "@/utils/storage";
+import { coordinatedJSONStorage } from "@/utils/storage";
 import { MAX_WHALE_FACTS, mergeWhaleFacts, type WhaleFact, type WhaleHistoryMessage } from "@/utils/whaleMemory";
 import { uid } from "@/utils/id";
 
@@ -124,7 +124,7 @@ export const useWhaleMemory = create<WhaleMemoryState>()(
     }),
     {
       name: "dark-study-whale-memory",
-      storage: createJSONStorage(() => migratingStorage("courseflow-whale")),
+      storage: coordinatedJSONStorage("courseflow-whale"),
       onRehydrateStorage: () => () => useWhaleMemory.setState({ hydrated: true }),
       partialize: (s) => ({
         active: s.active,

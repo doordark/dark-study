@@ -34,6 +34,10 @@ function host(reduced = false) {
   let listener;
   const app = { currentState: 'active', addEventListener: (_, fn) => { listener = fn; return { remove: () => { listener = undefined; } }; } };
   let clock;
+  const foreground = compile('src/utils/foreground.ts', name => {
+    if (name === 'react-native') return { AppState: app };
+    throw new Error(name);
+  });
   const reanimated = {
     __esModule: true, default: { Image: 'Image' }, useReducedMotion: () => reduced,
     useSharedValue: (value) => slot(() => ({ value, set(next) { this.value = next; } })),
@@ -46,6 +50,7 @@ function host(reduced = false) {
     if (name === 'react-native-reanimated') return reanimated;
     if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }) };
     if (name === '@/utils/atlasTimeline') return timing;
+    if (name === '@/utils/foreground') return foreground;
     throw new Error(name);
   });
   return {

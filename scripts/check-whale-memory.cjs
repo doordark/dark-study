@@ -34,6 +34,7 @@ function load(relative) {
       chat: async (messages) => { calls.push(messages); return "检索结果"; },
     };
     if (request.startsWith("@/")) return load(`src/${request.slice(2)}.ts`);
+    if (request.startsWith('.')) return load(path.relative(path.resolve(__dirname, '..'), path.resolve(path.dirname(filename), request + '.ts')));
     return require(request);
   };
   target._compile(compiled.outputText, filename);
@@ -54,6 +55,16 @@ async function run() {
   assert.equal(normalized.traits.warmth, 80);
   assert.equal(normalized.name, "小鱼");
   assert.equal(persona.normalizeWhalePersona().description, persona.DEFAULT_WHALE_PERSONA.description);
+  for (const userName of ["妈妈", "大爹", "爸爸", "妈咪"]) {
+    const identity = persona.buildWhaleRelationshipPrompt({ ...persona.DEFAULT_WHALE_PERSONA, userName });
+    assert.match(identity, /用户在你们的角色关系中是你的家长，你是用户的女儿/);
+    assert.ok(identity.includes(JSON.stringify(userName)));
+    assert.match(identity, /自定义背景若明确说明称呼只是昵称/);
+  }
+  for (const userName of ["阿顾", "妈妈的朋友", "大爹粉丝"]) {
+    assert.doesNotMatch(persona.buildWhaleRelationshipPrompt({ ...persona.DEFAULT_WHALE_PERSONA, userName }), /用户在你们的角色关系中是你的家长/);
+  }
+  assert.match(persona.buildWhaleRelationshipPrompt({ ...persona.DEFAULT_WHALE_PERSONA, name: "闺女", userName: "阿顾" }), /不擅自猜测应叫爸爸还是妈妈/);
 
   const expression = load("src/utils/whaleExpression.ts");
   assert.equal(expression.resolveWhaleSticker("happy", "关于我女友的", "吵架了、冷战了，还是纠结送什么礼物？"), null, "screenshot: serious reply cannot receive a happy sticker");
@@ -121,6 +132,17 @@ async function run() {
 
   // Both actual model entry points receive the saved persona and shared facts.
   const ai = load("src/services/ai.ts");
+  // Closing the pet must not learn facts from a late transport response.
+  let late;
+  transport = () => new Promise(resolve => { late = resolve; });
+  const cancelledPet = new AbortController();
+  const originalFacts = structuredClone(store.getState().facts);
+  const cancelledReply = ai.askWhalePet([user], 'test-key', { signal: cancelledPet.signal });
+  cancelledPet.abort();
+  late({ reply: '过期回复', actions: [], memoryUpdates: updates });
+  await assert.rejects(cancelledReply, /取消/);
+  assert.deepEqual(store.getState().facts, originalFacts, 'cancelled pet responses must not update long-term memory');
+  transport = undefined;
   personaStore.getState().save({ ...persona.DEFAULT_WHALE_PERSONA, name: "泡泡", userName: "阿顾", traits: { ...persona.DEFAULT_WHALE_PERSONA.traits, tsundere: 99 } });
   store.getState().setPetMessages([user]);
   response = { reply: "阿顾，草莓给你留着。", actions: [], action: "wave", memoryUpdates: updates };
@@ -132,6 +154,17 @@ async function run() {
   store.getState().setMessages([followup]);
   response = { reply: "草莓呀", actions: [] };
   const ctx = { schedule: { name: "课表", courses: [], periods: [], totalWeeks: 18 }, schedules: [], weekIndex: 1, persona: "whale" };
+  // Changing identity takes effect at the actual request boundary despite past denial.
+  const oldIdentity = [{ role: "assistant", content: "谁是你女儿，别乱认亲。" }, { role: "user", content: "女儿，你是我的谁？" }];
+  for (const userName of ["妈妈", "大爹", "阿顾"]) {
+    const currentPersona = { ...persona.DEFAULT_WHALE_PERSONA, name: "泡泡", userName };
+    personaStore.getState().save(currentPersona);
+    for (const request of [() => ai.askAssistant(oldIdentity, ctx, "test-key"), () => ai.askWhalePet(oldIdentity, "test-key")]) {
+      await request();
+      assert.ok(calls.at(-1)[0].content.includes(persona.buildWhaleRelationshipPrompt(currentPersona)));
+      assert.match(calls.at(-1)[0].content, /旧关系不能覆盖当前身份/);
+    }
+  }
   await ai.askAssistant([followup], ctx, "test-key");
   assert.match(calls.at(-1)[0].content, /用户喜欢吃草莓/);
   assert.match(calls.at(-1)[0].content, /阿顾/);

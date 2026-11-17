@@ -1,0 +1,30 @@
+const assert = require('node:assert/strict');
+const load = require('./load-project-ts.cjs')();
+const { createRequestSession } = load('src/utils/requestSession.ts');
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function main() {
+  const session = createRequestSession();
+  const old = session.begin();
+  let replies = 0, voices = 0, actions = 0;
+  const lateResponse = () => { if (old.isCurrent()) { replies++; voices++; actions++; } };
+  session.defer(old, () => actions++, 10);
+  session.cancel();
+  assert(old.signal.aborted);
+  const fresh = session.begin();
+  lateResponse();
+  assert.equal(session.finish(old), false, 'old finally cannot clear a new request busy state');
+  assert.equal(session.pending, true);
+  await wait(25);
+  assert.deepEqual([replies, voices, actions], [0, 0, 0], 'close/background/unmount invalidates late replies, voice and delayed actions');
+  assert.equal(session.finish(fresh), true);
+  assert.equal(session.pending, false);
+  session.defer(fresh, () => actions++, 5);
+  await wait(15); assert.equal(actions, 1, 'a completed current reply may still perform its intentional delayed action');
+  const local = session.begin(false);
+  session.defer(local, () => replies++, 5);
+  session.begin(); await wait(15);
+  assert.equal(replies, 0, 'a newer request supersedes pending local replies');
+  session.cancel();
+  console.log('PASS: pet request cancellation, stale-result rejection, close/reopen races, busy ownership and delayed-action cleanup');
+}
+main().catch(error => { console.error(error); process.exitCode = 1; });

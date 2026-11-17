@@ -458,6 +458,7 @@ export async function askAssistant(
   history: WhaleHistoryMessage[],
   ctx: AssistantContext,
   apiKey: string,
+  signal?: AbortSignal,
 ): Promise<AssistantResult> {
   const whaleContext = ctx.persona === "whale" ? createWhaleContext(history) : undefined;
   const coursesBrief = ctx.schedule.courses
@@ -552,6 +553,7 @@ actions 是操作数组，一次可以放多个（用户一句话提出多件事
   ];
 
   const parsed = await chatJson<any>(messages, apiKey, {
+    signal,
     model: TEXT_MODEL,
     // 大肥鱼人格需要更高的发散度，课表操作仍由 actions 的结构约束保证准确
     temperature: ctx.persona === "whale" ? 0.95 : 0.6,
@@ -806,7 +808,7 @@ export interface PetChatResult {
 export async function askWhalePet(
   history: WhaleHistoryMessage[],
   apiKey: string,
-  opts?: { status?: string; ctx?: AssistantContext },
+  opts?: { status?: string; ctx?: AssistantContext; signal?: AbortSignal },
 ): Promise<PetChatResult> {
   const whaleContext = createWhaleContext(history);
   const ctx = opts?.ctx;
@@ -885,7 +887,9 @@ ${opts?.status ? `当前状态：${opts.status}。` : ""}`;
   const parsed = await chatJson<any>(messages, apiKey, {
     model: TEXT_MODEL,
     temperature: 0.95,
+    signal: opts?.signal,
   });
+  if (opts?.signal?.aborted) throw new Error('请求已取消');
   whaleContext.remember(parsed?.memoryUpdates);
 
   const action = PET_ACTIONS.includes(parsed?.action)

@@ -1,6 +1,7 @@
 const assert=require('node:assert/strict');const fs=require('node:fs');const path=require('node:path');const Module=require('node:module');const ts=require('typescript');
 const filename=path.resolve(__dirname,'../src/services/farmChat.ts'),m=new Module(filename,module);
-m.require=name=>name==='./deepseek'?{TEXT_MODEL:'mock-model'}:require(name);
+const coordinator = require('./load-project-ts.cjs')()('src/utils/requestCoordinator.ts');
+m.require=name=>name==='../utils/requestCoordinator'?coordinator:name==='./deepseek'?{TEXT_MODEL:'mock-model'}:require(name);
 m._compile(ts.transpileModule(fs.readFileSync(filename,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText,filename);
 const {farmChat}=m.exports;const saved=global.fetch;
 async function main(){
@@ -29,6 +30,18 @@ async function main(){
   const controller=new AbortController();const pending=farmChat([],'fake-test-only',{signal:controller.signal});controller.abort();await assert.rejects(pending,/取消/);
   before=calls;await assert.rejects(farmChat([],'fake-test-only',{timeoutMs:1000}),/超时/);assert.equal(calls,before+1,'timeout never retries');
   before=calls;await assert.rejects(farmChat([],''),/Key/);assert.equal(calls,before,'missing keys cannot send HTTP');
+  before = calls;
+  await assert.rejects(farmChat([], 'fake-test-only', { beforeStart: async () => { throw new Error('budget write failed'); } }), /budget write failed/);
+  assert.equal(calls, before, 'durable budget failure must prevent HTTP');
+  let release;
+  const blocking = coordinator.aiRequests.run(() => new Promise(resolve => { release = resolve; }), { priority: 'background' });
+  await Promise.resolve();
+  let reservations = 0;
+  const queuedController = new AbortController();
+  const queuedRequest = farmChat([], 'fake-test-only', { priority: 'background', signal: queuedController.signal, beforeStart: async () => { reservations++; } });
+  queuedController.abort(); await assert.rejects(queuedRequest, /取消/);
+  assert.equal(reservations, 0, 'cancelling a queued conversation must not reserve daily quota');
+  assert.equal(calls, before); release(); await blocking;
   console.log('Farm chat checks passed: strict JSON request, bounded tokens, single attempt by default, retry, JSON fallback, missing key, cancellation and timeout. Mock transport only; zero paid API calls.');
 }
 main().catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>{global.fetch=saved;});

@@ -8,6 +8,53 @@ const life=load('src/utils/farmLife.ts'),actions=load('src/utils/farmActions.ts'
 const {FarmResidentEngine,motionPosition,remainingResidentMotion}=load('src/utils/farmResidentAI.ts');
 const {waterFarmPlots}=load('src/utils/farmWatering.ts');
 const at=new Date(2026,10,3,12).getTime();
+// An online mood opener used to consume the entire local plan without ever
+// emitting a request. Short shared-topic plans also truncated online capacity.
+for (const shared of [false, true]) {
+  const e = new FarmResidentEngine(at, () => 0);
+  e.configure({ ...life.DEFAULT_LIFE, online: true, aiRatio: 100, rounds: 6, encounterChance: 100 }, at);
+  e.residents.xiaoba.logicalPosition = { x: 85, y: 247 };
+  e.residents.gu.logicalPosition = { x: 101, y: 247 };
+  e.residents.xiaoba.mood = '低落';
+  if (shared) e.setPublicTopics({ gu: ['fishing'] });
+  const id = e.startConversation(['xiaoba', 'gu'], 'encounter', at);
+  const batch = e.drainEffects().find(event => event.type === 'conversation');
+  assert(batch, 'online short openers must emit a request before playing local text');
+  assert.equal(batch.rounds, 6, 'local fallback length must not truncate the AI conversation');
+  assert.equal(e.getConversation(id).aiPending, true);
+  const rev = e.historyRevision;
+  e.supplyConversation(id, life.localConversation(batch.pair, batch.rounds, 0), true, at + 100);
+  assert.equal(e.getConversation(id).online, true);
+  assert(!e.getConversation(id).aiPending);
+  assert(e.historyRevision > rev, 'AI status changes must reach the history subscriber');
+  const copy = e.takeHistory();
+  e.tick(at + 20000, { autonomous: false });
+  assert.equal(copy[0].lines.length, 0, 'published history must remain immutable');
+}
+const failedOnline = new FarmResidentEngine(at, () => 0);
+failedOnline.configure({ ...life.DEFAULT_LIFE, online: true, aiRatio: 100, rounds: 6 }, at);
+failedOnline.residents.xiaoba.logicalPosition = { x: 85, y: 247 };
+failedOnline.residents.gu.logicalPosition = { x: 101, y: 247 };
+failedOnline.residents.xiaoba.mood = '低落';
+const failedId = failedOnline.startConversation(['xiaoba', 'gu'], 'encounter', at);
+failedOnline.supplyConversation(failedId, null, false, at + 100, false, undefined, '今日 AI 请求额度已用完');
+for (let t = 0; t < 90000; t += 500) failedOnline.tick(at + t, { autonomous: false });
+assert.equal(failedOnline.history[0].online, false);
+assert.equal(failedOnline.history[0].localReason, '今日 AI 请求额度已用完');
+assert(!failedOnline.history[0].aiPending);
+assert(failedOnline.history[0].lines.every(line => line.text.trim()), 'capacity placeholders must never be spoken');
+const disabledOnline = new FarmResidentEngine(at, () => 0);
+disabledOnline.configure({ ...life.PRESETS.aiTown, aiRatio: 100, rounds: 6 }, at);
+disabledOnline.residents.xiaoba.logicalPosition = { x: 85, y: 247 };
+disabledOnline.residents.gu.logicalPosition = { x: 101, y: 247 };
+disabledOnline.residents.xiaoba.mood = '低落';
+disabledOnline.startConversation(['xiaoba', 'gu'], 'encounter', at);
+disabledOnline.fallbackPending(at + 100);
+for (let t = 0; t < 90000; t += 500) disabledOnline.tick(at + t, { autonomous: false });
+assert(disabledOnline.history[0].lines.every(line => line.text.trim()), 'disabling online must remove pending capacity placeholders');
+assert(disabledOnline.history[0].endedAt);
+assert.equal(life.lifeRequestBlockReason({ date: life.lifeDate(at), count: 0, lastAt: at - 1000 }, { ...life.PRESETS.aiTown }, at), '自动闲聊 AI 间隔尚未到');
+assert.equal(life.lifeRequestBlockReason({ date: life.lifeDate(at), count: 10, lastAt: 0 }, life.PRESETS.aiTown, at), '今日 AI 请求额度已用完');
 const settings={...life.DEFAULT_LIFE,roaming:false,chatter:false};
 function engine(){const e=new FarmResidentEngine(at,()=>0);e.configure({...settings},at);return e;}
 function advance(e,from,seconds=90){for(let i=0;i<=seconds*2;i++)e.tick(from+i*500,{autonomous:false});}
