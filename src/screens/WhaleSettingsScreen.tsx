@@ -9,7 +9,7 @@ import { WhaleAvatar } from "@/components/WhaleAvatar";
 import { DesktopPetSettings } from "@/components/DesktopPetSettings";
 import { useWhalePersona } from "@/store/useWhalePersona";
 import { useWhaleMemory } from "@/store/useWhaleMemory";
-import { DEFAULT_WHALE_PERSONA, normalizeWhalePersona, WHALE_PRESETS, WHALE_TRAITS, type WhalePersona } from "@/utils/whalePersona";
+import { DEFAULT_WHALE_PERSONA, getWhaleStylePreview, normalizeWhalePersona, WHALE_PRESETS, WHALE_TRAITS, type WhalePersona } from "@/utils/whalePersona";
 import { MAX_WHALE_FACTS } from "@/utils/whaleMemory";
 
 const inputClass = "mt-2 rounded-2xl border border-sky-300/25 bg-white/35 px-3.5 py-3 text-[13px] leading-5 text-slate-800 dark:bg-white/[0.05] dark:text-slate-100";
@@ -60,7 +60,7 @@ function PersonaEditor({ persona }: { persona: WhalePersona }) {
 
     <Card>
       <Text className="text-[15px] font-bold text-slate-800 dark:text-white">自定义人设</Text>
-      <Text className="mt-1 text-[11px] leading-5 text-slate-500 dark:text-slate-400">背景、关系、口头禅和交流边界都可以改。与滑条冲突时，以这里的文字为准。</Text>
+      <Text className="mt-1 text-[11px] leading-5 text-slate-500 dark:text-slate-400">这里设置背景、关系、口头禅和交流边界；五项性格强度以滑条为准，调整后请保存。</Text>
       <Field label="她的名字" value={draft.name} onChange={(name) => update({ name })} maxLength={20} />
       <Field label="她怎么称呼你" value={draft.userName} onChange={(userName) => update({ userName })} maxLength={20} />
       <Field label="角色背景与说话习惯" value={draft.description} onChange={(description) => update({ description })} maxLength={1500} multiline placeholder="例如：嘴上傲娇但行动很温柔。叫我阿顾；我烦恼时先听我说，不急着给建议。少用括号动作。" />
@@ -68,6 +68,13 @@ function PersonaEditor({ persona }: { persona: WhalePersona }) {
         <Text className="text-[11px] font-bold text-sky-600 dark:text-sky-300">当前设定概览</Text>
         <Text className="mt-1 text-[12px] leading-5 text-slate-700 dark:text-slate-200">{draft.name.trim() || DEFAULT_WHALE_PERSONA.name} · 称呼你为「{draft.userName.trim() || DEFAULT_WHALE_PERSONA.userName}」</Text>
         <Text className="mt-1 text-[11px] leading-5 text-slate-500 dark:text-slate-400">{WHALE_TRAITS.map((t) => `${t.label} ${draft.traits[t.key]}`).join(" · ")}</Text>
+        <Text className="mt-3 text-[11px] font-bold text-sky-600 dark:text-sky-300">说话风格预览</Text>
+        <Text className="mt-1 text-[10px] leading-4 text-slate-500 dark:text-slate-400">每组只演示一项，实际聊天会结合全部设置和当前语境。</Text>
+        {getWhaleStylePreview(draft).map((item) => <View key={item.key} className="mt-3">
+          <Text className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">{item.label} · {item.behavior}</Text>
+          <Text className="mt-1 text-[11px] leading-5 text-slate-500 dark:text-slate-400">你：{item.user}</Text>
+          <Text className="text-[12px] leading-5 text-slate-700 dark:text-slate-200">{draft.name.trim() || DEFAULT_WHALE_PERSONA.name}：{item.reply}</Text>
+        </View>)}
       </View>
       <Pressable accessibilityRole="button" onPress={() => { save(draft); setDraft(normalizeWhalePersona(draft)); setSaved(true); }} className="mt-4 min-h-12 items-center justify-center rounded-2xl bg-sky-500">
         <Text className="text-[14px] font-bold text-white">保存人设</Text>

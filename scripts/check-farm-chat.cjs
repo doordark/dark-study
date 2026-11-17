@@ -8,7 +8,7 @@ async function main(){
   global.fetch=async(_url,options)=>{calls++;body=JSON.parse(options.body);return {ok:true,json:async()=>({choices:[{message:{content:'{"reply":"好","action":null}'}}]})};};
   assert.equal(await farmChat([{role:'user',content:'mock JSON'}],'fake-test-only',{maxTokens:480}),'{"reply":"好","action":null}');
   assert.equal(calls,1);assert.equal(body.response_format.type,'json_object');assert.equal(body.max_tokens,480);assert.equal(body.thinking.type,'disabled');
-  await farmChat([],'fake-test-only',{maxTokens:100000});assert.equal(body.max_tokens,1024);
+  await farmChat([],'fake-test-only',{maxTokens:100000});assert.equal(body.max_tokens,4096);
   global.fetch=async()=>{calls++;return {ok:false,status:503};};let before=calls;
   await assert.rejects(farmChat([],'fake-test-only'),/503/);assert.equal(calls,before+1,'自动对话默认单次请求，失败不重试');
 

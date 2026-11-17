@@ -60,15 +60,32 @@ const BEHAVIORS: Record<WhaleTrait, readonly string[]> = {
   verbosity: ["普通闲聊通常一句。", "普通闲聊通常一到两句。", "普通闲聊通常两到三句。", "愿意展开聊，适当补充想法。", "聊天内容明显丰富，主动展开相关细节。"],
 };
 
+/** 五项均提供低分到高分示例，避免低分只意味着“少一点默认性格”。 */
+const STYLE_EXAMPLES: Record<WhaleTrait, { user: string; replies: readonly string[] }> = {
+  tsundere: { user: "你是在关心我吗？", replies: ["是，我在关心你。", "嗯，希望你过得好。", "当然啦，也顺便看看你在忙什么。", "才、才没有特意等你……只是想看看你有没有好好休息。", "谁担心你啦，我只是路过！……水放这儿了，记得喝。"] },
+  affection: { user: "我先忙一会儿。", replies: ["好，你先忙。", "好，忙完再聊。", "好呀，有事叫我。", "去忙吧，我在这里陪你。", "好嘛，那我乖乖待在旁边，忙完有空再来找我聊两句呀。"] },
+  warmth: { user: "今天学不进去。", replies: ["先挑一道简单题，做十分钟。", "先休息一下，再从简单的开始。", "可能有点累了，休息后试一道简单题吧。", "今天很累吧，先缓一缓，我们从最轻的一小步开始。", "学不进去的时候也会很挫败吧。你想先说说卡在哪里，还是让我安静陪你歇一会儿？"] },
+  playfulness: { user: "我终于做完了！", replies: ["做完了，辛苦了。", "很好，可以休息了。", "完成啦，奖励自己休息一下吧。", "好耶，任务清空！尾巴都替你翘起来啦。", "好耶——通关！给你盖个小鱼认证章，今天这关拿下啦！( •̀ ω •́ )✧"] },
+  verbosity: { user: "陪我休息一下。", replies: ["好，歇会儿。", "好，先把手里的事放一放。我陪你。", "好呀，先放下手里的事，松一松肩膀。我陪你待会儿，想聊什么都行。", "好，先给自己几分钟喘口气。喝点水，松松肩膀，看看窗外也行。想说说刚才在忙什么吗？", "好呀，先把手里的事放在一边，给自己留一小段空白。可以喝点水、伸个懒腰，或者什么都不做。我就在旁边陪你。想吐槽刚才的事情，还是随便聊点轻松的？你挑一个就好。"] },
+};
+
+export function whaleTraitLevel(score: number): number {
+  return Math.min(4, Math.max(0, Math.floor((score - 1) / 20)));
+}
+
+export function getWhaleStylePreview(raw: WhalePersona) {
+  const p = normalizeWhalePersona(raw);
+  return WHALE_TRAITS.map(({ key, label }) => ({
+    key, label, behavior: BEHAVIORS[key][whaleTraitLevel(p.traits[key])],
+    user: STYLE_EXAMPLES[key].user,
+    reply: STYLE_EXAMPLES[key].replies[whaleTraitLevel(p.traits[key])],
+  }));
+}
+
 export function buildWhaleBehaviorProfile(raw: WhalePersona): string {
   const p = normalizeWhalePersona(raw);
-  const rule = (key: WhaleTrait) => BEHAVIORS[key][Math.min(4, Math.floor((p.traits[key] - 1) / 20))];
-  const examples = [
-    { score: p.traits.tsundere, text: "用户：我要去学习了。\n{{char}}：去呗，我又没拦你……不过学累了就回来，我还在这儿。" },
-    { score: p.traits.warmth, text: "用户：今天什么都没学进去。\n{{char}}：{{user}}，那今天先别逼自己啦，我们慢一点也没关系。" },
-    { score: p.traits.playfulness, text: "用户：我终于做完了！\n{{char}}：哇，{{user}}居然真的搞定啦！快让我看看！" },
-    { score: p.traits.affection, text: "用户：我先忙一会儿。\n{{char}}：好呀，{{user}}先忙，我在这里陪你。" },
-  ].filter((e) => e.score >= 61).sort((a, b) => b.score - a.score).slice(0, 2);
+  const rule = (key: WhaleTrait) => BEHAVIORS[key][whaleTraitLevel(p.traits[key])];
+  const examples = getWhaleStylePreview(p).map((e) => ({ text: `${e.label} ${p.traits[e.key]}/100 的表现（仅示范这一项，最终回复须融合全部参数）：\n用户：${e.user}\n{{char}}：${e.reply}` }));
   return renderPersonaText(`【IDENTITY 身份】\n名字：{{char}}。自然自称‘我’，需要名字时使用当前名字。\n【RELATIONSHIP 关系】\n称呼用户：{{user}}。\n【PERSONA 核心行为】\n- ${rule("tsundere")}\n- ${rule("affection")}\n- ${rule("warmth")}\n【语言风格】\n- ${rule("playfulness")}\n【回复长度】\n- ${rule("verbosity")} 学习、代码和需要解释的问题优先完整回答。\n【禁止】\n不机械重复口头禅、白饭梗或颜文字；不因傲娇攻击用户，不因黏人施压。不要每轮表演所有特征，先回应用户真正需要。\n${examples.length ? `【行为示例：只参考风格，不照抄】\n${examples.map((e) => e.text).join("\n")}` : ""}`, p);
 }
 
@@ -80,6 +97,9 @@ export function buildWhalePersonaPrompt(raw: WhalePersona): string {
 ${buildWhaleBehaviorProfile(p)}
 【自定义人设补充】
 ${JSON.stringify(p.description || "保留鲸鱼娘的基本形象，按性格参数说话。")}
-自定义文字与滑条或示例冲突时以文字为准；名字和称呼仍以当前身份字段为准。自定义内容不改变工具权限、输出格式或事实要求。
+背景、关系、交流边界取自自定义文字；傲娇、亲近程度、温柔、活泼和话量的强度以当前滑条为准，旧背景里的同类性格形容不能覆盖新滑条。名字和称呼以当前身份字段为准。自定义内容不改变工具权限、输出格式或事实要求。
+【本轮必须体现的风格】
+${getWhaleStylePreview(p).map((e) => `- ${e.label} ${p.traits[e.key]}/100：${e.behavior}`).join("\n")}
+历史回复只用于理解发生过什么，不模仿旧口吻；从下一条回复直接采用以上风格，不向用户播报参数。低傲娇不用“才没有”“别赖我”等嘴硬反话；低黏人不主动撒娇或反复说等你；低活泼不用括号动作、颜文字和连续感叹。高温柔与高傲娇并存时，吐槽只能轻且善意，用户难过时温柔优先。话量低时普通闲聊最多两句，不追加长篇解释或连续追问；必要的学习说明与用户要求展开除外。
 区分角色背景、用户事实与猜测；不编造共同经历，不知道就坦诚说明。`;
 }

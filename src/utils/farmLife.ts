@@ -286,7 +286,7 @@ export interface ResidentConversation {
   online: boolean;
   lines: ResidentLine[];
 }
-export function readLifeBatch(raw: string, pair: readonly ResidentId[], rounds: number, natural: boolean, flexible = false, maxLength = 44, minimumRounds = rounds) {
+export function readLifeBatch(raw: string, pair: readonly ResidentId[], rounds: number, natural: boolean, flexible = false, maxLength = 240, minimumRounds = rounds) {
   try {
     const value = object(JSON.parse(raw));
     if (natural && typeof value.done !== 'boolean') return null;
@@ -300,7 +300,7 @@ export function readLifeBatch(raw: string, pair: readonly ResidentId[], rounds: 
   }
 }
 
-export function readLifeReply(raw: string, pair: readonly ResidentId[], rounds = 1, flexible = false, maxLength = 44): Omit<ResidentLine, 'at'>[] | null {
+export function readLifeReply(raw: string, pair: readonly ResidentId[], rounds = 1, flexible = false, maxLength = 240): Omit<ResidentLine, 'at'>[] | null {
   try {
     const v = object(JSON.parse(raw));
     if (!Array.isArray(v.lines) || v.lines.length !== rounds * pair.length) return null;
@@ -329,7 +329,7 @@ export function restoreConversations(raw: unknown): ResidentConversation[] {
     const v = object(entry);
     if (Array.isArray(v.lines) && typeof v.id === 'string' && Array.isArray(v.participants)) {
       const participants = [...new Set(v.participants.filter(isResidentId))];
-      const lines = v.lines.map(object).filter(l => isResidentId(l.speaker) && participants.includes(l.speaker) && typeof l.text === 'string' && l.text.length <= 160).slice(0, LONG_TALK_MAX * 3).map(l => ({
+      const lines = v.lines.map(object).filter(l => isResidentId(l.speaker) && participants.includes(l.speaker) && typeof l.text === 'string' && l.text.length <= 240).slice(0, LONG_TALK_MAX * 3).map(l => ({
         speaker: l.speaker as ResidentId,
         text: (l.text as string).trim(),
         at: number(l.at, 0, 0, Number.MAX_SAFE_INTEGER)

@@ -81,7 +81,7 @@ async function requestOnce(messages: ChatContent[], apiKey: string, options: {
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort();
-  }, Math.max(1000, Math.min(20000, options.timeoutMs ?? 12000)));
+  }, Math.max(1000, Math.min(25000, options.timeoutMs ?? 12000)));
   try {
     if (controller.signal.aborted) throw cancelled();
     const jsonMode = options.jsonMode ?? true;
@@ -102,7 +102,7 @@ async function requestOnce(messages: ChatContent[], apiKey: string, options: {
           type: 'disabled'
         },
         ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
-        max_tokens: Math.max(64, Math.min(1024, options.maxTokens ?? 480))
+        max_tokens: Math.max(64, Math.min(4096, options.maxTokens ?? 480))
       }),
       signal: controller.signal
     });

@@ -25,11 +25,7 @@ import { WhaleAvatar } from "@/components/WhaleAvatar";
 import { WhaleDeco } from "@/components/WhaleDeco";
 import { WhaleLeaveFX, WhaleSummonFX } from "@/components/WhaleSummonFX";
 import { BACKGROUND_PRESETS, resolveTint } from "@/constants/backgrounds";
-import {
-  WHALE_STICKERS,
-  matchSticker,
-  randomSticker,
-} from "@/constants/whaleStickers";
+import { WHALE_STICKERS } from "@/constants/whaleStickers";
 import type { WhaleStickerId } from "@/constants/whaleStickers";
 import { askAssistant } from "@/services/ai";
 import type { AssistantResult } from "@/services/ai";
@@ -98,14 +94,6 @@ const AVATAR_TAPS = [
   "那我出来啦，{{user}}别把我收回去呀",
 ];
 
-/** 按回复情绪挑表情包：优先匹配情绪，否则小概率随机来一张 */
-function pickStickerForReply(reply: string): WhaleStickerId | null {
-  const mood = matchSticker(reply);
-  if (mood && Math.random() < 0.7) return mood;
-  if (Math.random() < 0.3) return randomSticker();
-  return null;
-}
-
 /** 除自定义口令外始终有效的通用召唤词 */
 const SUMMON_ALIASES = ["召唤大肥鱼", "大肥鱼出来", "肥鱼出来", "whaletest"];
 const DISMISS_ALIASES = ["大爹走了", "退下吧", "变回课表助手"];
@@ -170,7 +158,6 @@ export function AssistantScreen() {
   const [reaction, setReaction] = useState<string | null>(null);
   const taps = useRef({ count: 0, at: 0 });
   const reactionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const stickerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** 退场动画期间延后的「切人格 / 追加告别 / 归档记忆」定时器 */
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -291,7 +278,6 @@ export function AssistantScreen() {
   useEffect(
     () => () => {
       if (reactionTimer.current) clearTimeout(reactionTimer.current);
-      if (stickerTimer.current) clearTimeout(stickerTimer.current);
       if (leaveTimer.current) clearTimeout(leaveTimer.current);
       if (settleTimer.current) clearTimeout(settleTimer.current);
     },
@@ -442,6 +428,7 @@ export function AssistantScreen() {
         id: m.id,
         role: m.role,
         content: m.content,
+        sticker: m.sticker,
       }));
       const result: AssistantResult = await askAssistant(
         history,
@@ -469,19 +456,11 @@ export function AssistantScreen() {
         actions: scheduleActions.length ? scheduleActions : undefined,
         timestamp: nowTs(),
       };
-      setMessages((prev) => [...prev, botMsg]);
-
-      // 说完话偶尔顺手补一张表情包：优先按回复情绪挑，其次随机
-      if (whale && result.intent !== "dismiss") {
-        const pick = pickStickerForReply(result.reply);
-        if (pick) {
-          if (stickerTimer.current) clearTimeout(stickerTimer.current);
-          stickerTimer.current = setTimeout(() => {
-            if (useWhaleMemory.getState().epoch === memoryEpoch)
-              pushSticker(pick);
-          }, 420);
-        }
-      }
+      // 文本与表情一起入库，下一轮立即可见，避免延迟补发串到下一轮。
+      const stickerMsg: ChatMessage | undefined = whale && result.sticker && result.intent !== "dismiss"
+        ? { id: uid(), role: "assistant", content: "", sticker: result.sticker, timestamp: nowTs() }
+        : undefined;
+      setMessages((prev) => [...prev, botMsg, ...(stickerMsg ? [stickerMsg] : [])]);
 
       // 大肥鱼召唤 / 退出由模型按语义识别，模型回复本身就是登场白或告别白
       if (result.intent === "summon" && !whale) {

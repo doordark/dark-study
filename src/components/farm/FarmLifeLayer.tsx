@@ -177,7 +177,7 @@ export function FarmLifeLayer({
               color: muted,
               fontSize: 12,
               lineHeight: 20
-            }}>居民在路上自然偶遇，不会被定时召集。日常生活默认使用本地对白；开启联网或选择 AI 小镇后，只有部分偶遇会请求 AI。</Text>
+            }}>居民在路上自然偶遇，不会被定时召集。日常生活默认使用本地对白；开启联网或选择 AI 小镇后，只有部分偶遇会请求 AI。{'\n\n为什么配置了 Key 还显示“本地”？\n农场共用设置里的 DeepSeek API Key，但保存密钥不会自动开启联网。请在这里开启 AI 居民对话，并检查自动闲聊联网比例、请求间隔和每日额度。'}</Text>
             <View style={{ padding: 13, borderRadius: 14, backgroundColor: '#F0E8DA' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <Text style={{ flex: 1, color: ink, fontSize: 14, fontWeight: '700' }}>居民联网搜索</Text>
@@ -206,7 +206,7 @@ export function FarmLifeLayer({
               color: muted,
               fontSize: 11,
               lineHeight: 18
-            }}>居民之间只分享兴趣话题的类别，比如钓鱼或唱歌。开启 AI 居民对话后，联网也只带这些类别与居民对白，一对一原文和私密彩蛋留在个人聊天。长谈可在高级设置调到 30 轮；自然结束模式由居民决定何时收尾，最多 30 轮。AI 长谈按段请求，每段占一次额度，额度不足或联网失败时接着用本地对白。</Text>
+            }}>居民之间只分享兴趣话题的类别，比如钓鱼或唱歌。开启 AI 居民对话后，联网也只带这些类别与居民对白，一对一原文和私密彩蛋留在个人聊天。长谈可在高级设置调到 30 轮；自然结束模式由居民决定何时收尾，最多 30 轮。AI 长谈按段请求，每段占一次额度；续聊不受新对话间隔限制。额度不足或联网失败时，尚未开始的对话使用本地对白，已经开始的对话保留记录并结束。</Text>
             <Button label={advanced ? '收起高级设置' : '高级自定义'} onPress={() => setAdvanced(!advanced)} />
             {advanced ? (Object.keys(SETTING_RANGES) as NumericLifeSetting[]).filter(field => field !== 'rounds' || !settings.naturalTalks).map(field => <NumberSetting key={`${field}-${settings[field]}`} field={field} label={LABELS[field]} maxRounds={settings.longTalks ? SETTING_RANGES.rounds[1] : SHORT_TALK_MAX} value={settings[field]} onChange={value => controller.updateSettings({
               [field]: value

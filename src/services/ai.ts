@@ -33,6 +33,7 @@ import { recentWhaleHistory, type WhaleHistoryMessage } from "@/utils/whaleMemor
 import { buildWhalePersonaPrompt, renderPersonaText } from "@/utils/whalePersona";
 import { useWhalePersona } from "@/store/useWhalePersona";
 import { validClock } from "@/utils/courseEditing";
+import { resolveWhaleSticker, WHALE_EXPRESSION_INSTRUCTIONS, type WhaleStickerId } from "@/utils/whaleExpression";
 
 const COLOR_VALUES: CourseColor[] = [
   "sky",
@@ -441,6 +442,7 @@ export interface AssistantContext {
 
 export interface AssistantResult {
   reply: string;
+  sticker?: WhaleStickerId | null;
   /** 课表操作 + 用户专属的额外操作（仅在 whale 人格下可能出现） */
   actions: AssistantAction[];
   /**
@@ -477,6 +479,7 @@ export async function askAssistant(
 
 【当前人格：鲸鱼角色】
 ${whaleContext?.prompt}
+${WHALE_EXPRESSION_INSTRUCTIONS}
 - 用户让你改课表时，仍然必须准确输出 actions。
 - 额外能力（直接写进 reply，不要生成 action）：
   1. 今日运势：宜 / 忌 / 幸运节次 / 幸运色
@@ -597,6 +600,9 @@ actions 是操作数组，一次可以放多个（用户一句话提出多件事
 
   return {
     reply: String(parsed?.reply ?? "我暂时没能理解，可以换个说法吗？"),
+    sticker: whaleContext && intent !== "dismiss"
+      ? resolveWhaleSticker(parsed?.sticker, history.filter((m) => m.role === "user").at(-1)?.content ?? "", String(parsed?.reply ?? ""))
+      : null,
     actions,
     intent,
   };

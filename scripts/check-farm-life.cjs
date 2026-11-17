@@ -17,6 +17,9 @@ const settings = { ...p.DEFAULT_LIFE, online: true };
 let usage = p.reserveLifeRequest(empty, settings, at);
 assert.equal(usage.count, 1);
 assert.equal(p.reserveLifeRequest(usage, settings, at + 599999), null, "cooldown is enforced");
+assert.equal(p.reserveLifeRequest(usage, settings, at + 1000, true).count, 2, "continuing a conversation bypasses new-conversation cooldown but counts usage");
+assert.equal(p.reserveLifeRequest({ ...usage, count: settings.dailyLimit }, settings, at + 1000, true), null, "continuations still obey the daily limit");
+assert.equal(p.reserveLifeRequest(usage, { ...settings, online: false }, at + 1000, true), null, "continuations cannot bypass the offline setting");
 usage = p.normalizeLifeUsage(JSON.parse(JSON.stringify(usage)), at + 600000);
 usage = p.reserveLifeRequest(usage, settings, at + 600000);
 assert.equal(usage.count, 2, "reload preserves the daily count and cooldown");
@@ -33,7 +36,7 @@ const pair = ["door", "gu"];
 const reply = (lines) => JSON.stringify({ lines });
 const lines = [{ speaker: "door", text: " 浇完水就休息。 " }, { speaker: "gu", text: "我陪你。" }];
 assert.equal(p.readLifeReply(reply(lines), pair)[0].text, "浇完水就休息。");
-for (const invalid of ["not json", "null", reply([]), reply([...lines, lines[0]]), reply(lines.slice().reverse()), reply([{ ...lines[0], text: " " }, lines[1]]), reply([{ ...lines[0], text: "长".repeat(45) }, lines[1]]), reply([null, lines[1]])]) {
+for (const invalid of ["not json", "null", reply([]), reply([...lines, lines[0]]), reply(lines.slice().reverse()), reply([{ ...lines[0], text: " " }, lines[1]]), reply([{ ...lines[0], text: "长".repeat(241) }, lines[1]]), reply([null, lines[1]])]) {
   assert.equal(p.readLifeReply(invalid, pair), null, "malformed responses use local fallback");
 }
 for (const scene of p.LOCAL_SCENES) {

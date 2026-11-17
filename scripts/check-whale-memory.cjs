@@ -55,6 +55,24 @@ async function run() {
   assert.equal(normalized.name, "小鱼");
   assert.equal(persona.normalizeWhalePersona().description, persona.DEFAULT_WHALE_PERSONA.description);
 
+  const expression = load("src/utils/whaleExpression.ts");
+  assert.equal(expression.resolveWhaleSticker("happy", "关于我女友的", "吵架了、冷战了，还是纠结送什么礼物？"), null, "screenshot: serious reply cannot receive a happy sticker");
+  assert.equal(expression.resolveWhaleSticker("excited", "我和女友吵架了", "我先听你说"), null);
+  assert.equal(expression.resolveWhaleSticker("happy", "你表情包是不是发错了，怎么是开心呢", "刚才那张发得不合适"), null, "correction must not trigger another cheerful sticker");
+  assert.equal(expression.resolveWhaleSticker("happy", "我通过考试啦", "好耶，恭喜！"), "happy");
+  assert.equal(expression.resolveWhaleSticker("toString", "你好", "你好"), null);
+  assert.equal(expression.resolveWhaleSticker(undefined, "你好", "你好"), null, "omitted model decision has no random fallback");
+  for (const { key } of persona.WHALE_TRAITS) {
+    const low = { ...persona.DEFAULT_WHALE_PERSONA, traits: { ...persona.DEFAULT_WHALE_PERSONA.traits, [key]: 1 } };
+    const high = { ...low, traits: { ...low.traits, [key]: 100 } };
+    const lo = persona.getWhaleStylePreview(low).find((p) => p.key === key);
+    const hi = persona.getWhaleStylePreview(high).find((p) => p.key === key);
+    assert.notEqual(lo.behavior, hi.behavior, `${key} changes the concrete behavior`);
+    assert.notEqual(lo.reply, hi.reply, `${key} changes the matching example`);
+    assert.ok(persona.buildWhalePersonaPrompt(low).includes(lo.reply));
+    assert.ok(persona.buildWhalePersonaPrompt(high).includes(hi.reply));
+  }
+
   const user = { id: "user-1", role: "user", content: "我喜欢吃草莓，以后叫我阿顾", timestamp: 100 };
   const updates = [{ key: "饮食偏好", text: "用户喜欢吃草莓", evidence: "我喜欢吃草莓" }];
   let facts = memory.mergeWhaleFacts([], updates, user, 101);
@@ -120,6 +138,38 @@ async function run() {
   assert.ok(calls.at(-1).some((m) => m.role === "user" && m.content === followup.content));
   await ai.askAssistant([followup], { ...ctx, persona: undefined }, "test-key");
   assert.doesNotMatch(calls.at(-1)[0].content, /用户喜欢吃草莓/, "ordinary assistant does not receive private whale memories");
+
+  // Actual request boundary: persisted old image-only messages remain visible to the model.
+  const oldSticker = { id: "sticker-old", role: "assistant", content: "", sticker: "happy", timestamp: 210 };
+  const correction = { id: "correction", role: "user", content: "你表情包是不是发错了，怎么是开心呢", timestamp: 220 };
+  const stickerHistory = [oldSticker, correction];
+  const serialized = memory.recentWhaleHistory(stickerHistory);
+  assert.match(serialized[0].content, /我已发送表情包：happy，开心/);
+  assert.equal(oldSticker.content, "", "serialization does not mutate stored images");
+  response = { reply: "刚才那张开心表情不合适，我认真听你说。", actions: [], sticker: "excited" };
+  const corrected = await ai.askAssistant(stickerHistory, ctx, "test-key");
+  assert.equal(corrected.sticker, null);
+  assert.ok(calls.at(-1).some((m) => m.role === "assistant" && /我已发送表情包：happy/.test(m.content)));
+  assert.match(calls.at(-1)[0].content, /表情包由你决定/);
+  response = { reply: "好耶，恭喜！", actions: [], sticker: "happy" };
+  const celebration = [{ role: "user", content: "我通过考试啦" }];
+  assert.equal((await ai.askAssistant(celebration, ctx, "test-key")).sticker, "happy");
+  assert.equal((await ai.askAssistant(celebration, { ...ctx, persona: undefined }, "test-key")).sticker, null);
+
+  // Saving a new preset changes both entry points on the next call, with old history intact.
+  for (const preset of [persona.WHALE_PRESETS[1], persona.WHALE_PRESETS[2], persona.WHALE_PRESETS[3]]) {
+    const saved = { ...persona.DEFAULT_WHALE_PERSONA, traits: { ...preset.traits } };
+    personaStore.getState().save(saved);
+    await ai.askAssistant(stickerHistory, ctx, "test-key");
+    const expected = persona.buildWhaleBehaviorProfile(saved);
+    assert.ok(calls.at(-1)[0].content.includes(expected));
+    await ai.askWhalePet(stickerHistory, "test-key");
+    assert.ok(calls.at(-1)[0].content.includes(expected));
+    assert.ok(calls.at(-1).some((m) => m.role === "assistant" && /我已发送表情包/.test(m.content)));
+  }
+  store.getState().setMessages([oldSticker]);
+  await ai.askWhalePet([correction], "test-key");
+  assert.match(calls.at(-1)[0].content, /我已发送表情包：happy/, "other entry recalls the actual sent sticker too");
   // Cancellation race across an asynchronous model call.
   store.getState().clearMemory();
   store.getState().setPetMessages([user]);
@@ -147,7 +197,7 @@ async function run() {
   assert.equal(store.getState().messages[0].id, user.id);
   assert.equal(store.getState().autoMemory, true);
   assert.ok(Array.isArray(store.getState().petMessages));
-  console.log("Whale checks passed: persona bounds, evidence validation, corrections, manual protection, shared context, request races, deletion, archive and legacy storage.");
+  console.log("Whale checks passed: persona bounds and preset switching, contextual stickers and correction, image-only and shared history, evidence validation, manual protection, request races, deletion, archive and legacy storage.");
 }
 
 run().catch((error) => { console.error(error); process.exitCode = 1; });

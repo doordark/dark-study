@@ -724,11 +724,10 @@ export function NightSky({
   const insets = useSafeAreaInsets();
 
   const [visits, setVisits] = useState(1);
-  // 逐颗记录，点哪颗收哪颗；不能用数量推导顺序，否则会收错星
-  const [picked, setPicked] = useState<boolean[]>(() =>
-    Array<boolean>(TOTAL_STARS).fill(false),
-  );
-  const lit = picked.filter(Boolean).length;
+  // 保留实际拾取顺序，预览与最终星图共用同一条路径。
+  const [pickOrder, setPickOrder] = useState<number[]>([]);
+  const picked = SPOTS.map((_, index) => pickOrder.includes(index));
+  const lit = pickOrder.length;
   const [closing, setClosing] = useState(false);
   const [panelHeight, setPanelHeight] = useState(300);
   const [owlLanded, setOwlLanded] = useState(false);
@@ -878,7 +877,7 @@ export function NightSky({
   // Reserve space for the achievement before the seventh star is picked.
   const skyBottom = Math.max(skyTop + 24, h - insets.bottom - panelHeight - (done ? 0 : 38) - (compact ? 32 : 46));
   const starY = (y: number) => skyTop + y * (skyBottom - skyTop);
-  const constellation = SPOTS.filter((_, i) => picked[i]);
+  const constellation = pickOrder.map((index) => SPOTS[index]);
 
   return (
     <NightMotion.Provider value={awake && !reduceMotion && !farmHandoff}><Animated.View
@@ -1003,8 +1002,8 @@ export function NightSky({
             if (closingRef.current) return;
             tapHaptic();
 
-            setPicked((prev) =>
-              prev[i] ? prev : prev.map((v, idx) => (idx === i ? true : v)),
+            setPickOrder((prev) =>
+              prev.includes(i) ? prev : [...prev, i],
             );
           }}
         />
@@ -1012,7 +1011,7 @@ export function NightSky({
 
       {done ? (
         <>
-          <ConstellationReveal points={SPOTS.map((spot) => ({ x: spot.x * w, y: starY(spot.y) }))} width={w} height={h} />
+          <ConstellationReveal points={constellation.map((spot) => ({ x: spot.x * w, y: starY(spot.y) }))} width={w} height={h} />
           <Burst cx={moonCx} cy={moonCy} />
         </>
       ) : null}

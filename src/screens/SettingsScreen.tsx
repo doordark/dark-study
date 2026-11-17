@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -788,70 +789,43 @@ function AiSettings() {
   const setApiKey = useSettings((s) => s.setApiKey);
   const [draft, setDraft] = useState<string | null>(null);
   const editing = draft ?? apiKey;
+  const [keyOpen, setKeyOpen] = useState(false);
+  const [reveal, setReveal] = useState(false);
   const [saved, setSaved] = useState(false);
 
   return (
     <>
-      {/* DeepSeek Key */}
       <Animated.View entering={FadeInDown.springify()}>
         <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
-          <View className="px-4 py-4">
-            <View className="mb-3 flex-row items-center">
-              <View className="h-9 w-9 items-center justify-center rounded-[13px] bg-sky-400/25">
-                <Ionicons name="key" size={16} color="#38BDF8" />
-              </View>
-              <View className="ml-2.5 flex-1">
-                <Text className="text-[14px] font-bold text-slate-800 dark:text-white">
-                  DeepSeek API Key
-                </Text>
-                <Text className="text-[10.5px] text-slate-500 dark:text-slate-400">
-                  用于课表识图、AI 助手与成绩识别
-                </Text>
-              </View>
-            </View>
-
-            <TextInput
-              value={editing}
-              onChangeText={(v) => {
-                setDraft(v);
-                setSaved(false);
-              }}
-              placeholder="sk-..."
-              placeholderTextColor="rgba(148,163,184,0.7)"
-              autoCapitalize="none"
-              autoCorrect={false}
-              secureTextEntry
-              className="rounded-2xl border border-white/25 bg-white/35 px-3.5 py-2.5 text-[12.5px] text-slate-800 dark:border-white/10 dark:bg-white/[0.05] dark:text-slate-100"
-            />
-
-            <Pressable
-              onPress={() => {
-                setApiKey(editing);
-                setDraft(null);
-                setSaved(true);
-              }}
-              className="mt-2.5 items-center rounded-2xl bg-sky-500/85 py-2.5"
-            >
-              <Text className="text-[12px] font-bold text-white">
-                保存 Key
-              </Text>
-            </Pressable>
-
-            {saved ? (
-              <Text className="mt-2 text-[11px] text-emerald-300">
-                你的小助手已获取大脑
-              </Text>
-            ) : null}
-
-            <View className="mt-3 rounded-2xl border border-amber-300/30 bg-amber-400/12 px-3.5 py-2.5 dark:border-amber-400/30 dark:bg-amber-500/12">
-              <Text className="text-[10px] leading-4 text-amber-700 dark:text-amber-200">
-                安全提示：生产环境请将 API Key
-                放在自有服务端中转，不要硬编码进客户端。
-              </Text>
-            </View>
-          </View>
+          <Pressable accessibilityRole="button" onPress={() => { setDraft(apiKey); setSaved(false); setReveal(false); setKeyOpen(true); }} className="min-h-20 flex-row items-center px-4 py-4">
+            <View className="mr-3 h-11 w-11 items-center justify-center rounded-2xl bg-sky-400/20"><Ionicons name="key-outline" size={22} color="#38BDF8" /></View>
+            <View className="flex-1"><Text className="text-[14px] font-bold text-slate-800 dark:text-white">AI 连接</Text><Text className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">DeepSeek · {apiKey ? '已配置密钥' : '点击配置 API Key'}</Text></View>
+            <Ionicons name="chevron-forward" size={17} color="#94A3B8" />
+          </Pressable>
         </GlassContainer>
       </Animated.View>
+      <Modal visible={keyOpen} transparent animationType="fade" onRequestClose={() => setKeyOpen(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} className="flex-1 justify-center bg-black/55 px-5">
+          <View accessibilityViewIsModal className="max-h-[85%] w-full max-w-lg self-center overflow-hidden rounded-[28px] bg-slate-50 dark:bg-slate-900">
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 24 }}>
+              <View className="flex-row items-center justify-between">
+                <View className="h-12 w-12 items-center justify-center rounded-2xl bg-sky-400/15"><Ionicons name="sparkles-outline" size={25} color="#38BDF8" /></View>
+                <Pressable accessibilityRole="button" accessibilityLabel="关闭 AI 连接设置" onPress={() => setKeyOpen(false)} className="h-11 w-11 items-center justify-center rounded-full bg-slate-200/60 dark:bg-white/10"><Ionicons name="close" size={22} color="#94A3B8" /></Pressable>
+              </View>
+              <Text className="mt-5 text-[23px] font-bold text-slate-800 dark:text-white">连接你的 AI</Text>
+              <Text className="mt-2 text-[13px] leading-6 text-slate-500 dark:text-slate-400">用于课表识别、AI 助手与成绩识别。</Text>
+              <Text className="mb-2 mt-6 text-[12px] font-semibold text-slate-600 dark:text-slate-300">DeepSeek API Key</Text>
+              <View className="flex-row items-center rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800">
+                <TextInput accessibilityLabel="DeepSeek API Key" value={editing} onChangeText={(v) => { setDraft(v); setSaved(false); }} placeholder="输入或粘贴 sk-…" placeholderTextColor="#94A3B8" autoCapitalize="none" autoCorrect={false} secureTextEntry={!reveal} className="min-h-14 flex-1 px-4 py-3 text-[14px] text-slate-800 dark:text-slate-100" />
+                <Pressable accessibilityRole="button" accessibilityLabel={reveal ? '隐藏密钥' : '显示密钥'} onPress={() => setReveal(!reveal)} className="h-12 w-12 items-center justify-center"><Ionicons name={reveal ? 'eye-off-outline' : 'eye-outline'} size={21} color="#94A3B8" /></Pressable>
+              </View>
+              <Text className="mt-3 text-[11px] leading-5 text-slate-500 dark:text-slate-400">密钥保存在本机，调用时发送给 DeepSeek。保存表示配置完成，不代表连接已验证。</Text>
+              <Pressable accessibilityRole="button" onPress={() => { setApiKey(editing); setDraft(editing.trim()); setSaved(true); setReveal(false); }} className="mt-6 min-h-12 items-center justify-center rounded-2xl bg-sky-500"><Text className="text-[14px] font-bold text-white">保存配置</Text></Pressable>
+              <Text accessibilityLiveRegion="polite" className="mt-3 text-center text-[12px] text-slate-500 dark:text-slate-400">{saved ? (editing.trim() ? '已保存，下次请求使用新密钥' : '已清除密钥') : '关闭窗口会放弃未保存的修改'}</Text>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       <Animated.View entering={FadeInDown.delay(420).springify()} style={{ marginTop: 14 }}>
         <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>

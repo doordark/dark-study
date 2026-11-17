@@ -1,7 +1,7 @@
 import { conversationSpots, freeResidentSpot } from './farmResidentSpace';
 import { RESIDENT_PLACEMENTS, WAYPOINTS, type FarmPoint, type WaypointId } from '@/constants/farmMap';
 import { farmSegmentClear, nearestFarmWaypoint, safeFarmPoint, waypointFarmRoute } from './farmNavigation';
-import { DEFAULT_LIFE, LONG_TALK_MAX, RESIDENTS, RESIDENT_IDS, SHORT_TALK_MAX, TALK_BATCH_ROUNDS, lifeDate, localConversation, normalizeLifeSettings, sharedTopicExchange, type FarmTopicId, type SharedFarmTopic, type LifeSettings, type ResidentId, type ResidentConversation, type ResidentLine } from './farmLife';
+import { DEFAULT_LIFE, LONG_TALK_MAX, RESIDENTS, RESIDENT_IDS, TALK_BATCH_ROUNDS, lifeDate, localConversation, normalizeLifeSettings, sharedTopicExchange, type FarmTopicId, type SharedFarmTopic, type LifeSettings, type ResidentId, type ResidentConversation, type ResidentLine } from './farmLife';
 import { validateNpcAction, type NpcAction, type FarmLocation } from './farmActions';
 import { discussionBatchFits, discussionLines, requestBatchOnTopic, type FarmDiscussion, type ResidentMood } from './farmDiscussion';
 import { publicFarmTopic } from './farmMemory';
@@ -563,8 +563,11 @@ export class FarmResidentEngine {
     const ambient = source === 'encounter' && participants.length === 2 && !discussion && !opener.length && !moodLines.length
       ? ambientConversation(pair, this.history, a.currentWaypoint + ' ' + b.currentWaypoint, this.night, this.random()) : [];
     const planned = commissioned || requested ? local
-      : [...opener, ...moodLines, ...local, ...ambient, ...(!requested && participants.length === 2 ? localConversation(pair, rounds, this.history.filter(record => pair.every(id => record.participants.includes(id))).length) : [])].slice(0, rounds * participants.length);
-    if (!commissioned && rounds > SHORT_TALK_MAX) this.closeLocalTalk(pair, planned);
+      : (opener.length ? opener : moodLines.length ? moodLines : local.length ? local : ambient.length ? ambient : localConversation(pair, rounds, pairHistory.length)).slice(0, rounds * participants.length);
+    if (network && natural && planned.length < rounds * participants.length) {
+      // Reserve streaming capacity only; these slots are never used as local dialogue.
+      while (planned.length < rounds * participants.length) planned.push({ speaker: participants[planned.length % participants.length], text: "" });
+    }
     const record: ResidentConversation = {
       id,
       participants,
@@ -627,14 +630,14 @@ export class FarmResidentEngine {
       c.planned.splice(c.index, c.planned.length - c.index, ...local.slice(c.index));
       return;
     }
-    if (c.record.online && c.record.participants.length === 2 && c.index < c.planned.length) {
-      const pair = c.record.participants as [ResidentId, ResidentId];
-      const rounds = (c.planned.length - c.index) / 2;
-      const rest = localConversation(pair, rounds, this.sequence + 1);
-      this.closeLocalTalk(pair, rest);
-      c.planned.splice(c.index, rest.length, ...rest);
+    if (c.record.lines.length) {
+      // Preserve the conversation already spoken; never splice in an unrelated scene.
+      c.planned.splice(c.index);
+    } else {
+      c.planned = c.planned.filter(line => line.text.trim());
     }
   }
+
   private requestConversationBatch(c: PlayingConversation, at: number) {
     const speakers = c.record.participants.length;
     // A commissioned meeting requests one complete discussion even when its offline answer is brief.
@@ -643,7 +646,7 @@ export class FarmResidentEngine {
     const rounds = Math.min(TALK_BATCH_ROUNDS, remaining);
     c.batchEnd = c.index + rounds * speakers;
     c.waiting = true;
-    c.deadline = at + (c.record.discussion?.kind === 'discussion' && c.record.discussion.question ? 22000 : 15000);
+    c.deadline = at + 26000;
     this.effects.push({
       type: 'conversation',
       id: c.record.id,
@@ -669,7 +672,7 @@ export class FarmResidentEngine {
     if (lines && !repeatedOpening && (!question || discussionBatchFits(question, lines)) && (c.record.discussion?.kind !== 'request' || requestBatchOnTopic(c.record.discussion.question ?? '', lines, c.record.participants[1])) && (lines.length === expected || ending && lines.length >= Math.min(2 * speakers, expected) && lines.length < expected && lines.length % speakers === 0) &&
         lines.every((line, index) => (speakers === 3 && online
           ? c.record.participants.includes(line.speaker) && (index === 0 || lines[index - 1].speaker !== line.speaker)
-          : line.speaker === c.record.participants[index % speakers]) && line.text.trim() && line.text.length <= (question ? 80 : 44)) &&
+          : line.speaker === c.record.participants[index % speakers]) && line.text.trim() && line.text.length <= 240) &&
         c.record.participants.every(id => lines.filter(line => line.speaker === id).length >= (question ? 2 : 1))) {
       c.planned.splice(c.index, ending ? c.planned.length - c.index : expected, ...lines);
       c.record.online ||= online;

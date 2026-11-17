@@ -97,7 +97,7 @@ longEncounter.residents.door.logicalPosition = { x: 85, y: 247 };
 longEncounter.residents.gu.logicalPosition = { x: 101, y: 247 };
 longEncounter.tick(at, { autonomous: true });
 advance(longEncounter, at, 90);
-assert.equal(longEncounter.history[0].lines.length, 20);
+assert.equal(longEncounter.history[0].lines.length, 6);
 assert(longEncounter.history[0].endedAt);
 assert.equal(longEncounter.residents.door.conversationPartner, null);
 
@@ -118,12 +118,12 @@ sharing.residents.gu.logicalPosition = { x: 101, y: 247 };
 sharing.tick(at, { autonomous: true });
 assert.equal(sharing.history[0].sharedTopic, undefined, 'an unspoken topic is not learned');
 advance(sharing, at, 240);
-assert.equal(sharing.history[0].lines.length, 60);
+assert.equal(sharing.history[0].lines.length, 4);
 assert(sharing.history[0].endedAt);
 assert.deepEqual(sharing.history[0].sharedTopic, { from: 'gu', topic: 'fishing' });
 assert.doesNotMatch(JSON.stringify(sharing.history), /周小明|阿绿/);
 const recalled = life.restoreConversations(JSON.parse(JSON.stringify(sharing.history)));
-assert.equal(recalled[0].lines.length, 60);
+assert.equal(recalled[0].lines.length, 4);
 assert.equal(memory.familyTopicRecall(memory.heardFarmTopic(recalled, 'door', '钓鱼怎么样？')), '顾提过，你们聊到过钓鱼。');
 assert.equal(memory.heardFarmTopic(recalled, 'weigang', '钓鱼怎么样？'), undefined);
 assert.equal(memory.heardFarmTopic(recalled, 'gu', '钓鱼怎么样？'), undefined);
@@ -167,7 +167,7 @@ assert(natural.history[0].endedAt);
 assert.equal(natural.drainEffects().length, 0);
 assert(natural.snapshot().every(resident => !resident.conversationPartner));
 
-for (const [random, expectedLines] of [[0, 20], [0.99, 60]]) {
+for (const [random, expectedLines] of [[0, 6], [0.99, 6]]) {
   const localNatural = new FarmResidentEngine(at, () => random);
   localNatural.configure({ ...settings, chatter: true, encounterChance: 100, longTalks: true, naturalTalks: true }, at);
   localNatural.residents.door.logicalPosition = { x: 85, y: 247 };
@@ -181,7 +181,7 @@ const commandedLongTalk = engine();
 commandedLongTalk.configure({ ...settings, longTalks: true, rounds: 30 }, at);
 assert(commandedLongTalk.command('xiaoba', { type: 'talk_to', target: 'yujie' }, at).ok);
 advance(commandedLongTalk, at, 240);
-assert.equal(commandedLongTalk.history[0].lines.length, 60, 'a running long talk outlives the task arrival deadline');
+assert.equal(commandedLongTalk.history[0].lines.length, 2, 'a reflective local opening must not be padded with unrelated topics');
 assert.equal(commandedLongTalk.residents.yujie.task, null);
 
 
@@ -206,7 +206,7 @@ const chick=engine();chick.command('chicken',{type:'go_home'},at);advance(chick,
 const busy=engine();busy.command('gu',{type:'visit',target:'pond'},at);assert.equal(busy.command('xiaoba',{type:'talk_to',target:'gu'},at).ok,false);
 assert.equal(busy.residents.xiaoba.task,null);assert.equal(busy.command('gu',{type:'talk_to',target:'gu'},at).ok,false);
 const talking=engine();assert(talking.command('xiaoba',{type:'talk_to',target:'yujie'},at).ok);assert.equal(talking.residents.yujie.task.phase,'reserved');advance(talking,at,80);
-assert(talking.history.some(c=>c.source==='player_command'&&c.participants.includes('xiaoba')&&c.participants.includes('yujie')&&c.lines.length===4));assert.equal(talking.residents.xiaoba.task,null);assert.equal(talking.residents.yujie.conversationPartner,null);
+assert(talking.history.some(c=>c.source==='player_command'&&c.participants.includes('xiaoba')&&c.participants.includes('yujie')&&c.lines.length===2));assert.equal(talking.residents.xiaoba.task,null);assert.equal(talking.residents.yujie.conversationPartner,null);
 const interrupted=engine();interrupted.configure({...settings,chatter:true,encounterChance:100,conversationCooldown:20},at);interrupted.residents.door.logicalPosition={x:85,y:247};interrupted.residents.gu.logicalPosition={x:101,y:247};interrupted.tick(at);assert(interrupted.residents.gu.conversationPartner);assert(interrupted.command('gu',{type:'rest'},at+500).ok);assert.equal(interrupted.residents.door.conversationPartner,null);
 
 // Pause freezes tasks and eliminates offline catch-up and orphan conversation locks.
