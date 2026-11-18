@@ -1,4 +1,6 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { CourseTaskForm } from "@/components/CourseTaskForm";
+import { CourseExceptionForm } from "@/components/CourseExceptionForm";
 import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -24,7 +26,7 @@ import {
   coursePalette,
   WEEKDAY_LABELS,
 } from "@/constants/palette";
-import type { Course, CourseColor, Period } from "@/types";
+import type { Course, CourseColor, Period, Schedule } from "@/types";
 
 export interface CourseEditorPanelProps {
   visible: boolean;
@@ -33,6 +35,8 @@ export interface CourseEditorPanelProps {
   totalWeeks?: number;
   /** 传入则为编辑，undefined 为新建 */
   course?: Course;
+  taskContext?: { scheduleId: string; now: Date };
+  exceptionSchedule?: Schedule;
   /** 同一门课（名称 + 教师 + 教室一致）的上课记录条数 */
   occurrenceCount?: number;
   currentWeek?: number;
@@ -93,6 +97,8 @@ export function CourseEditorPanel({
   periods,
   totalWeeks = 18,
   course,
+  taskContext,
+  exceptionSchedule,
   occurrenceCount = 1,
   currentWeek = 1,
   onClose,
@@ -105,6 +111,13 @@ export function CourseEditorPanel({
   );
 
   const [scope, setScope] = useState<"record" | "selected">("record");
+  const [addingTask, setAddingTask] = useState(false);
+  const [exceptionOpen, setExceptionOpen] = useState(false);
+  const closePanel = () => {
+    if (exceptionOpen) setExceptionOpen(false);
+    else if (addingTask) setAddingTask(false);
+    else onClose();
+  };
   const [targetWeeks, setTargetWeeks] = useState<number[]>(course?.weeks.includes(currentWeek) ? [currentWeek] : course?.weeks.slice(0, 1) ?? []);
 
   const set = <K extends keyof Omit<Course, "id">>(
@@ -158,13 +171,13 @@ export function CourseEditorPanel({
       visible={visible}
       transparent
       animationType="fade"
-      onRequestClose={onClose}
+      onRequestClose={closePanel}
     >
       {/* Modal 在 Android 上是独立 Dialog 窗口，必须自带模糊源，
           否则跨窗口引用 blurTarget 会导致原生崩溃 */}
       <GlassTargetProvider>
         <View className="flex-1 justify-end bg-black/45">
-          <Pressable className="flex-1" onPress={onClose} />
+          <Pressable className="flex-1" onPress={closePanel} />
           {/* 弹窗是独立 Dialog 窗口，不随系统 resize，
               用 KAV 把面板整体抬到键盘上方 */}
           <KeyboardAvoidingView behavior="padding">
@@ -185,6 +198,12 @@ export function CourseEditorPanel({
                   className="px-5 pt-5"
                   keyboardShouldPersistTaps="handled"
                 >
+                  {exceptionOpen && course && exceptionSchedule ? <CourseExceptionForm course={course} schedule={exceptionSchedule}
+                    currentWeek={currentWeek} onClose={() => setExceptionOpen(false)} onDone={onClose} />
+                    : addingTask && course && taskContext ? <CourseTaskForm
+                    course={{ scheduleId: taskContext.scheduleId, courseId: course.id, courseName: course.name }}
+                    now={taskContext.now} onClose={() => setAddingTask(false)} onDone={() => setAddingTask(false)}
+                  /> : <>
                   {/* 头部 */}
                   <View className="mb-4 flex-row items-center justify-between">
                     <Text className="text-[17px] font-bold text-slate-800 dark:text-white">
@@ -196,6 +215,21 @@ export function CourseEditorPanel({
                     >
                       <Ionicons name="close" size={16} color="#94A3B8" />
                     </Pressable>
+                  </View>
+
+                  <View className="mb-4 flex-row flex-wrap gap-2">
+                  {course && taskContext ? <Pressable accessibilityRole="button" onPress={() => {
+                    setAddingTask(true);
+                    scrollRef.current?.scrollTo({ y: 0, animated: false });
+                  }} className="self-start rounded-xl bg-sky-400/20 px-3 py-2">
+                    <Text className="text-xs font-semibold text-sky-700 dark:text-sky-300">添加这门课的待办</Text>
+                  </Pressable> : null}
+                  {course && exceptionSchedule ? <Pressable accessibilityRole="button" onPress={() => {
+                    setExceptionOpen(true);
+                    scrollRef.current?.scrollTo({ y: 0, animated: false });
+                  }} className="self-start rounded-xl bg-sky-400/20 px-3 py-2">
+                    <Text className="text-xs font-semibold text-sky-700 dark:text-sky-300">临时调整</Text>
+                  </Pressable> : null}
                   </View>
 
                   <Field
@@ -427,7 +461,7 @@ export function CourseEditorPanel({
                       {course ? "保存修改" : "添加课程"}
                     </Text>
                   </Pressable>
-
+                  </>}
                 </ScrollView>
               </GlassContainer>
             </Animated.View>

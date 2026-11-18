@@ -3,7 +3,7 @@ import { RESIDENTS, RESIDENT_IDS, isResidentId, type ResidentId } from './farmLi
 export type AssignmentStatus = 'needs_details' | 'walking' | 'talking' | 'answered' | 'unanswered' | 'interrupted' | 'cancelled';
 export interface FarmAssignment {
   id: string; target?: ResidentId; question?: string; status: AssignmentStatus;
-  updatedAt: number; engineId?: string; outcome?: string;
+  updatedAt: number; engineId?: string; outcome?: string; resumeFrom?: string;
 }
 export function restoreAssignment(raw: unknown): FarmAssignment | undefined {
   if (!raw || typeof raw !== 'object') return;
@@ -14,6 +14,7 @@ export function restoreAssignment(raw: unknown): FarmAssignment | undefined {
     ...(isResidentId(v.target) ? { target: v.target } : {}),
     ...(typeof v.question === 'string' && v.question.trim() ? { question: v.question.trim().slice(0, 160) } : {}),
     ...(typeof v.engineId === 'string' ? { engineId: v.engineId.slice(0, 100) } : {}),
+    ...(typeof v.resumeFrom === 'string' ? { resumeFrom: v.resumeFrom.slice(0, 100) } : {}),
     ...(typeof v.outcome === 'string' ? { outcome: v.outcome.slice(0, 240) } : {}),
   };
 }

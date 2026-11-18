@@ -1,5 +1,7 @@
-import { useStore } from "@/store/useStore";
-import { clampPeriods } from "@/utils/time";
+import { createStore } from "zustand/vanilla";
+import { create } from "zustand";
+import { createAppState, useStore } from "@/store/useStore";
+import { clampPeriods, findConflicts } from "@/utils/time";
 import type { Course, Schedule, ScheduleAction } from "@/types";
 
 /**
@@ -61,8 +63,9 @@ function resolveCourse(
 export function applyScheduleAction(
   action: ScheduleAction,
   schedule: Schedule,
+  stateStore: Pick<typeof useStore, "getState"> = useStore,
 ): string {
-  const store = useStore.getState();
+  const store = stateStore.getState();
   if (store.activeScheduleId !== schedule.id) return "课表已切换，请在当前课表重新确认操作";
   // Earlier operations in this batch may have edited or deleted a course.
   schedule = store.schedules.find((s) => s.id === schedule.id) ?? schedule;
@@ -90,7 +93,7 @@ export function applyScheduleAction(
       try {
         store.updateCourse(target.id, action.patch, action.targetWeeks);
       } catch (error) { return `修改失败：${error instanceof Error ? error.message : "课程数据无效"}`; }
-      const latest = useStore.getState().schedules.find(s => s.id === schedule.id);
+      const latest = stateStore.getState().schedules.find(s => s.id === schedule.id);
       const updated = latest?.courses.find(c => c.name === (action.patch.name ?? target.name) && c.weekday === (action.patch.weekday ?? target.weekday) && (action.targetWeeks ?? target.weeks).some(w => c.weeks.includes(w)));
       return `已更新「${target.name}」${action.targetWeeks ? `（第${action.targetWeeks.join("、")}周）` : ""}${updated ? `，周${updated.weekday} 第${updated.startPeriod}–${updated.endPeriod}节${updated.startTime ? ` ${updated.startTime}–${updated.endTime}` : ""}` : ""}`;
     }
@@ -130,4 +133,104 @@ export function applyScheduleActions(
     const current = state.schedules.find((s) => s.id === state.activeScheduleId);
     return current ? applyScheduleAction(action, current) : "当前课表不存在，请重新选择课表";
   });
+}
+
+type ScheduleSnapshot = Pick<ReturnType<typeof useStore.getState>, "schedules" | "activeScheduleId">;
+
+function describeCourse(course: Course): string {
+  const weekday = ["", "一", "二", "三", "四", "五", "六", "日"][course.weekday];
+  return `「${course.name}」周${weekday} 第${course.startPeriod}–${course.endPeriod}节` +
+    (course.startTime ? ` ${course.startTime}–${course.endTime}` : "") +
+    `，第${course.weeks.join("、")}周` +
+    (course.classroom ? `，${course.classroom}` : "") +
+    (course.teacher ? `，${course.teacher}` : "") +
+    (course.credits != null ? `，${course.credits} 学分` : "") +
+    (course.note ? `，备注 ${course.note}` : "");
+}
+
+export function previewScheduleActions(actions: ScheduleAction[], schedule: Schedule) {
+  const { schedules, activeScheduleId } = useStore.getState();
+  const before = { schedules, activeScheduleId };
+  const draft = createStore(createAppState);
+  draft.setState(before);
+  const changes = actions.map(action => {
+    const initial = draft.getState();
+    const current = initial.schedules.find(s => s.id === initial.activeScheduleId);
+    if (!current || activeScheduleId !== schedule.id) {
+      return { result: "课表已切换，请在当前课表重新确认操作", details: [] };
+    }
+    const result = applyScheduleAction(action, current, draft);
+    const latest = draft.getState().schedules.find(s => s.id === current.id);
+    const details: string[] = [];
+    if (latest && latest.courses !== current.courses) {
+      const previous = new Map(current.courses.map(course => [course.id, course]));
+      const updated = new Map(latest.courses.map(course => [course.id, course]));
+      const conflicts = findConflicts(latest.courses, undefined, latest.periods);
+      for (const course of latest.courses) {
+        const old = previous.get(course.id);
+        if (JSON.stringify(old) === JSON.stringify(course)) continue;
+        details.push(old ? `${describeCourse(old)} → ${describeCourse(course)}` : `新增 ${describeCourse(course)}`);
+        const overlap = conflicts.get(course.id);
+        if (overlap?.length) details.push(`时间冲突：${course.name} 与 ${[...new Set(overlap)].join("、")}`);
+      }
+      for (const course of current.courses) {
+        if (!updated.has(course.id)) details.push(`移除 ${describeCourse(course)}`);
+      }
+    }
+    return { result, details };
+  });
+  const after = { schedules: draft.getState().schedules, activeScheduleId: draft.getState().activeScheduleId };
+  return { before, after, changes, hasChanges: before.schedules !== after.schedules };
+}
+
+export type ScheduleActionPreview = ReturnType<typeof previewScheduleActions>;
+export interface ScheduleChange {
+  before: ScheduleSnapshot;
+  after: ScheduleSnapshot;
+}
+export const useLastScheduleChange = create<{ change: ScheduleChange | null; label: string }>(() => ({ change: null, label: "" }));
+
+function matches(snapshot: ScheduleSnapshot) {
+  const current = useStore.getState();
+  return current.schedules === snapshot.schedules && current.activeScheduleId === snapshot.activeScheduleId;
+}
+
+export function commitSchedulePreview(preview: ScheduleActionPreview): boolean {
+  return preview.hasChanges && commitScheduleChange(preview, "鲸鱼修改了课表");
+}
+
+function commitScheduleChange(change: ScheduleChange, label: string): boolean {
+  if (!matches(change.before)) return false;
+  useStore.setState(change.after);
+  useLastScheduleChange.setState({ change, label });
+  return true;
+}
+
+export function commitCourseException(plan: { base: Schedule; schedule: Schedule }, label: string): boolean {
+  const { schedules, activeScheduleId } = useStore.getState();
+  if (activeScheduleId !== plan.base.id || !schedules.includes(plan.base) || plan.schedule.id !== plan.base.id) return false;
+  return commitScheduleChange({
+    before: { schedules, activeScheduleId },
+    after: { schedules: schedules.map(schedule => schedule === plan.base ? plan.schedule : schedule), activeScheduleId },
+  }, label);
+}
+
+export function undoSchedulePreview(preview: ScheduleChange): boolean {
+  if (useLastScheduleChange.getState().change !== preview) return false;
+  const current = useStore.getState();
+  const before = new Map(preview.before.schedules.map(schedule => [schedule.id, schedule]));
+  const affected = new Map(preview.after.schedules.filter(schedule => before.get(schedule.id) !== schedule).map(schedule => [schedule.id, schedule]));
+  if ([...affected].some(([id, expected]) => current.schedules.find(schedule => schedule.id === id) !== expected)) return false;
+  const schedules = current.schedules.flatMap(schedule => {
+    if (!affected.has(schedule.id)) return [schedule];
+    const original = before.get(schedule.id);
+    return original ? [original] : [];
+  });
+  const activeScheduleId = schedules.some(schedule => schedule.id === current.activeScheduleId)
+    ? current.activeScheduleId
+    : schedules.find(schedule => schedule.id === preview.before.activeScheduleId)?.id ?? schedules[0]?.id;
+  if (!activeScheduleId) return false;
+  useStore.setState({ schedules, activeScheduleId });
+  useLastScheduleChange.setState({ change: null, label: "" });
+  return true;
 }

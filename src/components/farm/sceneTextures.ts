@@ -12,6 +12,19 @@ export const FARM_SCENES: Record<SceneVariant, ImageSourcePropType> = {
   "rainbow-morning": require("../../../assets/images/farm-scene-rainbow-morning-v6.webp"),
   "rainbow-evening": require("../../../assets/images/farm-scene-rainbow-evening-v6.webp"),
 };
+// Continue the grass and path below the south gate when the viewport is taller than the map.
+export const FARM_FOREGROUNDS: Record<SceneVariant, ImageSourcePropType> = {
+  "morning-clear": require("../../../assets/images/farm-runtime/foreground-morning-clear.webp"),
+  "morning-rain": require("../../../assets/images/farm-runtime/foreground-morning-rain.webp"),
+  "noon-clear": require("../../../assets/images/farm-runtime/foreground-noon-clear.webp"),
+  "noon-rain": require("../../../assets/images/farm-runtime/foreground-noon-rain.webp"),
+  "evening-clear": require("../../../assets/images/farm-runtime/foreground-evening-clear.webp"),
+  "evening-rain": require("../../../assets/images/farm-runtime/foreground-evening-rain.webp"),
+  "night-clear": require("../../../assets/images/farm-runtime/foreground-night-clear.webp"),
+  "night-rain": require("../../../assets/images/farm-runtime/foreground-night-rain.webp"),
+  "rainbow-morning": require("../../../assets/images/farm-runtime/foreground-rainbow-morning.webp"),
+  "rainbow-evening": require("../../../assets/images/farm-runtime/foreground-rainbow-evening.webp"),
+};
 export const MARKET_SCENES: Record<SceneVariant, ImageSourcePropType> = {
   "morning-clear": require("../../../assets/images/market-scene-morning-clear-v6.webp"),
   "morning-rain": require("../../../assets/images/market-scene-morning-rain-v6.webp"),

@@ -14,11 +14,10 @@ import {
 } from "@/services/fileImport";
 import {
   recognizeGrades,
-  recognizeGradesBatch,
   recognizePeriods,
   recognizeScheduleFromText,
-  recognizeSchedulesBatch,
 } from "@/services/ai";
+import { runImageImportTask } from "@/services/imageImportTask";
 import {
   recognizeGradesFromTextOffline,
   recognizeScheduleFromTextOffline,
@@ -154,52 +153,32 @@ export function ImportScreen() {
   const onSchedule = (from: From) =>
     startTask("schedule", from, async (source) => {
       const task = useImportTask.getState();
-      const online = await isOnline();
-      const useAI = online && !!apiKey;
-
-      let schedule: Schedule;
-      let skipped = 0;
       // 当前课表的开学日期 / 总周数：让模型把图片里的具体日期换算成周次
       const ctx = {
         startDate: activeSchedule.startDate,
         totalWeeks: activeSchedule.totalWeeks,
         today: toIsoDate(new Date()),
       };
-      if ("text" in source) {
-        if (useAI) {
-          schedule = await recognizeScheduleFromText(source.text, apiKey, ctx);
-        } else {
-          task.setPhase("离线模式：正在按规则解析文本…", 40);
-          schedule = recognizeScheduleFromTextOffline(source.text);
-        }
+      if ("images" in source) {
+        await runImageImportTask({ type: "schedule", images: source.images, apiKey, isOnline, context: ctx });
+        return;
+      }
+      const useAI = await isOnline() && !!apiKey;
+      let schedule: Schedule;
+      if (useAI) {
+        schedule = await recognizeScheduleFromText(source.text, apiKey, ctx);
       } else {
-        const result = await recognizeSchedulesBatch(
-          source.images,
-          apiKey,
-          ctx,
-          {
-            useAI,
-            onProgress: (cur, total) =>
-              task.setPhase(
-                useAI
-                  ? `AI 正在识别第 ${cur}/${total} 张课表…`
-                  : `离线模式：正在本地识别第 ${cur}/${total} 张…`,
-                Math.round(18 + ((cur - 1) / total) * 62),
-              ),
-          },
-        );
-        schedule = result.schedule;
-        skipped = result.skipped;
+        task.setPhase("离线模式：正在按规则解析文本…", 40);
+        schedule = recognizeScheduleFromTextOffline(source.text);
       }
 
       if (!schedule.courses.length) {
         task.fail("未识别到有效课程，请更换图片或补充文字说明后重试");
         return;
       }
-      const skipNote = skipped ? `（已跳过 ${skipped} 张无法识别的图片）` : "";
       task.complete(
         { type: "schedule", schedule },
-        `${useAI ? "AI 识别" : "离线识别"}完成：共 ${schedule.courses.length} 门课程${skipNote}，请确认后导入`,
+        `${useAI ? "AI 识别" : "离线识别"}完成：共 ${schedule.courses.length} 门课程，请确认后导入`,
       );
     });
 
@@ -233,67 +212,49 @@ export function ImportScreen() {
   const onGrades = (from: From) =>
     startTask("grades", from, async (source) => {
       const task = useImportTask.getState();
+      if ("images" in source) {
+        await runImageImportTask({ type: "grades", images: source.images, apiKey, isOnline, semester: activeGradeSemester, yearId: activeGradeYearId });
+        return;
+      }
       const online = await isOnline();
       const useAI = online && !!apiKey;
       let grades: GradeDraft[];
-      let skipped = 0;
 
-      if ("text" in source) {
-        const runOfflineText = (): GradeDraft[] => {
-          task.setPhase("离线模式：正在解析成绩表格…", 45);
-          return recognizeGradesFromTextOffline(
-            source.text,
+      const runOfflineText = (): GradeDraft[] => {
+        task.setPhase("离线模式：正在解析成绩表格…", 45);
+        return recognizeGradesFromTextOffline(
+          source.text,
+          activeGradeSemester,
+        );
+      };
+      if (useAI) {
+        try {
+          task.setPhase("AI 正在识别课程成绩…", 38);
+          grades = await recognizeGrades(
+            { text: source.text },
+            apiKey,
             activeGradeSemester,
           );
-        };
-        if (useAI) {
+        } catch (aiError) {
+          // 云端超时/失败时自动降级到本地，避免一直转圈
+          task.setPhase("AI 识别未完成，哔哔~~正在切换本地离线识别…", 58);
           try {
-            task.setPhase("AI 正在识别课程成绩…", 38);
-            grades = await recognizeGrades(
-              { text: source.text },
-              apiKey,
-              activeGradeSemester,
-            );
-          } catch (aiError) {
-            // 云端超时/失败时自动降级到本地，避免一直转圈
-            task.setPhase("AI 识别未完成，哔哔~~正在切换本地离线识别…", 58);
-            try {
-              grades = runOfflineText();
-            } catch {
-              throw aiError;
-            }
+            grades = runOfflineText();
+          } catch {
+            throw aiError;
           }
-        } else {
-          grades = runOfflineText();
         }
       } else {
-        const result = await recognizeGradesBatch(
-          source.images,
-          apiKey,
-          activeGradeSemester,
-          {
-            useAI,
-            onProgress: (cur, total) =>
-              task.setPhase(
-                useAI
-                  ? `AI 正在识别第 ${cur}/${total} 张成绩单…`
-                  : `离线模式：正在识别第 ${cur}/${total} 张…`,
-                Math.round(18 + ((cur - 1) / total) * 62),
-              ),
-          },
-        );
-        grades = result.grades;
-        skipped = result.skipped;
+        grades = runOfflineText();
       }
 
       if (!grades.length) {
         task.fail("未识别到有效成绩，请更换图片或补充表格后重试喔");
         return;
       }
-      const skipNote = skipped ? `（已跳过 ${skipped} 张无法识别的图片）` : "";
       task.complete(
         { type: "grades", grades, yearId: activeGradeYearId },
-        `${useAI ? "识别完成" : "离线识别完成"}：共 ${grades.length} 条成绩${skipNote}，请确认后导入`,
+        `${useAI ? "识别完成" : "离线识别完成"}：共 ${grades.length} 条成绩，请确认后导入`,
       );
     });
 

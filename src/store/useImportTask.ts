@@ -1,14 +1,23 @@
 import { create } from "zustand";
 
-import type { GradeDraft, Period, Schedule } from "@/types";
+import type { Course, GradeDraft, Period, Schedule } from "@/types";
 
 export type TaskKind = "schedule" | "periods" | "grades";
 export type TaskStatus = "idle" | "analyzing" | "done" | "error";
+export interface ImportPageRetry {
+  pages: number[];
+  run: () => Promise<void>;
+}
+export interface ImportRowSource {
+  key: string;
+  pages: number[];
+  edited?: boolean;
+}
 
 export type TaskResult =
-  | { type: "schedule"; schedule: Schedule }
+  | { type: "schedule"; schedule: Schedule; sources?: ImportRowSource[] }
   | { type: "periods"; periods: Period[]; scheduleId?: string }
-  | { type: "grades"; grades: GradeDraft[]; yearId?: string }
+  | { type: "grades"; grades: GradeDraft[]; yearId?: string; sources?: ImportRowSource[] }
   | { type: "count"; count: number };
 
 export interface ImportTaskState {
@@ -26,14 +35,17 @@ export interface ImportTaskState {
   expanded: boolean;
   result: TaskResult | null;
   message: string;
+  retry: ImportPageRetry | null;
 
   open: (kind: TaskKind, sourceLabel: string) => void;
   setPhase: (phase: string, progress: number) => void;
-  complete: (result: TaskResult, message: string) => void;
-  fail: (message: string) => void;
+  complete: (result: TaskResult, message: string, retry?: ImportPageRetry) => void;
+  fail: (message: string, retry?: ImportPageRetry) => void;
   /** 结果被确认应用后：清掉待确认结果，仅保留反馈文案 */
   ack: (message: string) => void;
   setExpanded: (expanded: boolean) => void;
+  editCourse: (expected: TaskResult, index: number, course: Course) => boolean;
+  editGrade: (expected: TaskResult, index: number, grade: GradeDraft) => boolean;
   clear: () => void;
 }
 
@@ -44,6 +56,8 @@ const KIND_LABEL: Record<TaskKind, string> = {
 };
 
 let timer: ReturnType<typeof setInterval> | null = null;
+const markEdited = (sources: ImportRowSource[] | undefined, index: number) =>
+  sources?.map((source, i) => i === index ? { ...source, edited: true } : source);
 
 function stopTimer() {
   if (timer) {
@@ -63,6 +77,7 @@ export const useImportTask = create<ImportTaskState>((set, get) => ({
   expanded: true,
   result: null,
   message: "",
+  retry: null,
 
   open: (kind, sourceLabel) => {
     stopTimer();
@@ -77,6 +92,7 @@ export const useImportTask = create<ImportTaskState>((set, get) => ({
       expanded: true,
       result: null,
       message: "",
+      retry: null,
     }));
     // 模型不回传真实进度：用渐进阶段给用户连续的进度反馈
     timer = setInterval(() => {
@@ -102,31 +118,46 @@ export const useImportTask = create<ImportTaskState>((set, get) => ({
 
   setPhase: (phase, progress) => set({ phase, progress }),
 
-  complete: (result, message) => {
+  complete: (result, message, retry) => {
     stopTimer();
     set({
       status: "done",
       result,
       message,
+      retry: retry ?? null,
       progress: 100,
       phase: "(o゜▽゜)o☆[BINGO!] 分析完成",
       expanded: true,
     });
   },
 
-  fail: (message) => {
+  fail: (message, retry) => {
     stopTimer();
     set({
       status: "error",
       message,
+      retry: retry ?? null,
       phase: "啊偶QAQ分析失败",
       expanded: true,
     });
   },
 
-  ack: (message) => set({ result: null, message }),
+  ack: (message) => set({ result: null, message, retry: null }),
 
   setExpanded: (expanded) => set({ expanded }),
+  editCourse: (expected, index, course) => {
+    const { result, status } = get();
+    if (status !== "done" || result !== expected || result.type !== "schedule" || !result.schedule.courses[index]) return false;
+    const courses = result.schedule.courses.map((row, i) => i === index ? course : row);
+    set({ result: { ...result, schedule: { ...result.schedule, courses }, sources: markEdited(result.sources, index) } });
+    return true;
+  },
+  editGrade: (expected, index, grade) => {
+    const { result, status } = get();
+    if (status !== "done" || result !== expected || result.type !== "grades" || !result.grades[index]) return false;
+    set({ result: { ...result, grades: result.grades.map((row, i) => i === index ? grade : row), sources: markEdited(result.sources, index) } });
+    return true;
+  },
 
   clear: () => {
     stopTimer();
@@ -140,6 +171,7 @@ export const useImportTask = create<ImportTaskState>((set, get) => ({
       expanded: true,
       result: null,
       message: "",
+      retry: null,
     });
   },
 }));

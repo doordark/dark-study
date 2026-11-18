@@ -1,4 +1,5 @@
 import { isWhaleSticker } from './whaleExpression';
+import { normalizeCourseTasks } from './courseTasks';
 export const BACKUP_KEYS = [
   'dark-study-storage', 'dark-study-settings', 'dark-study-whale-memory', 'dark-study-whale-persona',
   'dark-study-whale-pet', 'dark-study-widget-settings', 'dark-study-whale-voice',
@@ -9,7 +10,7 @@ export interface Backup { format: 'dark-study-backup'; version: 1; createdAt: st
 type Obj = Record<string, any>;
 const object = (value: unknown): value is Obj => !!value && typeof value === 'object' && !Array.isArray(value);
 const fields: Partial<Record<BackupKey, string[]>> = {
-  'dark-study-storage': ['schedules', 'activeScheduleId', 'grades', 'gradeYears', 'activeGradeYearId', 'gradeTypes', 'gradeRules', 'activeGradeRuleId', 'activeGradeSemester'],
+  'dark-study-storage': ['schedules', 'activeScheduleId', 'grades', 'gradeYears', 'activeGradeYearId', 'gradeTypes', 'gradeRules', 'activeGradeRuleId', 'activeGradeSemester', 'courseTasks'],
   'dark-study-settings': ['farmWebSearch', 'reminderEnabled', 'reminderMinutes', 'reminderCount', 'appearance', 'material', 'backgroundTint', 'backgroundEffect', 'whalePhrase', 'renderQuality'],
   'dark-study-whale-memory': ['active', 'messages', 'memory', 'petMessages', 'facts', 'autoMemory'],
   'dark-study-whale-persona': ['persona'], 'dark-study-whale-pet': ['care'],
@@ -39,6 +40,11 @@ function cleanModule(key: BackupKey, value: unknown): unknown {
   check((value.version ?? 0) === (key === 'dark-study-storage' ? 6 : 0), '备份中的数据版本不兼容，请使用对应版本的应用恢复');
   const state = Object.fromEntries(allowed.filter(field => Object.hasOwn(value.state, field)).map(field => [field, value.state[field]]));
   if (key === 'dark-study-storage') {
+    if ('courseTasks' in state) {
+      const tasks = normalizeCourseTasks(state.courseTasks);
+      check(Array.isArray(state.courseTasks) && tasks.length === state.courseTasks.length, '课程待办数据无效');
+      state.courseTasks = tasks;
+    }
     for (const field of ['schedules', 'grades', 'gradeYears', 'gradeTypes', 'gradeRules']) check(Array.isArray(state[field]), '课表或成绩列表无效');
     check(state.schedules.length && state.gradeYears.length && state.gradeTypes.length && state.gradeRules.length, '课表或成绩分组为空');
     for (const schedule of state.schedules) {
@@ -106,6 +112,7 @@ export function backupSummary(backup: Backup) {
   const farm = backup.data['dark-study-farm'] as Obj | undefined;
   return { modules: Object.keys(backup.data).length, schedules: main?.state.schedules.length ?? 0,
     courses: main?.state.schedules.reduce((count: number, s: Obj) => count + s.courses.length, 0) ?? 0,
+    tasks: main?.state.courseTasks?.length ?? 0,
     grades: main?.state.grades.length ?? 0,
     messages: ['messages', 'memory', 'petMessages'].reduce((count, field) => count + (whale?.state[field]?.length ?? 0), 0),
     farm: !!farm, coins: farm?.coins ?? 0 };
@@ -122,10 +129,14 @@ export function buildRestorePlan(backup: Backup, current: readonly (readonly [st
     const existingRaw = disk.get(key);
     const existing = existingRaw ? key === 'dark-study-whale-voice' ? existingRaw : JSON.parse(existingRaw) : undefined;
     if (key === 'dark-study-settings') incoming = { ...incoming, state: { ...incoming.state, apiKey: existing?.state?.apiKey ?? '', backgroundImage: existing?.state?.backgroundImage ?? null } };
+    if (key === 'dark-study-storage' && !('courseTasks' in incoming.state) && Array.isArray(existing?.state?.courseTasks)) {
+      incoming.state.courseTasks = normalizeCourseTasks(existing.state.courseTasks);
+    }
     if (mode === 'merge' && existing !== undefined) {
       if (key === 'dark-study-storage') {
         incoming = { ...incoming, state: { ...incoming.state, ...existing.state } };
         for (const field of ['schedules', 'grades', 'gradeYears', 'gradeTypes', 'gradeRules']) incoming.state[field] = union(existing.state[field], (raw as Obj).state[field]);
+        incoming.state.courseTasks = union(normalizeCourseTasks(existing.state.courseTasks), normalizeCourseTasks((raw as Obj).state.courseTasks), 3000);
       } else if (key === 'dark-study-whale-memory') {
         incoming = { ...incoming, state: { ...incoming.state, ...existing.state } };
         for (const field of ['messages', 'memory', 'petMessages', 'facts']) incoming.state[field] = union(existing.state[field] ?? [], (raw as Obj).state[field] ?? [], field === 'facts' ? 60 : 200);

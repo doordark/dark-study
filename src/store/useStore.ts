@@ -1,5 +1,6 @@
-import { create } from "zustand";
+import { create, type StateCreator } from "zustand";
 import { persist } from "zustand/middleware";
+import { normalizeCourseTasks, normalizeTaskDraft, type CourseTask, type CourseTaskDraft } from "@/utils/courseTasks";
 
 import { DEFAULT_GRADE_RULES, DEFAULT_GRADE_TYPES, DEFAULT_GRADE_YEARS, SAMPLE_SCHEDULE } from "@/constants/sample";
 import type {
@@ -155,6 +156,10 @@ export type ScheduleMetaPatch = Partial<
 interface AppState {
   /** 全部课表（如 "大二下"、"大三上"），可自由命名、切换 */
   schedules: Schedule[];
+  courseTasks: CourseTask[];
+  saveCourseTask: (draft: CourseTaskDraft, id?: string) => void;
+  toggleCourseTask: (id: string) => void;
+  removeCourseTask: (id: string) => void;
   /** 当前选中的课表 id */
   activeScheduleId: string;
   grades: GradeRecord[];
@@ -230,10 +235,25 @@ interface AppState {
   resetToSample: () => void;
 }
 
-export const useStore = create<AppState>()(
-  persist(
-    (set, get) => ({
+export const createAppState: StateCreator<AppState> = (set, get) => ({
       schedules: [SAMPLE_SCHEDULE],
+      courseTasks: [],
+      saveCourseTask: (draft, id) => {
+        const task = normalizeTaskDraft(draft);
+        if (!task) throw new Error("待办信息不完整，请核对标题和截止时间。");
+        const { courseTasks } = get();
+        const current = id ? courseTasks.find(row => row.id === id) : undefined;
+        if (id && !current) throw new Error("这条待办已删除，请重新打开列表。");
+        if (!current && courseTasks.length >= 3000) throw new Error("待办已满，请先整理已完成事项。");
+        set({ courseTasks: current
+          ? courseTasks.map(row => row.id === id ? { ...task, id: row.id, completedAt: row.completedAt } : row)
+          : [...courseTasks, { ...task, id: uid() }] });
+      },
+      toggleCourseTask: (id) => set(state => ({
+        courseTasks: state.courseTasks.map(row => row.id === id
+          ? { ...row, completedAt: row.completedAt === undefined ? Date.now() : undefined } : row),
+      })),
+      removeCourseTask: (id) => set(state => ({ courseTasks: state.courseTasks.filter(row => row.id !== id) })),
       activeScheduleId: SAMPLE_SCHEDULE.id,
       grades: [],
       gradeYears: DEFAULT_GRADE_YEARS.map((y) => ({ ...y })),
@@ -582,6 +602,7 @@ export const useStore = create<AppState>()(
       resetToSample: () =>
         set({
           schedules: [SAMPLE_SCHEDULE],
+          courseTasks: [],
           activeScheduleId: SAMPLE_SCHEDULE.id,
           grades: [],
           gradeYears: DEFAULT_GRADE_YEARS.map((y) => ({ ...y })),
@@ -591,11 +612,19 @@ export const useStore = create<AppState>()(
           activeGradeRuleId: DEFAULT_GRADE_RULES[0].id,
           activeGradeSemester: resolveSemester().kind,
         }),
-    }),
+    });
+
+export const useStore = create<AppState>()(
+  persist(
+    createAppState,
     {
       name: "dark-study-storage",
       version: 6,
       storage: coordinatedJSONStorage("courseflow-storage"),
+      merge: (persisted, current) => {
+        const saved = persisted as Partial<AppState> | undefined;
+        return { ...current, ...saved, courseTasks: normalizeCourseTasks(saved?.courseTasks) };
+      },
       migrate: (persisted, version) => {
         const s = (persisted ?? {}) as Record<string, any>;
         let legacy = s.schedule as Schedule | undefined;

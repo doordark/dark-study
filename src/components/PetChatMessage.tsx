@@ -60,7 +60,7 @@ export const PetChatMessage = memo(function PetChatMessage({ message: m, isDark,
             }}
           >
             <Text style={{ fontSize: 10, color: "#062B23" }}>
-              确认修改课表 · {m.actions.length} 项
+              预览课表变更 · {m.actions.length} 项
             </Text>
           </Pressable>
         ) : null}

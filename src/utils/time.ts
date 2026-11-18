@@ -184,9 +184,10 @@ export function getDateInfo(
   startDate: string,
   now: Date = new Date(),
 ): DateInfo {
-  const start = new Date(`${startDate}T00:00:00`);
+  const start = mondayOf(parseIsoDate(startDate));
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const diffDays = Math.floor((today.getTime() - start.getTime()) / 86400000);
+  const calendarDay = (date: Date) => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = (calendarDay(today) - calendarDay(start)) / 86400000;
   return {
     weekIndex: Math.floor(diffDays / 7) + 1,
     weekday: today.getDay() === 0 ? 7 : today.getDay(),

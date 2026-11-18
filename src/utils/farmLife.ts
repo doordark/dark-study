@@ -88,6 +88,7 @@ export interface LifeSettings {
   aiRatio: number;
   aiMinutes: number;
   dailyLimit: number;
+  commandReserve: number;
   nightActivity: number;
 }
 export const MODE_NAMES = {
@@ -114,6 +115,7 @@ export const PRESETS: Record<Exclude<LifeMode, 'custom'>, LifeSettings> = {
     aiRatio: 0,
     aiMinutes: 30,
     dailyLimit: 1,
+    commandReserve: 1,
     nightActivity: 10
   },
   normal: {
@@ -132,6 +134,7 @@ export const PRESETS: Record<Exclude<LifeMode, 'custom'>, LifeSettings> = {
     aiRatio: 25,
     aiMinutes: 10,
     dailyLimit: 3,
+    commandReserve: 1,
     nightActivity: 30
   },
   lively: {
@@ -150,6 +153,7 @@ export const PRESETS: Record<Exclude<LifeMode, 'custom'>, LifeSettings> = {
     aiRatio: 15,
     aiMinutes: 5,
     dailyLimit: 5,
+    commandReserve: 1,
     nightActivity: 50
   },
   aiTown: {
@@ -168,6 +172,7 @@ export const PRESETS: Record<Exclude<LifeMode, 'custom'>, LifeSettings> = {
     aiRatio: 85,
     aiMinutes: 3,
     dailyLimit: 10,
+    commandReserve: 1,
     nightActivity: 45
   }
 };
@@ -183,6 +188,7 @@ export const SETTING_RANGES = {
   aiRatio: [0, 100],
   aiMinutes: [1, 60],
   dailyLimit: [0, 50],
+  commandReserve: [0, 10],
   nightActivity: [0, 100]
 } as const;
 export type NumericLifeSetting = keyof typeof SETTING_RANGES;
@@ -212,34 +218,50 @@ export const lifeDate = (at: number) => {
 export interface LifeUsage {
   date: string;
   count: number;
+  commandCount?: number;
   lastAt: number;
+  lastAutoAt?: number;
 }
 export function normalizeLifeUsage(raw: unknown, at: number): LifeUsage {
   const v = object(raw);
   return {
     date: lifeDate(at),
     count: v.date === lifeDate(at) ? number(v.count, 0, 0, 10000) : 0,
-    lastAt: number(v.lastAt, 0, 0, Number.MAX_SAFE_INTEGER)
+    ...(v.date === lifeDate(at) && typeof v.commandCount === 'number'
+      ? { commandCount: number(v.commandCount, 0, 0, number(v.count, 0, 0, 10000)) } : {}),
+    lastAt: number(v.lastAt, 0, 0, Number.MAX_SAFE_INTEGER),
+    lastAutoAt: number(v.lastAutoAt, number(v.lastAt, 0, 0, Number.MAX_SAFE_INTEGER), 0, Number.MAX_SAFE_INTEGER)
   };
 }
-export function reserveLifeRequest(raw: LifeUsage, settings: LifeSettings, at: number, playerCommand = false): LifeUsage | null {
+export function reserveLifeRequest(raw: LifeUsage, settings: LifeSettings, at: number, priority = false, playerCommand = priority): LifeUsage | null {
   const usage = normalizeLifeUsage(raw, at);
-  if (lifeRequestBlockReason(usage, settings, at, playerCommand)) return null;
+  if (lifeRequestBlockReason(usage, settings, at, priority, playerCommand)) return null;
   return {
     ...usage,
     count: usage.count + 1,
+    ...(playerCommand ? { commandCount: (usage.commandCount ?? 0) + 1 } : {}),
+    ...(!priority ? { lastAutoAt: at } : {}),
     lastAt: at
   };
 }
-export function lifeRequestBlockReason(raw: LifeUsage, settings: LifeSettings, at: number, priority = false): string {
+export const AUTOMATIC_LIFE_INTERVAL_REASON = '自动闲聊 AI 间隔尚未到';
+
+export function lifeRequestBlockReason(raw: LifeUsage, settings: LifeSettings, at: number, priority = false, playerCommand = priority): string {
   const usage = normalizeLifeUsage(raw, at);
   if (!settings.online) return '居民联网对话已关闭';
   if (usage.count >= settings.dailyLimit) return '今日 AI 请求额度已用完';
+  const reserved = Math.max(0, Math.min(settings.dailyLimit, settings.commandReserve) - (usage.commandCount ?? 0));
+  if (!playerCommand && settings.dailyLimit - usage.count <= reserved) return '剩余额度已预留给主动委托';
   if (usage.lastAt > at) return '设备时间早于上次请求时间';
   if (!priority && !settings.chatter) return '自主聊天已关闭';
   if (!priority && settings.aiRatio <= 0) return '自动闲聊联网比例为 0%';
-  if (!priority && usage.lastAt > 0 && at - usage.lastAt < settings.aiMinutes * 60000) return '自动闲聊 AI 间隔尚未到';
+  if (!priority && getNextAutomaticLifeRequest(usage, settings) > at) return AUTOMATIC_LIFE_INTERVAL_REASON;
   return '';
+}
+
+export function getNextAutomaticLifeRequest(usage: LifeUsage, settings: LifeSettings): number {
+  const last = usage.lastAutoAt ?? usage.lastAt;
+  return last > 0 ? last + settings.aiMinutes * 60000 : 0;
 }
 export interface ResidentLine {
   speaker: ResidentId;
@@ -290,12 +312,22 @@ export interface ResidentConversation {
   sharedTopic?: SharedFarmTopic;
   discussion?: FarmDiscussion;
   requestOutcome?: string;
+  requestStatus?: 'answered' | 'unanswered' | 'interrupted';
+  resumedFrom?: string;
   taskId?: string;
   activity?: 'project' | 'rest';
   online: boolean;
   aiPending?: boolean;
   localReason?: string;
   lines: ResidentLine[];
+}
+
+export function unreadRequestReports(records: readonly ResidentConversation[], readIds: readonly string[], previouslySeenAt: number): ResidentConversation[] {
+  const read = new Set(readIds);
+  return records.filter(record => record.discussion?.kind === 'request' &&
+    record.endedAt !== null && record.endedAt > previouslySeenAt &&
+    !!record.requestOutcome && record.requestStatus !== 'interrupted' &&
+    !/中断|没完成/.test(record.requestOutcome) && !read.has(record.id));
 }
 export function readLifeBatch(raw: string, pair: readonly ResidentId[], rounds: number, natural: boolean, flexible = false, maxLength = 240, minimumRounds = rounds) {
   try {
@@ -305,7 +337,7 @@ export function readLifeBatch(raw: string, pair: readonly ResidentId[], rounds: 
     const count = (done || minimumRounds < rounds) && Array.isArray(value.lines) ? value.lines.length / pair.length : rounds;
     if (!Number.isInteger(count) || count < (done ? Math.min(rounds, 2) : minimumRounds) || count > rounds) return null;
     const lines = readLifeReply(raw, pair, count, flexible, maxLength);
-    return lines ? { lines, done } : null;
+    return lines ? { lines, done, report: value.report } : null;
   } catch {
     return null;
   }
@@ -354,8 +386,14 @@ export function restoreConversations(raw: unknown): ResidentConversation[] {
         ...(typeof rawDiscussion.question === 'string' && v.source === 'player_command' ? { question: rawDiscussion.question.slice(0, 160) } : {}),
         ...(isResidentId(rawDiscussion.relayedBy) ? { relayedBy: rawDiscussion.relayedBy } : {}),
       } : undefined;
-      if (participants.length && participants.length <= 3 && lines.length) result.push({
+      const restorableRequest = kind === 'request' && participants.length === 2 && !!discussion?.question;
+      const interrupted = restorableRequest && v.endedAt === null;
+      if (participants.length && participants.length <= 3 && (lines.length || restorableRequest)) result.push({
         ...(kind === 'request' && typeof v.requestOutcome === 'string' ? { requestOutcome: v.requestOutcome.slice(0, 240) } : {}),
+        ...(kind === 'request' && (v.requestStatus === 'answered' || v.requestStatus === 'unanswered' || v.requestStatus === 'interrupted')
+          ? { requestStatus: v.requestStatus } : {}),
+        ...(typeof v.resumedFrom === 'string' && restorableRequest ? { resumedFrom: v.resumedFrom.slice(0, 100) } : {}),
+        ...(interrupted ? { requestStatus: 'interrupted' as const, requestOutcome: '这次委托还没结束，可以从上次问到的地方继续。' } : {}),
         ...(typeof v.taskId === 'string' ? { taskId: v.taskId.slice(0, 100) } : {}),
         ...(discussion ? { discussion } : {}),
         ...(v.source === 'scheduled/local' && (v.activity === 'project' || v.activity === 'rest') ? { activity: v.activity } : {}),
@@ -363,8 +401,8 @@ export function restoreConversations(raw: unknown): ResidentConversation[] {
         ...(typeof v.localReason === 'string' ? { localReason: v.localReason.slice(0, 160) } : {}),
         id: v.id.slice(0, 100),
         participants,
-        startedAt: number(v.startedAt, lines[0].at, 0, Number.MAX_SAFE_INTEGER),
-        endedAt: number(v.endedAt, lines[lines.length - 1].at, 0, Number.MAX_SAFE_INTEGER),
+        startedAt: number(v.startedAt, lines[0]?.at ?? 0, 0, Number.MAX_SAFE_INTEGER),
+        endedAt: number(v.endedAt, lines.at(-1)?.at ?? number(v.startedAt, 0, 0, Number.MAX_SAFE_INTEGER), 0, Number.MAX_SAFE_INTEGER),
         source: v.source === 'encounter' || v.source === 'player_command' ? v.source : 'scheduled/local',
         online: v.online === true,
         lines

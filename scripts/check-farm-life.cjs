@@ -23,8 +23,9 @@ assert.equal(p.reserveLifeRequest(usage, { ...settings, online: false }, at + 10
 usage = p.normalizeLifeUsage(JSON.parse(JSON.stringify(usage)), at + 600000);
 usage = p.reserveLifeRequest(usage, settings, at + 600000);
 assert.equal(usage.count, 2, "reload preserves the daily count and cooldown");
-usage = p.reserveLifeRequest(usage, settings, at + 1200000);
-assert.equal(usage.count, 3);
+assert.equal(p.reserveLifeRequest(usage, settings, at + 1200000), null, "automatic requests stop at the command reserve");
+usage = p.reserveLifeRequest(usage, settings, at + 1200000, true);
+assert.equal(usage.count, 3, "player commands can use the reserved quota");
 assert.equal(p.reserveLifeRequest(usage, settings, at + 1800000), null, "daily limit stops requests");
 assert.equal(p.reserveLifeRequest(usage, settings, nextDay).count, 1, "new real day resets count");
 assert.equal(p.reserveLifeRequest({ ...empty, lastAt: at + 600000 }, settings, at), null, "clock rollback does not bypass cooldown");

@@ -97,9 +97,12 @@ for (const actor of life.RESIDENT_IDS) for (const target of life.RESIDENT_IDS) {
   assert(!record.lines.some(line => /游戏|钓鱼|音乐|聊了好久/.test(line.text)));
   assert(record.requestOutcome.includes(life.RESIDENTS[target].name));
   assert(record.requestOutcome.includes('还没得到'));
+  assert(!record.requestOutcome.includes('对方说：「'));
+  assert.equal(record.requestStatus, 'unanswered');
   assert.equal(life.restoreConversations([record])[0].requestOutcome, record.requestOutcome);
+  assert.equal(life.restoreConversations([record])[0].requestStatus, 'unanswered');
 }
-for (const mode of ['unrelated', 'timeout', 'accepted']) {
+for (const mode of ['unrelated', 'timeout', 'accepted', 'reported', 'copied']) {
   const e = setup('xiaoba', 'weigang', true);
   let supplied = false;
   for (let t = 0; t < 150000; t += 500) {
@@ -107,19 +110,36 @@ for (const mode of ['unrelated', 'timeout', 'accepted']) {
     for (const event of e.drainEffects()) if (event.type === 'conversation') {
       supplied = true; assert.equal(event.discussion.question, instruction);
       assert.equal(event.natural, false);
-      if (mode !== 'timeout') e.supplyConversation(event.id, Array.from({ length: event.rounds * 2 }, (_, i) => ({ speaker: event.pair[i % 2], text: mode === 'unrelated' ? '今天一起聊游戏地图吧。' : i % 2 ? '骂人的说法还要核实原话。' : '客人说被骂，我先来核实。' })), true, at + t);
+      const lines = Array.from({ length: event.rounds * 2 }, (_, i) => ({
+        speaker: event.pair[i % 2],
+        text: mode === 'unrelated' ? '今天一起聊游戏地图吧。' : i % 2 ? '骂人的说法还要核实原话。' : '客人说被骂，我先来核实。',
+      }));
+      const report = mode === 'reported' || mode === 'copied' ? {
+        summary: mode === 'copied' ? lines[1].text : '唯刚还不能判断当时的话有没有冒犯你，他想先对清当时怎么说的。',
+        impression: '我想先记下你印象最深的一句，就有地方接着问了。',
+        needsDetails: true,
+      } : undefined;
+      if (mode !== 'timeout') {
+        const batch = life.readLifeBatch(JSON.stringify({ lines, report }), event.pair, event.rounds, event.natural);
+        assert(batch);
+        e.supplyConversation(event.id, batch.lines, true, at + t, batch.done, undefined, undefined, batch.report);
+      }
     }
   }
   assert(supplied);
   const record = e.history[0]; assert(record.endedAt); assert(record.requestOutcome);
   assert(!record.lines.some(line => line.text.includes('游戏地图')));
-  assert.equal(record.online, mode === 'accepted');
+  assert.equal(record.online, ['accepted', 'reported', 'copied'].includes(mode));
   assert(!record.lines.some(line => /不方便聊天|先不催你/.test(line.text)));
+  assert.equal(record.requestStatus, 'unanswered');
+  assert.equal(record.requestOutcome.includes('我想先记下你印象最深的一句'), mode === 'reported');
+  assert(!record.requestOutcome.includes('骂人的说法还要核实原话'));
 }
 const cancelled = setup('xiaoba', 'weigang');
 for (let t = 0; t < 5000; t += 500) cancelled.tick(at + t, { autonomous: false });
 assert(cancelled.command('xiaoba', { type: 'rest' }, at + 5000).ok);
 assert.match(cancelled.history[0].requestOutcome, /还没完成/);
+assert.equal(cancelled.history[0].requestStatus, 'interrupted');
 for (const actor of ['xiaoba', 'weigang']) {
   const enRoute = setup('xiaoba', 'weigang');
   assert(enRoute.command(actor, { type: 'rest' }, at + 1).ok);
@@ -135,4 +155,45 @@ assert.equal(ownedCancellation.cancelCommand('xiaoba', ownedId, at + 2), true);
 assert.equal(ownedCancellation.residents.xiaoba.task, null);
 assert.equal(ownedCancellation.residents.weigang.task, null);
 assert.equal(ownedCancellation.history[0].taskId, ownedId);
+const partial = {
+  id: 'checkpoint', taskId: 'prior-task', participants: ['xiaoba', 'weigang'],
+  discussion: { kind: 'request', question: instruction }, online: true,
+  source: 'player_command', startedAt: at - 9000, endedAt: null,
+  lines: [
+    { speaker: 'xiaoba', text: '客人说被骂了，你还记得当时的情况吗？', at: at - 8000 },
+    { speaker: 'weigang', text: '关于骂人的说法，我想先核实原话。', at: at - 6000 },
+    { speaker: 'xiaoba', text: '你还希望客人补充些什么？', at: at - 4000 },
+  ],
+};
+assert.equal(life.restoreConversations([{ ...partial, lines: [] }])[0].requestStatus, 'interrupted');
+const firstReport = { ...partial, endedAt: at, requestStatus: 'answered', requestOutcome: '已经问清。' };
+const secondReport = { ...firstReport, id: 'second-report', endedAt: at + 10 };
+assert.deepEqual(life.unreadRequestReports([firstReport, secondReport, partial], [secondReport.id], 0).map(row => row.id), [firstReport.id]);
+assert.deepEqual(life.unreadRequestReports([firstReport, secondReport], [], at).map(row => row.id), [secondReport.id]);
+for (const mode of ['offline', 'online', 'repeat']) {
+  const [checkpoint] = life.restoreConversations([partial]);
+  assert.equal(checkpoint.requestStatus, 'interrupted');
+  const engine = new FarmResidentEngine(at, () => 0);
+  engine.restoreHistory([checkpoint]);
+  engine.configure({ ...life.DEFAULT_LIFE, roaming: false, chatter: false, online: mode !== 'offline' }, at);
+  engine.residents.xiaoba.logicalPosition = { x: 85, y: 247 };
+  engine.residents.weigang.logicalPosition = { x: 101, y: 247 };
+  const action = { type: 'talk_to', target: 'weigang', purpose: instruction };
+  assert(engine.command('xiaoba', action, at, checkpoint).ok);
+  for (let time = at; time < at + 150000; time += 500) {
+    engine.tick(time, { autonomous: false });
+    for (const event of engine.drainEffects()) if (event.type === 'conversation') {
+      assert.deepEqual(event.pair, ['weigang', 'xiaoba']);
+      engine.supplyConversation(event.id, [
+        { speaker: 'weigang', text: mode === 'repeat' ? partial.lines[1].text : '还想知道那句话之前在聊什么。' },
+        { speaker: 'xiaoba', text: '好，我回去问问前后是怎么说的。' },
+      ], true, time);
+    }
+  }
+  const continued = engine.history.find(record => record.resumedFrom === checkpoint.id);
+  assert(continued?.requestOutcome);
+  assert.deepEqual(continued.lines.slice(0, 3), partial.lines);
+  assert.equal(continued.lines.length, mode === 'online' ? 5 : 3);
+  assert(!engine.command('xiaoba', action, at + 150001, checkpoint).ok);
+}
 console.log('Farm errands passed: aliases, explicit consent, pronoun context, all 30 actor pairs, purpose retention, truthful reports, interruption, online/offline fallback and rejected topic drift.');

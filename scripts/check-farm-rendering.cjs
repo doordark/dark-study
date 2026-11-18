@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const ts = require('typescript');
 let cursor = 0, dirty = false, writes = 0, sequence = 0;
+let modelReply = null, transmissions = 0;
 const slots = [], pending = [], intervals = new Map(), timers = new Map(), modules = new Map();
 const equal = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
 const slot = create => { const i = cursor++; return slots[i] ?? (slots[i] = create()); };
@@ -28,7 +29,16 @@ function load(file) {
     if (name === 'react-native') return { AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) } };
     if (name === 'react-native-reanimated') return { useReducedMotion: () => false };
     if (name === '@react-native-async-storage/async-storage') return { __esModule: true, default: storage };
-    if (name === '@/services/farmChat') return { farmChat: () => { throw new Error('unexpected HTTP'); }, FarmChatError: class extends Error {} };
+    if (name === '@/services/farmChat') return {
+      async farmChat(_messages, key, options) {
+        assert.equal(key, 'synthetic-key');
+        assert(modelReply);
+        await options.beforeStart();
+        transmissions += 1;
+        return JSON.stringify({ lines: modelReply });
+      },
+      FarmChatError: class extends Error {},
+    };
     if (name.startsWith('@/')) return load('src/' + name.slice(2) + '.ts');
     if (name.startsWith('.')) return load(path.relative(path.join(__dirname, '..'), path.resolve(path.dirname(file), name + '.ts')));
     return require(name);
@@ -70,9 +80,53 @@ async function main() {
   unsubscribe();
   [...intervals.values()].forEach(fn => fn());
   assert.equal(notifications, 10, 'unmounted resident layers unsubscribe');
+
+  // Exercise the actual hook's request admission, quota reservation and parser.
+  const simulation = slots[0].value;
+  simulation.residents.door.logicalPosition = { x: 85, y: 247 };
+  simulation.residents.gu.logicalPosition = { x: 101, y: 247 };
+  simulation.residents.xiaoba.logicalPosition = { x: 50, y: 150 };
+  simulation.residents.yujie.logicalPosition = { x: 170, y: 125 };
+  simulation.residents.weigang.logicalPosition = { x: 170, y: 215 };
+  simulation.residents.chicken.logicalPosition = { x: 45, y: 265 };
+  simulation.residents.gu.task = null;
+  simulation.residents.gu.motion = null;
+  simulation.residents.gu.lastInteractionAt = 0;
+  options.apiKey = 'synthetic-key';
+  controller.updateSettings({ online: true, chatter: true, roaming: false, aiRatio: 100,
+    encounterChance: 100, conversationCooldown: 20, aiMinutes: 1, rounds: 2,
+    dailyLimit: 5, commandReserve: 1 });
+  simulation.random = () => 0;
+  modelReply = [
+    { speaker: 'door', text: '土还是湿的。' },
+    { speaker: 'gu', text: '那我等到下午再浇。' },
+  ];
+  render();
+  const runTick = async (delta) => {
+    clock += delta;
+    [...intervals.values()].forEach(fn => fn());
+    for (let index = 0; index < 20; index++) { await Promise.resolve(); if (dirty) render(); }
+  };
+  await runTick(2000);
+  assert.equal(transmissions, 1);
+  for (let i = 0; i < 76; i++) await runTick(500);
+  simulation.residents.door.logicalPosition = { x: 85, y: 247 };
+  simulation.residents.gu.logicalPosition = { x: 101, y: 247 };
+  await runTick(2000);
+  assert.equal(controller.history.length, 1, 'encounters in the interval do not create local duplicates');
+  assert.equal(controller.history[0].online, true);
+  assert.equal(controller.history[0].lines.length, 2);
+  modelReply = [
+    { speaker: 'door', text: '现在天凉一点了。' },
+    { speaker: 'gu', text: '那我去看看水壶。' },
+  ];
+  simulation.residents.door.logicalPosition = { x: 85, y: 247 };
+  simulation.residents.gu.logicalPosition = { x: 101, y: 247 };
+  await runTick(22000);
+  assert.equal(transmissions, 2, 'the actual hook requests again when the interval ends');
   slots.forEach(s => s.cleanup?.());
   assert.equal(intervals.size, 0, 'unmount stops the simulation scheduler');
-  console.log('PASS: actual resident hook isolates simulation updates from parent state, notifies subscribers, and cleans up timers');
+  console.log('PASS: resident hook isolates movement updates, and 100% mode respects the interval and accepts complete short AI replies');
   } finally { Date.now = realNow; }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

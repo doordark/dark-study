@@ -28,6 +28,7 @@ import { AfterHours, type AfterHoursKind } from "@/components/AfterHours";
 import { Backdrop } from "@/components/Backdrop";
 import { CourseCard, EmptySlotCard } from "@/components/CourseCard";
 import { CourseEditorPanel } from "@/components/CourseEditorPanel";
+import { TodayAgenda } from "@/components/TodayAgenda";
 import {
   GlassContainer,
   GlassTargetProvider,
@@ -39,6 +40,7 @@ import { GravityBadge, GravityCard } from "@/components/ZeroG";
 import { WEEKDAY_LABELS } from "@/constants/palette";
 import { useForegroundClock } from "@/hooks/useForegroundClock";
 import { useActiveSchedule, useStore } from "@/store/useStore";
+import { undoSchedulePreview, useLastScheduleChange, type ScheduleChange } from "@/services/assistantSchedule";
 import { useWhaleMemory } from "@/store/useWhaleMemory";
 import { useWhalePet } from "@/store/useWhalePet";
 import type { Course } from "@/types";
@@ -79,6 +81,10 @@ export function CourseScheduleScreen({
   style,
 }: CourseScheduleScreenProps) {
   const schedule = useActiveSchedule();
+  const lastChange = useLastScheduleChange(s => s.change);
+  const lastChangeLabel = useLastScheduleChange(s => s.label);
+  const [undoChoice, setUndoChoice] = useState<ScheduleChange | null>(null);
+  const [undoFailed, setUndoFailed] = useState<ScheduleChange | null>(null);
   const schedules = useStore((s) => s.schedules);
   const activeScheduleId = useStore((s) => s.activeScheduleId);
   const setActiveSchedule = useStore((s) => s.setActiveSchedule);
@@ -319,6 +325,21 @@ export function CourseScheduleScreen({
       <Backdrop>
         {/* ---------- 顶部：日期 + 周次 + 视图切换 ---------- */}
         <View className="px-5 pb-0.5 pt-1">
+          {lastChange ? <View className="mb-2 rounded-xl bg-sky-500/10 px-3 py-1.5">
+            <View className="flex-row items-center gap-2">
+              <Text className="flex-1 text-xs text-slate-700 dark:text-slate-200" numberOfLines={2}>{lastChangeLabel}</Text>
+              {undoChoice === lastChange ? <>
+                <Pressable accessibilityRole="button" onPress={() => setUndoChoice(null)} className="px-2 py-2"><Text className="text-xs text-slate-600 dark:text-slate-300">取消</Text></Pressable>
+                <Pressable accessibilityRole="button" onPress={() => {
+                  setUndoChoice(null);
+                  if (!undoSchedulePreview(lastChange)) setUndoFailed(lastChange);
+                }} className="px-2 py-2"><Text className="text-xs font-semibold text-sky-700 dark:text-sky-300">确认撤销</Text></Pressable>
+              </> : undoFailed !== lastChange ? <Pressable accessibilityRole="button" onPress={() => setUndoChoice(lastChange)} className="px-2 py-2">
+                <Text className="text-xs font-semibold text-sky-700 dark:text-sky-300">撤销上次变更</Text>
+              </Pressable> : null}
+            </View>
+            {undoFailed === lastChange ? <Text accessibilityLiveRegion="polite" className="pb-1 text-xs text-amber-700 dark:text-amber-300">相关课表已有后续编辑，已保留当前内容。</Text> : null}
+          </View> : null}
           <Animated.View entering={FadeInDown.springify()}>
             <View className="flex-row items-center justify-between">
               <View className="flex-1">
@@ -412,6 +433,7 @@ export function CourseScheduleScreen({
         </View>
 
         {/* ---------- 周次横向选择 ---------- */}
+        <TodayAgenda schedule={schedule} now={now} />
         <Animated.View
           entering={FadeInDown.delay(80).springify()}
           className="pt-1.5"
@@ -716,6 +738,8 @@ export function CourseScheduleScreen({
         currentWeek={activeWeek}
         totalWeeks={totalWeeks}
         course={editing}
+        taskContext={{ scheduleId: schedule.id, now }}
+        exceptionSchedule={schedule}
         occurrenceCount={
           editing
             ? schedule.courses.filter(

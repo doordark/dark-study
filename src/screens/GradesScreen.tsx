@@ -7,6 +7,7 @@ import Animated, { FadeInDown } from "react-native-reanimated";
 
 import { Backdrop } from "@/components/Backdrop";
 import { GlassContainer } from "@/components/GlassContainer";
+import { GradeProjection } from "@/components/GradeProjection";
 import {
   GradeEditorPanel,
   GradeRuleEditor,
@@ -17,7 +18,8 @@ import {
   pickImageFromCamera,
   pickTextDocument,
 } from "@/services/fileImport";
-import { recognizeGrades, recognizeGradesBatch } from "@/services/ai";
+import { recognizeGrades } from "@/services/ai";
+import { runImageImportTask } from "@/services/imageImportTask";
 import { recognizeGradesFromTextOffline } from "@/services/offlineImport";
 import { useImportTask } from "@/store/useImportTask";
 import { useSettings } from "@/store/useSettings";
@@ -357,67 +359,49 @@ export function GradesScreen() {
       from === "text" ? "文档" : count > 1 ? `${count} 张照片` : "照片",
     );
     try {
+      if ("images" in source) {
+        await runImageImportTask({ type: "grades", images: source.images, apiKey, isOnline, semester: defaultSemester, yearId: targetYearId, yearName: targetYearName });
+        return;
+      }
       const online = await isOnline();
       const useAI = online && !!apiKey;
       let recognized: GradeDraft[];
-      let skipped = 0;
 
-      if ("text" in source) {
-        const runOfflineText = (): GradeDraft[] => {
-          task.setPhase("离线模式：正在解析成绩表格…", 45);
-          return recognizeGradesFromTextOffline(
-            source.text,
+      const runOfflineText = (): GradeDraft[] => {
+        task.setPhase("离线模式：正在解析成绩表格…", 45);
+        return recognizeGradesFromTextOffline(
+          source.text,
+          defaultSemester,
+        );
+      };
+      if (useAI) {
+        try {
+          task.setPhase("AI 正在识别课程成绩…", 38);
+          recognized = await recognizeGrades(
+            { text: source.text },
+            apiKey,
             defaultSemester,
           );
-        };
-        if (useAI) {
+        } catch (aiError) {
+          // 云端超时/失败时自动降级到本地，避免一直转圈
+          task.setPhase("AI 识别未完成，正在切换本地离线识别…", 58);
           try {
-            task.setPhase("AI 正在识别课程成绩…", 38);
-            recognized = await recognizeGrades(
-              { text: source.text },
-              apiKey,
-              defaultSemester,
-            );
-          } catch (aiError) {
-            // 云端超时/失败时自动降级到本地，避免一直转圈
-            task.setPhase("AI 识别未完成，正在切换本地离线识别…", 58);
-            try {
-              recognized = runOfflineText();
-            } catch {
-              throw aiError;
-            }
+            recognized = runOfflineText();
+          } catch {
+            throw aiError;
           }
-        } else {
-          recognized = runOfflineText();
         }
       } else {
-        const result = await recognizeGradesBatch(
-          source.images,
-          apiKey,
-          defaultSemester,
-          {
-            useAI,
-            onProgress: (cur, total) =>
-              task.setPhase(
-                useAI
-                  ? `AI 正在识别第 ${cur}/${total} 张成绩单…`
-                  : `离线模式：正在识别第 ${cur}/${total} 张…`,
-                Math.round(18 + ((cur - 1) / total) * 62),
-              ),
-          },
-        );
-        recognized = result.grades;
-        skipped = result.skipped;
+        recognized = runOfflineText();
       }
 
       if (!recognized.length) {
         task.fail("未识别到有效成绩，请更换图片或补充表格后重试");
         return;
       }
-      const skipNote = skipped ? `（已跳过 ${skipped} 张无法识别的图片）` : "";
       task.complete(
         { type: "grades", grades: recognized, yearId: targetYearId },
-        `${useAI ? "识别完成" : "离线识别完成"}：共 ${recognized.length} 条成绩${skipNote}，将导入到「${targetYearName}」，请确认`,
+        `${useAI ? "识别完成" : "离线识别完成"}：共 ${recognized.length} 条成绩，将导入到「${targetYearName}」，请确认`,
       );
     } catch (e) {
       task.fail(e instanceof Error ? e.message : "识别失败，请重试");
@@ -430,6 +414,7 @@ export function GradesScreen() {
       : `${currentYear.name} · ${semesterLabel(semScope)}`
     : "全部学年总成绩";
   const ruleName = activeRule?.name ?? "默认规则";
+  const [projectionOpen, setProjectionOpen] = useState(false);
   const ruleHint =
     activeRule == null
       ? "全部课程计入"
@@ -604,10 +589,15 @@ export function GradesScreen() {
           <Animated.View entering={FadeInDown.delay(90).springify()}>
             <GlassContainer radius={28} intensity={48} borderOpacity={0.24} style={{ marginTop: 14 }}>
               <View className="px-5 py-4">
-                <View className="flex-row items-center justify-between">
-                  <Text className="max-w-[70%] text-[12px] font-semibold text-slate-500 dark:text-slate-400">
+                <View className="flex-row items-center justify-between gap-2">
+                  <Text className="flex-1 text-[12px] font-semibold text-slate-500 dark:text-slate-400">
                     {scopeLabel} · 学分加权平均绩点
                   </Text>
+                  <View className="flex-row gap-1.5">
+                  <Pressable accessibilityRole="button" onPress={() => setProjectionOpen(true)}
+                    className="rounded-full bg-sky-400/15 px-2.5 py-1">
+                    <Text className="text-[10.5px] font-semibold text-sky-600 dark:text-sky-300">绩点试算</Text>
+                  </Pressable>
                   <Pressable
                     onPress={() => {
                       setEditingRule(activeRule);
@@ -620,6 +610,7 @@ export function GradesScreen() {
                       编辑规则
                     </Text>
                   </Pressable>
+                  </View>
                 </View>
 
                 <View className="mt-1 flex-row items-end justify-between">
@@ -1086,6 +1077,8 @@ export function GradesScreen() {
           </Animated.View>
         </View>
       </Modal>
+      {projectionOpen ? <GradeProjection grades={scopedGrades} types={gradeTypes} rule={activeRule}
+        scope={scopeLabel} onClose={() => setProjectionOpen(false)} /> : null}
     </View>
   );
 }

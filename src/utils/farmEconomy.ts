@@ -58,6 +58,11 @@ export function dailyOrder(kind: CropKind, at: number) {
   const quantity = 2 + ((new Date(at).getDate() + CROP_KINDS.indexOf(kind)) % 3);
   return { quantity, reward: Math.round(CROP_META[kind].sell * quantity * 1.45) };
 }
+export function deliverableOrders(economy: Economy, level: number, at: number): CropKind[] {
+  const claimed = new Set(economy.orders.date === realDate(at) ? economy.orders.claimed : []);
+  return CROP_KINDS.filter(kind => level >= CROP_META[kind].level && !claimed.has(kind) &&
+    stockCount(economy.inventory[kind]) >= dailyOrder(kind, at).quantity);
+}
 export function completeOrder(raw: Economy, kind: CropKind, level: number, at: number): { economy: Economy; reward: number } | null {
   const current = restoreEconomy(raw, at);
   if (level < CROP_META[kind].level || current.orders.claimed.includes(kind)) return null;

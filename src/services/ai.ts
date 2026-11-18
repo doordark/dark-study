@@ -629,24 +629,24 @@ export interface BatchImage {
   uri: string;
 }
 
-interface BatchOptions {
+interface BatchOptions<Row> {
   /** 联网且有 Key 时走云端视觉模型，否则走设备端离线识别 */
   useAI: boolean;
   /** 开始处理第 current 张（从 1 开始），total 为总张数 */
   onProgress?: (current: number, total: number) => void;
+  onPageFailure?: (index: number) => void;
+  onPageRows?: (index: number, rows: readonly Row[]) => void;
 }
 
 /** 多张课表合并：同一门课（名称 + 星期 + 节次 + 教室相同）自动合并周次，避免重复 */
-function mergeDuplicateCourses(courses: Course[]): Course[] {
+export function courseImportKey(course: Course): string {
+  return JSON.stringify([course.name, course.weekday, course.startPeriod, course.endPeriod, course.classroom]);
+}
+
+export function mergeDuplicateCourses(courses: Course[]): Course[] {
   const merged = new Map<string, Course>();
   for (const course of courses) {
-    const key = [
-      course.name,
-      course.weekday,
-      course.startPeriod,
-      course.endPeriod,
-      course.classroom,
-    ].join("|");
+    const key = courseImportKey(course);
     const prev = merged.get(key);
     if (!prev) {
       merged.set(key, { ...course, weeks: [...course.weeks] });
@@ -673,14 +673,14 @@ function normalizeGradeText(text: string): string {
  * 多张成绩单合并：同一学期 + 同一门课 + 同一分数视为重复，
  * 学分 / 绩点等字段取更完整的那份（照片里常有一张漏识别学分）
  */
-function dedupeGrades(grades: GradeDraft[]): GradeDraft[] {
+export function gradeImportKey(grade: GradeDraft): string {
+  return JSON.stringify([grade.semester, normalizeGradeText(grade.name), normalizeGradeText(grade.score)]);
+}
+
+export function dedupeGrades(grades: GradeDraft[]): GradeDraft[] {
   const merged = new Map<string, GradeDraft>();
   for (const grade of grades) {
-    const key = [
-      grade.semester,
-      normalizeGradeText(grade.name),
-      normalizeGradeText(grade.score),
-    ].join("|");
+    const key = gradeImportKey(grade);
     const prev = merged.get(key);
     if (!prev) {
       merged.set(key, { ...grade });
@@ -698,7 +698,7 @@ export async function recognizeSchedulesBatch(
   images: BatchImage[],
   apiKey: string,
   ctx: ScheduleImportContext,
-  opts: BatchOptions,
+  opts: BatchOptions<Course>,
 ): Promise<{ schedule: Schedule; skipped: number }> {
   const list: Schedule[] = [];
   let skipped = 0;
@@ -708,18 +708,20 @@ export async function recognizeSchedulesBatch(
     const img = images[i];
     opts.onProgress?.(i + 1, images.length);
     try {
-      list.push(
-        opts.useAI
+      const found = opts.useAI
           ? await recognizeScheduleFromImage(
               img.imageBase64,
               apiKey,
               img.mimeType,
               ctx,
             )
-          : await recognizeScheduleOffline(img.uri),
-      );
+          : await recognizeScheduleOffline(img.uri);
+      if (!found.courses.length) throw new Error("这张图片没有识别到课程");
+      list.push(found);
+      opts.onPageRows?.(i, found.courses);
     } catch (e) {
       skipped += 1;
+      opts.onPageFailure?.(i);
       if (!firstError) firstError = e;
     }
   }
@@ -744,7 +746,7 @@ export async function recognizeGradesBatch(
   images: BatchImage[],
   apiKey: string,
   semester: SemesterKind,
-  opts: BatchOptions,
+  opts: BatchOptions<GradeDraft>,
 ): Promise<{ grades: GradeDraft[]; skipped: number }> {
   const all: GradeDraft[] = [];
   let skipped = 0;
@@ -754,6 +756,7 @@ export async function recognizeGradesBatch(
     const img = images[i];
     opts.onProgress?.(i + 1, images.length);
     try {
+      const previousCount = all.length;
       if (opts.useAI) {
         try {
           all.push(...(await recognizeGrades(img, apiKey, semester)));
@@ -764,8 +767,11 @@ export async function recognizeGradesBatch(
       } else {
         all.push(...(await recognizeGradesOffline(img.uri, semester)));
       }
+      if (all.length === previousCount) throw new Error("这张图片没有识别到成绩");
+      opts.onPageRows?.(i, all.slice(previousCount));
     } catch (e) {
       skipped += 1;
+      opts.onPageFailure?.(i);
       if (!firstError) firstError = e;
     }
   }

@@ -18,6 +18,7 @@ import {
   type ComponentRef,
 } from "react";
 import {
+  Alert,
   AppState,
   Keyboard,
   Image,
@@ -64,7 +65,7 @@ import {
 } from "@/constants/farmMap";
 import { farmPressPoint } from "@/utils/farmPressPoint";
 import { planFarmRoute } from "@/utils/farmNavigation";
-import { FARM_SCENES } from "@/components/farm/sceneTextures";
+import { FARM_FOREGROUNDS, FARM_SCENES } from "@/components/farm/sceneTextures";
 import { warmMarketAssets } from "@/components/farm/marketAssets";
 import { FarmChatConversation } from "@/components/farm/FarmChatConversation";
 import {
@@ -95,6 +96,7 @@ import {
   stockCount,
   stockValue,
   completeOrder,
+  deliverableOrders,
   irrigationCost,
   wetDuration,
   craft,
@@ -138,6 +140,7 @@ import { BugGame } from "@/components/farm/BugGame";
 import { HouseInterior } from "@/components/farm/HouseInterior";
 
 import { FarmLifeLayer } from "@/components/farm/FarmLifeLayer";
+import { FarmReturnSummary } from "@/components/farm/FarmReturnSummary";
 import { FarmPersonSprite } from "@/components/farm/FarmPersonSprite";
 
 import {
@@ -176,6 +179,9 @@ import {
   RESIDENT_IDS,
   privateFarmChatReply,
   type ResidentId,
+  type ResidentConversation,
+  unreadRequestReports,
+  lifeRequestBlockReason,
 } from "@/utils/farmLife";
 import { searchWeb, type SearchHit } from "@/services/whaleTools";
 import {
@@ -243,10 +249,14 @@ interface SaveData {
   harvested: number;
   /** 水壶剩余次数（老存档没有这个字段，读档时补 0） */
   water?: number;
+  recapSeenAt?: number;
+  recapReadIds?: string[];
 }
 
 /** 兼容老存档的宽结构 */
 interface RawSave {
+  recapSeenAt?: unknown;
+  recapReadIds?: unknown;
   gear?: unknown;
   vendorMemories?: unknown;
   economy?: unknown;
@@ -591,6 +601,7 @@ function NameTag({
 export function FarmScreen() {
   const router = useRouter();
   const focused = useIsFocused();
+  const farmForeground = useAnimationActive(focused);
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const apiKey = useSettings((s) => s.apiKey);
@@ -658,6 +669,11 @@ export function FarmScreen() {
   const [compost, setCompost] = useState(2);
   const [journal, setJournal] = useState(() => emptyJournal(eventTime()));
   const [lifeOpen, setLifeOpen] = useState(false);
+  const [lifeReportsOnly, setLifeReportsOnly] = useState(false);
+  const [recapSeenAt, setRecapSeenAt] = useState(0);
+  const [recapReadIds, setRecapReadIds] = useState<string[]>([]);
+  const [recapManuallyOpen, setRecapManuallyOpen] = useState(false);
+  const farmScroll = useRef<ComponentRef<typeof ScrollView>>(null);
   const [fertilizing, setFertilizing] = useState(false);
   const waterCap = canCapacity(canUpgrade);
   const stacks = useMemo(
@@ -703,7 +719,9 @@ export function FarmScreen() {
   }, []);
 
   const [shopOpen, setShopOpen] = useState(false);
+  const [marketOrders, setMarketOrders] = useState(false);
   const [speaker, setSpeaker] = useState<Speaker | null>(null);
+  const [followUp, setFollowUp] = useState<ResidentConversation | null>(null);
   const [memories, setMemories] = useState(restoreFarmMemories);
   const [threads, setThreads] = useState<Record<Speaker, FarmChatMsg[]>>({
     door: [],
@@ -763,10 +781,11 @@ export function FarmScreen() {
     day,
     season,
     clock,
+    sceneVariant,
   } = farmTime(now, timeShift, epoch);
   const seasonName = SEASONS[season];
   /** 每块地的累计生长量（每次渲染按当前虚拟时间实时结算，不落库） */
-  const grown = plots.map((p) => plotGrowth(p, vNow));
+  const grown = plots.map(plot => plotGrowth(plot, vNow));
   const growing = plots.filter(
     (p, i) => p.crop && grown[i] < CROP_META[p.crop].growMs,
   ).length;
@@ -788,6 +807,52 @@ export function FarmScreen() {
   });
 
   const taskReportSince = useRef(eventTime());
+  const interruptedRequests: ResidentConversation[] = lifeOpen ? RESIDENT_IDS.flatMap(actor => {
+    const task = memories[actor].assignment;
+    if (task?.status !== "interrupted" || !task.engineId || !task.target || !task.question ||
+      residents.history.some(record => record.taskId === task.engineId)) return [];
+    const checkpoint = residents.history.find(record => record.id === task.resumeFrom);
+    return [{
+      id: task.engineId + "-checkpoint",
+      taskId: task.engineId,
+      participants: [actor, task.target],
+      discussion: { kind: "request", question: task.question },
+      startedAt: task.updatedAt,
+      endedAt: task.updatedAt,
+      source: "player_command",
+      online: checkpoint?.online ?? false,
+      lines: checkpoint?.lines ?? [],
+      requestStatus: "interrupted",
+      requestOutcome: task.outcome ?? "委托在途中中断，可以从上次进度继续。",
+      resumedFrom: task.resumeFrom,
+    }];
+  }) : [];
+
+  function resumeRequest(record: ResidentConversation) {
+    const [actor, target] = record.participants;
+    const purpose = record.discussion?.question;
+    if (!loaded || loadFailed || !target || !purpose) return;
+    const current = memories[actor].assignment;
+    if (current?.engineId === record.taskId && current?.status === "cancelled") {
+      Alert.alert("这项委托已取消", "如果还要问，可以打开居民对话发起新委托。");
+      return;
+    }
+    const result = residents.command(actor, { type: "talk_to", target, purpose }, record);
+    if (!result.ok || !result.id) {
+      Alert.alert("暂时无法续办", result.message);
+      return;
+    }
+    const engineId = result.id;
+    const resumeFrom = residents.history.some(entry => entry.id === record.id) ? record.id : record.resumedFrom;
+    setMemories(previous => ({
+      ...previous,
+      [actor]: { ...previous[actor], assignment: {
+        id: engineId, engineId, resumeFrom, target, question: purpose, status: "walking", updatedAt: eventTime(),
+      } },
+    }));
+    setLifeOpen(false);
+  }
+
   function syncAssignments(
     snapshot: ReturnType<typeof residents.getResidents>,
     history: typeof residents.history,
@@ -803,11 +868,11 @@ export function FarmScreen() {
         );
         const live = snapshot.find((resident) => resident.id === actor)?.task;
         const status = record
-          ? /还没得到|不方便|没有.*答复/.test(record.requestOutcome!)
+          ? record.requestStatus ?? (/还没得到|不方便|没有.*答复/.test(record.requestOutcome!)
             ? "unanswered"
             : /中断|没完成|未完成/.test(record.requestOutcome!)
               ? "interrupted"
-              : "answered"
+              : "answered")
           : live?.id === task.engineId && live?.phase === "conversation"
             ? "talking"
             : task.status;
@@ -1040,13 +1105,14 @@ export function FarmScreen() {
     [face, px, py],
   );
 
-  const goToMarket = () => {
+  const goToMarket = (showOrders = false) => {
     if (!loaded || loadFailed || shopOpen) return;
     void warmMarketAssets(farmTime(eventTime(), 0, eventTime()).sceneVariant);
     if (houseTimer.current) clearTimeout(houseTimer.current);
     const travel = moveTo(85, 316) ?? 0;
     houseTimer.current = setTimeout(() => {
       setPlayerMoving(false);
+      setMarketOrders(showOrders);
       setShopOpen(true);
     }, travel);
   };
@@ -1183,6 +1249,12 @@ export function FarmScreen() {
           return;
         }
         const realNow = eventTime();
+        if (typeof data.recapSeenAt === "number" && Number.isFinite(data.recapSeenAt)) {
+          setRecapSeenAt(Math.min(realNow, Math.max(0, data.recapSeenAt)));
+        }
+        if (Array.isArray(data.recapReadIds)) setRecapReadIds(
+          [...new Set(data.recapReadIds.filter((id): id is string => typeof id === "string" && id.length > 0 && id.length <= 100))].slice(-100),
+        );
         const shift =
           typeof data.timeShift === "number" && Number.isFinite(data.timeShift)
             ? Math.max(0, data.timeShift)
@@ -1293,6 +1365,8 @@ export function FarmScreen() {
       plots,
       harvested,
       water,
+      recapSeenAt,
+      recapReadIds,
     };
     saveWriter.schedule(payload);
   }, [
@@ -1306,6 +1380,8 @@ export function FarmScreen() {
     plots,
     harvested,
     water,
+    recapSeenAt,
+    recapReadIds,
     canUpgrade,
     compost,
     journal,
@@ -2196,6 +2272,7 @@ export function FarmScreen() {
     const at = position ?? RESIDENT_PLACEMENTS[who].home;
     moveTo(at.x - 14, at.y + 3);
     setSpeaker(who);
+    setFollowUp(null);
     setDraft("");
     setChatOffline(!apiKey);
     // Prefer saved dialogue over a new greeting when opening an existing relationship.
@@ -2226,9 +2303,10 @@ export function FarmScreen() {
     personalRequest.current?.abort();
     Keyboard.dismiss();
     setSpeaker(null);
+    setFollowUp(null);
   };
 
-  const sendChat = async (raw: string) => {
+  const sendChat = async (raw: string, followUpRecord?: ResidentConversation) => {
     const text = raw.trim();
     const who = speaker;
     if (
@@ -2254,6 +2332,12 @@ export function FarmScreen() {
       .filter((message) => message.role === "user")
       .map((message) => ({ player: message.text }));
     const explicitTalk = playerTalkCommand(text, who, talkContext);
+    const previousQuestion = followUpRecord?.discussion?.question;
+    const previousTarget = followUpRecord?.participants[1];
+    const followUpDetail = text.slice(0, 116);
+    const followUpQuestion = previousQuestion && previousTarget && followUpRecord?.participants[0] === who
+      ? previousQuestion.slice(0, 156 - followUpDetail.length) + "；补充：" + followUpDetail
+      : undefined;
     const assignmentInput = understandAssignment(
       text,
       who,
@@ -2265,6 +2349,7 @@ export function FarmScreen() {
     setThreads((prev) => ({ ...prev, [who]: [...prev[who], mine].slice(-40) }));
     setDraft("");
     setChatBusy(true);
+    setFollowUp(null);
     const heard = residents.settings.shareTopics
       ? heardFarmTopic(residents.history, who, text)
       : undefined;
@@ -2306,7 +2391,7 @@ export function FarmScreen() {
     let chatUnavailable = false;
     let action: NpcAction | null = null;
     let assignmentUpdate: FarmAssignment | undefined;
-    const localReaction = localSocialReaction(text);
+    const localReaction = followUpQuestion ? "neutral" : localSocialReaction(text);
     let reaction = localReaction;
     const crossedBoundary = reaction === "teasing" || reaction === "insult";
     const query =
@@ -2335,6 +2420,9 @@ export function FarmScreen() {
     try {
       if (crossedBoundary) {
         reply = boundaryReply();
+        setChatOffline(true);
+      } else if (followUpQuestion && previousTarget) {
+        action = { type: "talk_to", target: previousTarget, purpose: followUpQuestion };
         setChatOffline(true);
       } else if (privateReply !== null) {
         reply = privateReply;
@@ -2523,8 +2611,10 @@ export function FarmScreen() {
         residents.cancelCommand(who, memory.assignment.engineId);
       const result = residents.command(who, action);
       if (!result.ok || action.type === "discuss") reply = result.message;
-      if (result.ok && action.type === "talk_to" && action.purpose)
-        reply = `我会找${RESIDENTS[action.target].name}说这件事，听过对方的答复再告诉你。`;
+      if (result.ok && action.type === "talk_to" && action.purpose) {
+        const reason = apiKey ? lifeRequestBlockReason(residents.usage, residents.settings, eventTime(), true) : "未配置 API Key";
+        reply = `我会找${RESIDENTS[action.target].name}问清楚，再回来告诉你。${reason ? `（预计使用本地对白，${reason}）` : "（预计使用 AI 联网对白）"}`;
+      }
       if (action.type === "talk_to" && action.purpose)
         assignmentUpdate = {
           id: assignmentUpdate?.id ?? mine.id,
@@ -2572,6 +2662,14 @@ export function FarmScreen() {
   const canContinueChat = chatMemory.turns.some(
     (turn) => !isFarmChatContinuation(turn.player),
   );
+  const foregroundHeight = Math.max(0, mapHeight - sceneH);
+  const canShowRecap = farmForeground && entranceFinished && residents.ready && !loadFailed;
+  const unreadReportIds = new Set((residents.ready ? unreadRequestReports(residents.history, recapReadIds, recapSeenAt) : []).map(row => row.id));
+  const recap = canShowRecap ? {
+      mature: plots.flatMap((plot, index) => plot.crop && grown[index] >= CROP_META[plot.crop].growMs ? [index] : []),
+      orders: deliverableOrders(economy, level, now),
+      reports: unreadReportIds.size,
+    } : null;
 
   return (
     <View style={{ flex: 1, backgroundColor: "#F5EDD8" }}>
@@ -2638,7 +2736,10 @@ export function FarmScreen() {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="农场菜单"
-            onPress={() => setLifeOpen(true)}
+            onPress={() => {
+              setLifeReportsOnly(false);
+              setLifeOpen(true);
+            }}
             style={{
               width: 44,
               height: 44,
@@ -2657,7 +2758,7 @@ export function FarmScreen() {
         onLayout={({ nativeEvent }) => setMapHeight(nativeEvent.layout.height)}
         style={{
           flex: 1,
-          maxHeight: sceneH,
+          maxHeight: shopOpen ? sceneH : undefined,
           overflow: "hidden",
           backgroundColor: "#162537",
         }}
@@ -2665,6 +2766,7 @@ export function FarmScreen() {
         {shopOpen && focused ? (
           <FarmMarket
             visible
+            initialOrders={marketOrders}
             onClose={() => setShopOpen(false)}
             coins={coins}
             paused={bagOpen || lifeOpen || !focused}
@@ -2691,6 +2793,7 @@ export function FarmScreen() {
           />
         ) : null}
         <ScrollView
+          ref={farmScroll}
           style={{ display: shopOpen ? "none" : "flex" }}
           showsVerticalScrollIndicator={false}
           bounces={false}
@@ -2699,7 +2802,7 @@ export function FarmScreen() {
           <View style={{ width: sceneW, height: sceneH }}>
             <Image
               pointerEvents="none"
-              source={FARM_SCENES[farmTime(now, timeShift, epoch).sceneVariant]}
+              source={FARM_SCENES[sceneVariant]}
               style={{ width: sceneW, height: sceneH }}
               resizeMode="cover"
               fadeDuration={0}
@@ -2780,7 +2883,7 @@ export function FarmScreen() {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="前往dark集市"
-              onPress={goToMarket}
+              onPress={() => goToMarket()}
               style={{
                 position: "absolute",
                 left: 0,
@@ -2881,8 +2984,20 @@ export function FarmScreen() {
                 hasApiKey={Boolean(apiKey)}
                 at={now}
                 panelOpen={lifeOpen}
+                reportsOnly={lifeReportsOnly}
+                unreadReportIds={unreadReportIds}
+                onReadReport={id => setRecapReadIds(previous => previous.includes(id) ? previous : [...previous, id].slice(-100))}
+                onOpenRecap={() => { setLifeOpen(false); setRecapManuallyOpen(true); }}
                 onClosePanel={() => setLifeOpen(false)}
                 onTalk={openTalk}
+                interruptedRequests={interruptedRequests}
+                onResumeRequest={resumeRequest}
+                onFollowUp={(record) => {
+                  if (!loaded || loadFailed) return;
+                  setLifeOpen(false);
+                  openTalk(record.participants[0]);
+                  setFollowUp(record);
+                }}
               />
             ) : null}
 
@@ -2971,7 +3086,29 @@ export function FarmScreen() {
               </Animated.View>
             ) : null}
           </View>
+          {foregroundHeight > 0 && !shopOpen ? (
+            <Image
+              pointerEvents="none"
+              accessible={false}
+              source={FARM_FOREGROUNDS[sceneVariant]}
+              style={{ width: sceneW, height: foregroundHeight }}
+              resizeMode="stretch"
+              fadeDuration={0}
+            />
+          ) : null}
         </ScrollView>
+        {recap ? <FarmReturnSummary
+          items={recap}
+          hidden={shopOpen || houseOpen || bagOpen || gameOpen || lifeOpen || speaker !== null}
+          manuallyOpen={recapManuallyOpen}
+          onClose={() => setRecapManuallyOpen(false)}
+          onCrops={index => {
+            const plot = plotPos(index);
+            farmScroll.current?.scrollTo({ y: Math.max(0, (plot.y + plot.h / 2) * scale - mapHeight / 2), animated: true });
+          }}
+          onOrders={() => goToMarket(true)}
+          onReports={() => { setLifeReportsOnly(true); setLifeOpen(true); }}
+        /> : null}
       </View>
 
       <View style={{ paddingBottom: insets.bottom }}>
@@ -3180,15 +3317,18 @@ export function FarmScreen() {
             ))}
           </ScrollView>
 
+          {followUp ? <Text style={{ paddingHorizontal: 14, paddingBottom: 6, color: "#6B573E", fontSize: 12 }}>
+            接着问{RESIDENTS[followUp.participants[1]].name}：{followUp.discussion?.question}
+          </Text> : null}
           <FarmChatConversation
             messages={threads[speaker ?? "gu"]}
             busy={chatBusy}
             value={draft}
             onChange={setDraft}
             onSend={() => {
-              void sendChat(draft);
+              void sendChat(draft, followUp ?? undefined);
             }}
-            placeholder={`和${speakerName}聊天，或请他打水、浇地…`}
+            placeholder={followUp ? "补充线索或输入新的追问…" : `和${speakerName}聊天，或请他打水、浇地…`}
             maxHeight={chatMaxH}
             inputRef={chatInputRef}
             hint={chatOffline ? "本轮使用本地对白" : undefined}

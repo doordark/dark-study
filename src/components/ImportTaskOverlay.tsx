@@ -24,6 +24,7 @@ import Animated, {
 import Svg, { Circle, Defs, LinearGradient, Stop } from "react-native-svg";
 
 import { GlassContainer } from "@/components/GlassContainer";
+import { ImportRowEditor } from "@/components/ImportRowEditor";
 import { useImportTask, type TaskStatus } from "@/store/useImportTask";
 import { useStore } from "@/store/useStore";
 import type { MergeReport, Schedule } from "@/types";
@@ -124,6 +125,8 @@ function TaskDialog() {
   const progress = useImportTask((s) => s.progress);
   const message = useImportTask((s) => s.message);
   const result = useImportTask((s) => s.result);
+  const [editing, setEditing] = React.useState<number | null>(null);
+  const retry = useImportTask((s) => s.retry);
   const setExpanded = useImportTask((s) => s.setExpanded);
   const clear = useImportTask((s) => s.clear);
   const ack = useImportTask((s) => s.ack);
@@ -336,6 +339,16 @@ function TaskDialog() {
             )}
 
             {/* 结果摘要：适用周数选择 + 识别出的课程（确认前可滚动核对） */}
+            {retry ? (
+              <View className="mt-2.5 gap-2 rounded-2xl bg-amber-500/10 px-3.5 py-2.5">
+                <Text className="text-[11.5px] text-amber-800 dark:text-amber-200">
+                  原批次第 {retry.pages.join("、")} 张未识别成功。{result ? "已识别的结果会保留。" : ""}
+                </Text>
+                <Pressable accessibilityRole="button" onPress={() => void retry.run()} className="self-start rounded-xl bg-sky-600 px-3 py-2">
+                  <Text className="text-xs font-bold text-white">只重试失败图片</Text>
+                </Pressable>
+              </View>
+            ) : null}
             {result?.type === "schedule" ? (
               <View className="mt-2.5 rounded-2xl bg-white/20 px-3.5 py-2.5 dark:bg-white/[0.05]">
                 <View className="flex-row items-center justify-between">
@@ -387,15 +400,14 @@ function TaskDialog() {
 
                 <ScrollView className="mt-2 max-h-[110px]">
                   {result.schedule.courses.map((c, i) => (
-                    <Text
-                      key={`${c.name}-${i}`}
-                      numberOfLines={1}
-                      className="py-0.5 text-[10.5px] text-slate-600 dark:text-slate-300"
-                    >
-                      · {c.name}（周{c.weekday} 第{c.startPeriod}–{c.endPeriod}
-                      节{c.classroom ? ` · ${c.classroom}` : ""} · 第
-                      {weeksLabel(c.weeks)}周）
-                    </Text>
+                    <Pressable key={i} accessibilityRole="button" accessibilityLabel={`修正课程 ${c.name}`}
+                      onPress={() => setEditing(i)} className="min-h-9 flex-row items-center gap-2">
+                      <Text className="flex-1 text-[11px] text-slate-600 dark:text-slate-300">
+                        {c.name} · 周{c.weekday} 第{c.startPeriod}–{c.endPeriod}节 · 第{weeksLabel(c.weeks)}周
+                        {result.sources?.[i]?.pages.length ? ` · 图 ${result.sources[i].pages.join("、")}` : ""}
+                      </Text>
+                      <Text className="text-[11px] font-semibold text-sky-600 dark:text-sky-300">修正</Text>
+                    </Pressable>
                   ))}
                 </ScrollView>
                 <Text className="mt-1 text-[10px] text-slate-400">
@@ -434,14 +446,15 @@ function TaskDialog() {
                     绩点
                   </Text>
                 </View>
-                <View>
-                  {result.grades.slice(0, 5).map((g, i) => (
-                    <View key={`${g.name}-${i}`} className="flex-row items-center py-0.5">
+                <ScrollView className="max-h-[150px]">
+                  {result.grades.map((g, i) => (
+                    <Pressable key={i} accessibilityRole="button" accessibilityLabel={`修正成绩 ${g.name}`}
+                      onPress={() => setEditing(i)} className="min-h-9 flex-row items-center">
                       <Text
                         numberOfLines={1}
                         className="flex-1 text-[10.5px] text-slate-600 dark:text-slate-300"
                       >
-                        {g.name}
+                        {g.name}{result.sources?.[i]?.pages.length ? ` · 图 ${result.sources[i].pages.join("、")}` : ""}
                       </Text>
                       <Text className="w-12 text-right text-[10.5px] text-slate-500 dark:text-slate-400">
                         {g.credit != null ? g.credit : "待补"}
@@ -452,12 +465,13 @@ function TaskDialog() {
                       <Text className="w-12 text-right text-[10.5px] font-semibold text-sky-500 dark:text-sky-300">
                         {formatCourseGpa(g.gpa)}
                       </Text>
-                    </View>
+                      <Text className="ml-2 text-[11px] font-semibold text-sky-600 dark:text-sky-300">修正</Text>
+                    </Pressable>
                   ))}
-                </View>
+                </ScrollView>
                 <Text className="mt-1 text-[10px] text-slate-400">
                   共 {result.grades.length} 条成绩
-                  {result.grades.length > 5 ? "（仅展示前 5 条）" : ""} ·
+                  {" · "}
                   将按学期归入「成绩」页
                 </Text>
               </View>
@@ -715,6 +729,18 @@ function TaskDialog() {
           </View>
         </GlassContainer>
       </Animated.View>
+      {editing != null && result?.type === "schedule" && result.schedule.courses[editing] ? (
+        <ImportRowEditor pages={result.sources?.[editing]?.pages} onClose={() => setEditing(null)} target={{
+          type: "course", schedule: result.schedule, course: result.schedule.courses[editing],
+          save: course => useImportTask.getState().editCourse(result, editing, course),
+        }} />
+      ) : null}
+      {editing != null && result?.type === "grades" && result.grades[editing] ? (
+        <ImportRowEditor pages={result.sources?.[editing]?.pages} onClose={() => setEditing(null)} target={{
+          type: "grade", grade: result.grades[editing],
+          save: grade => useImportTask.getState().editGrade(result, editing, grade),
+        }} />
+      ) : null}
     </View>
   );
 }

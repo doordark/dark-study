@@ -150,17 +150,17 @@ export const AssistantMessage = memo(function AssistantMessage({ message: m, wha
               />
               <Text className="ml-1 text-[11px] font-bold text-white">
                 {m.actions.length > 1
-                  ? `一键应用 ${m.actions.length} 项操作`
+                  ? `预览 ${m.actions.length} 项操作`
                   : m.actions[0].type === "add"
-                    ? "应用：添加这门课"
+                    ? "预览添加课程"
                     : m.actions[0].type === "remove"
-                      ? "应用：删除这门课"
+                      ? "预览删除课程"
                       : m.actions[0].type === "update"
-                        ? "应用：更新这门课"
+                        ? "预览课程修改"
                         : m.actions[0].type ===
                           "create_schedule"
-                          ? "应用：新建课表"
-                          : "应用：合并课表"}
+                          ? "预览新建课表"
+                          : "预览合并课表"}
               </Text>
             </Pressable>
           ) : null}

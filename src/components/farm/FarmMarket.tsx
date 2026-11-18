@@ -87,17 +87,17 @@ export function FarmBag({ visible, close, title, detail, capacity, stacks, selec
   </Modal>;
 }
 
-export function FarmMarket({ visible, onClose, at, paused = false, vendorMemories, onMemory, apiKey, webSearch, renderShop, priceDeals, onDiscount }: {
+export function FarmMarket({ visible, onClose, at, paused = false, initialOrders = false, vendorMemories, onMemory, apiKey, webSearch, renderShop, priceDeals, onDiscount }: {
   visible: boolean; onClose: () => void; coins: number; vendorMemories: Record<Vendor, ResidentMemory>;
-  at: number; paused?: boolean;
+  at: number; paused?: boolean; initialOrders?: boolean;
   onMemory: (vendor: Vendor, memory: ResidentMemory) => void; apiKey: string; webSearch: boolean;
   priceDeals: Partial<Record<Vendor, VendorPriceDeal>>;
   onDiscount: (vendor: Vendor, percent: number) => string;
   renderShop: (vendor: Vendor, section: "trade" | "requests" | "sell" | "guide" | "craft") => ReactNode;
 }) {
   const quality = useSettings(s => s.renderQuality);
-  const [section, setSection] = useState<'chat' | 'trade' | 'requests' | 'sell' | 'guide' | 'craft'>('trade');
-  const [vendor, setVendor] = useState<Vendor | null>(null);
+  const [section, setSection] = useState<'chat' | 'trade' | 'requests' | 'sell' | 'guide' | 'craft'>(initialOrders ? 'requests' : 'trade');
+  const [vendor, setVendor] = useState<Vendor | null>(() => initialOrders && vendorAvailable('farmer', at) ? 'farmer' : null);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [pendingMessage, setPendingMessage] = useState<{ id: string; text: string } | null>(null);

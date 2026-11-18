@@ -6,6 +6,7 @@ import { useActiveSchedule, useStore } from "@/store/useStore";
 
 export function CourseReminderSync() {
   const schedule = useActiveSchedule();
+  const tasks = useStore((s) => s.courseTasks);
   const enabled = useSettings((s) => s.reminderEnabled);
   const minutes = useSettings((s) => s.reminderMinutes);
   const count = useSettings((s) => s.reminderCount);
@@ -21,8 +22,8 @@ export function CourseReminderSync() {
   }, []);
   useEffect(() => {
     if (!ready) return;
-    const timer = setTimeout(() => syncCourseReminders(schedule, enabled, minutes, count), 250);
+    const timer = setTimeout(() => syncCourseReminders(schedule, enabled, minutes, count, tasks), 250);
     return () => clearTimeout(timer);
-  }, [ready, schedule, enabled, minutes, count, resume]);
+  }, [ready, schedule, enabled, minutes, count, resume, tasks]);
   return null;
 }

@@ -42,7 +42,8 @@ import { ChatInputBar } from "@/components/ChatInputBar";
 import { WhaleAvatar } from "@/components/WhaleAvatar";
 import { BACKGROUND_PRESETS, resolveTint } from "@/constants/backgrounds";
 import { askWhalePet } from "@/services/ai";
-import { applyScheduleActions } from "@/services/assistantSchedule";
+import { previewScheduleActions, type ScheduleActionPreview } from "@/services/assistantSchedule";
+import { ScheduleChangeDialog } from "@/components/ScheduleChangeDialog";
 import {
   answerFromSearch,
   buildImageUrl,
@@ -58,7 +59,7 @@ import { useWhaleVoice } from "@/store/useWhaleVoice";
 import { useWhaleMemory } from "@/store/useWhaleMemory";
 import { renderPersonaText } from "@/utils/whalePersona";
 import { useWhalePersona } from "@/store/useWhalePersona";
-import { bumpHaptic, successHaptic, tapHaptic, warnHaptic } from "@/utils/haptics";
+import { bumpHaptic, successHaptic, tapHaptic } from "@/utils/haptics";
 import type {
   AssistantAction,
   PetActionKind,
@@ -1079,29 +1080,12 @@ function WhalePetLayer() {
   };
 
   /** 确认执行小对话框里挂起的课表操作 */
-  const pendingFeedback = useRef({ showBubble, say });
-  useEffect(() => { pendingFeedback.current = { showBubble, say }; });
+  const [scheduleChange, setScheduleChange] = useState<{ preview: ScheduleActionPreview; id: string } | null>(null);
   const applyPending = useCallback((id: string) => {
     const msg = useWhaleMemory.getState().petMessages.find((m) => m.id === id);
     if (!msg?.actions?.length) return;
-    const results = applyScheduleActions(msg.actions, schedule);
-    if (results.some((r) => r.includes("失败") || r.includes("未找到"))) {
-      warnHaptic();
-    } else {
-      successHaptic();
-    }
-    const summary = results.join("；");
-    setChatMsgs((prev) =>
-      [
-        ...prev.map((m) =>
-          m.id === id ? { ...m, actions: undefined } : m,
-        ),
-        petMsg("assistant", `课表改好啦：${summary}`),
-      ].slice(-200),
-    );
-    pendingFeedback.current.showBubble(summary, 2800);
-    pendingFeedback.current.say("改好啦，{{user}}。");
-  }, [schedule, setChatMsgs]);
+    setScheduleChange({ preview: previewScheduleActions(msg.actions, schedule), id });
+  }, [schedule]);
 
   const renderPetMessage = useCallback((message: ChatMessage) => <PetChatMessage
     message={message} isDark={isDark} onApply={applyPending} />, [isDark, applyPending]);
@@ -1539,6 +1523,10 @@ function WhalePetLayer() {
             placeholder="跟她说点什么…"
             bottomInset={6}
           />
+          {scheduleChange ? <ScheduleChangeDialog preview={scheduleChange.preview} onClose={() => setScheduleChange(null)} onApplied={() => {
+            successHaptic();
+            setChatMsgs(previous => previous.map(message => message.id === scheduleChange.id ? { ...message, actions: undefined } : message));
+          }} /> : null}
         </Animated.View>
       ) : null}
     </View>

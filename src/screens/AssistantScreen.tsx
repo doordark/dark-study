@@ -28,7 +28,8 @@ import { BACKGROUND_PRESETS, resolveTint } from "@/constants/backgrounds";
 import type { WhaleStickerId } from "@/constants/whaleStickers";
 import { askAssistant } from "@/services/ai";
 import type { AssistantResult } from "@/services/ai";
-import { applyScheduleActions } from "@/services/assistantSchedule";
+import { previewScheduleActions, type ScheduleActionPreview } from "@/services/assistantSchedule";
+import { ScheduleChangeDialog } from "@/components/ScheduleChangeDialog";
 import {
   answerFromSearch,
   buildImageUrl,
@@ -55,7 +56,6 @@ import {
   successHaptic,
   tapHaptic,
   thumpHaptic,
-  warnHaptic,
 } from "@/utils/haptics";
 import { getDateInfo } from "@/utils/time";
 
@@ -596,20 +596,10 @@ export function AssistantScreen() {
     );
   }
 
+  const [scheduleChange, setScheduleChange] = useState<{ preview: ScheduleActionPreview; actions: ScheduleAction[] } | null>(null);
   const applyActions = useCallback((actions: ScheduleAction[]) => {
-    const results = applyScheduleActions(actions, schedule);
-    const failed = results.some(
-      (r) => r.includes("失败") || r.includes("未找到"),
-    );
-    setNotice({ type: failed ? "error" : "success", text: results.join("\n") });
-    if (failed) warnHaptic();
-    else successHaptic();
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.actions === actions ? { ...m, actions: undefined } : m,
-      ),
-    );
-  }, [schedule, setMessages]);
+    setScheduleChange({ preview: previewScheduleActions(actions, schedule), actions });
+  }, [schedule, setScheduleChange]);
 
   return (
     <View className="flex-1">
@@ -928,6 +918,11 @@ export function AssistantScreen() {
 
       {/* 退场动效：摆尾钻回水里，结束后收回鲸鱼人格 */}
       {leaveFx ? <WhaleLeaveFX onDone={finishLeaveWhale} /> : null}
+
+      {scheduleChange ? <ScheduleChangeDialog preview={scheduleChange.preview} onClose={() => setScheduleChange(null)} onApplied={() => {
+        successHaptic();
+        setMessages(previous => previous.map(message => message.actions === scheduleChange.actions ? { ...message, actions: undefined } : message));
+      }} /> : null}
 
       {/* 生成图全屏预览 */}
       <Modal
