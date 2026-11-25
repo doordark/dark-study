@@ -1,8 +1,49 @@
 import type { Course, Period, Schedule } from "@/types";
-import { addDays, findConflicts, getCourseTime, mondayOf, parseIsoDate, periodAtTime, periodEndingAtTime, timeToMinutes, toIsoDate } from "@/utils/time";
+import { addDays, findConflicts, getCourseTime, mondayOf, normalizeClockInput, parseIsoDate, periodAtTime, periodEndingAtTime, timeToMinutes, toIsoDate } from "@/utils/time";
 
 export function validClock(value: unknown): value is string {
   return typeof value === "string" && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
+/** 把识别或解析出的作息节次规范化：规整时钟、按开始时间排序、去重、过滤重叠段并连续编号 */
+export function normalizeParsedPeriods(
+  rawPeriods: { label?: string; startTime: string; endTime: string }[],
+): Period[] {
+  const cleaned = rawPeriods
+    .map((p) => ({
+      label: (p.label ?? "").trim(),
+      startTime: normalizeClockInput(p.startTime),
+      endTime: normalizeClockInput(p.endTime),
+    }))
+    .filter(
+      (p) =>
+        validClock(p.startTime) &&
+        validClock(p.endTime) &&
+        timeToMinutes(p.endTime) > timeToMinutes(p.startTime),
+    )
+    .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
+
+  const out: Period[] = [];
+  const seen = new Set<string>();
+  for (const item of cleaned) {
+    const key = `${item.startTime}-${item.endTime}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (
+      out.length &&
+      timeToMinutes(item.startTime) < timeToMinutes(out[out.length - 1].endTime)
+    ) {
+      continue;
+    }
+    const index = out.length + 1;
+    out.push({
+      index,
+      label: item.label || `第${index}节`,
+      startTime: item.startTime,
+      endTime: item.endTime,
+    });
+  }
+  return out;
 }
 
 export function validatePeriods(periods: Period[], courses: Course[] = []): string | null {
@@ -18,20 +59,45 @@ export function validatePeriods(periods: Period[], courses: Course[] = []): stri
   return null;
 }
 
+/** 同一门课按名称、教师和教室分组，可有多条上课记录。 */
+export function sameCourseIdentity(a: Course, b: Course): boolean {
+  return a.name === b.name && a.teacher === b.teacher && a.classroom === b.classroom;
+}
+
+export function courseDeletionRows(schedule: Schedule, course: Course, targetWeeks?: number[]) {
+  if (targetWeeks) {
+    return [{ ...course, weeks: course.weeks.filter(week => targetWeeks.includes(week)) }].filter(row => row.weeks.length);
+  }
+  return schedule.courses.filter(row => sameCourseIdentity(row, course));
+}
+
 /** 所有改课入口共用校验，精确时间同时派生节次。 */
-export function normalizeCoursePatch(target: Course, patch: Partial<Course>, schedule: Schedule): Partial<Course> {
+export function normalizeCoursePatch(
+  target: Course,
+  patch: Partial<Course>,
+  schedule: Schedule,
+  preserveExistingPlacement = false,
+): Partial<Course> {
   const result = { ...patch };
   delete result.id;
-  if (result.startPeriod !== undefined || result.endPeriod !== undefined) {
+  const periodsChanged = (["startPeriod", "endPeriod"] as const).some(key =>
+    result[key] !== undefined && (!preserveExistingPlacement || result[key] !== target[key]),
+  );
+  if (periodsChanged) {
     result.startTime = result.startTime ?? undefined;
     result.endTime = result.endTime ?? undefined;
   }
+  // A legacy import may reference periods missing from the current bell schedule.
+  const validateTime = !preserveExistingPlacement || periodsChanged ||
+    (["startTime", "endTime"] as const).some(key => key in result && result[key] !== target[key]);
   const next = { ...target, ...result };
-  if (next.startTime || next.endTime) {
-    const start = next.startTime ?? schedule.periods.find(p => p.index === next.startPeriod)?.startTime;
-    const end = next.endTime ?? schedule.periods.find(p => p.index === next.endPeriod)?.endTime;
+  if (validateTime && (next.startTime || next.endTime)) {
+    const rawStart = next.startTime ?? schedule.periods.find(p => p.index === next.startPeriod)?.startTime;
+    const rawEnd = next.endTime ?? schedule.periods.find(p => p.index === next.endPeriod)?.endTime;
+    const start = typeof rawStart === "string" ? normalizeClockInput(rawStart) : rawStart;
+    const end = typeof rawEnd === "string" ? normalizeClockInput(rawEnd) : rawEnd;
     if (!validClock(start) || !validClock(end) || timeToMinutes(end) <= timeToMinutes(start)) throw new Error("课程起止时间无效");
-    if (timeToMinutes(start) < timeToMinutes(schedule.periods[0].startTime) || timeToMinutes(end) > timeToMinutes(schedule.periods[schedule.periods.length - 1].endTime)) throw new Error("时间超出作息表范围，请先编辑作息表");
+    if (!schedule.periods.length || timeToMinutes(start) < timeToMinutes(schedule.periods[0].startTime) || timeToMinutes(end) > timeToMinutes(schedule.periods[schedule.periods.length - 1].endTime)) throw new Error("时间超出作息表范围，请先编辑作息表");
     result.startPeriod = periodAtTime(schedule.periods, start)!;
     result.endPeriod = periodEndingAtTime(schedule.periods, end)!;
     result.startTime = start;
@@ -40,8 +106,12 @@ export function normalizeCoursePatch(target: Course, patch: Partial<Course>, sch
   const merged = { ...target, ...result };
   if (!merged.name.trim()) throw new Error("请输入课程名称");
   if (!Number.isInteger(merged.weekday) || merged.weekday < 1 || merged.weekday > 7) throw new Error("星期必须为 1 到 7");
-  if (!Number.isInteger(merged.startPeriod) || !Number.isInteger(merged.endPeriod) || merged.endPeriod < merged.startPeriod || !schedule.periods.some(p => p.index === merged.startPeriod) || !schedule.periods.some(p => p.index === merged.endPeriod)) throw new Error("课程节次无效");
-  if (!Array.isArray(merged.weeks) || !merged.weeks.length || merged.weeks.some(w => !Number.isInteger(w) || w < 1 || w > schedule.totalWeeks)) throw new Error("请选择学期内有效的上课周次");
+  if (validateTime && (!Number.isInteger(merged.startPeriod) || !Number.isInteger(merged.endPeriod) || merged.endPeriod < merged.startPeriod || !schedule.periods.some(p => p.index === merged.startPeriod) || !schedule.periods.some(p => p.index === merged.endPeriod))) throw new Error("课程节次无效，请选择作息表中的节次");
+  if (!preserveExistingPlacement || result.weeks !== undefined) {
+    if (!Array.isArray(merged.weeks) || !merged.weeks.length || merged.weeks.some(w =>
+      !Number.isInteger(w) || w < 1 || (w > schedule.totalWeeks && !(preserveExistingPlacement && target.weeks.includes(w))),
+    )) throw new Error("请选择学期内有效的上课周次");
+  }
   return result;
 }
 

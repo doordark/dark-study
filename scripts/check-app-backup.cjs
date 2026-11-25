@@ -16,13 +16,21 @@ const { DEFAULT_PERIODS, DEFAULT_GRADE_RULES, DEFAULT_GRADE_TYPES, DEFAULT_GRADE
 const course = { id: 'course1', name: '数据结构', teacher: '', classroom: '', weekday: 1, startPeriod: 1, endPeriod: 2, weeks: [1, 2], color: 'sky' };
 const main = { version: 6, state: { schedules: [{ ...SAMPLE_SCHEDULE, periods: DEFAULT_PERIODS, courses: [course] }], activeScheduleId: SAMPLE_SCHEDULE.id, grades: [], gradeYears: DEFAULT_GRADE_YEARS, activeGradeYearId: DEFAULT_GRADE_YEARS[0].id, gradeTypes: DEFAULT_GRADE_TYPES, gradeRules: DEFAULT_GRADE_RULES, activeGradeRuleId: DEFAULT_GRADE_RULES[0].id, activeGradeSemester: 'fall' } };
 async function run() {
-  const source = [['dark-study-storage', JSON.stringify(main)], ['dark-study-settings', JSON.stringify({ version: 0, state: { apiKey: 'test-only-private', appearance: 'dark', backgroundImage: 'file:///private.png', renderQuality: 'smooth' } })], ['dark-study-farm-life-budget', '{"count":20}']];
+  const source = [['dark-study-storage', JSON.stringify(main)], ['dark-study-settings', JSON.stringify({ version: 0, state: { apiKey: 'test-only-private', appearance: 'dark', backgroundImage: 'file:///private.png', renderQuality: 'smooth', defaultScheduleView: 'week', showWeekend: false, showOtherWeeks: true, compactWeekGrid: true, backgroundDim: 0.35 } })], ['dark-study-farm-life-budget', '{"count":20}']];
   const result = backup.createBackup(source);
   assert(!JSON.stringify(result).includes('test-only-private'));
   assert(!JSON.stringify(result).includes('file:///private.png'));
   assert(!JSON.stringify(result).includes('farm-life-budget'));
+  assert.equal(result.data['dark-study-settings'].state.defaultScheduleView, 'week');
+  assert.equal(result.data['dark-study-settings'].state.showWeekend, false);
+  assert.equal(result.data['dark-study-settings'].state.compactWeekGrid, true);
+  assert.equal(result.data['dark-study-settings'].state.backgroundDim, 0.35);
   assert.equal(backup.backupSummary(result).courses, 1);
   assert.deepEqual(backup.parseBackup(JSON.stringify(result)), result);
+  const badDim = structuredClone(result); badDim.data['dark-study-settings'].state.backgroundDim = 2;
+  assert.throws(() => backup.parseBackup(JSON.stringify(badDim)), /遮罩/);
+  const badView = structuredClone(result); badView.data['dark-study-settings'].state.defaultScheduleView = 'month';
+  assert.throws(() => backup.parseBackup(JSON.stringify(badView)), /视图/);
   const current = [['dark-study-settings', JSON.stringify({ version: 0, state: { apiKey: 'current-only-test', backgroundImage: 'file:///current.png' } })]];
   const replacement = new Map(backup.buildRestorePlan(result, current, 'replace'));
   assert.equal(JSON.parse(replacement.get('dark-study-settings')).state.apiKey, 'current-only-test');

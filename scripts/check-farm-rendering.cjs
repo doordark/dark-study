@@ -126,7 +126,18 @@ async function main() {
   assert.equal(transmissions, 2, 'the actual hook requests again when the interval ends');
   slots.forEach(s => s.cleanup?.());
   assert.equal(intervals.size, 0, 'unmount stops the simulation scheduler');
-  console.log('PASS: resident hook isolates movement updates, and 100% mode respects the interval and accepts complete short AI replies');
+
+  // Guard against reintroducing stretched mirrored foreground filler strips below the south fence.
+  const farmScreenSrc = fs.readFileSync(path.resolve(__dirname, '../src/screens/FarmScreen.tsx'), 'utf8');
+  const sceneTexturesSrc = fs.readFileSync(path.resolve(__dirname, '../src/components/farm/sceneTextures.ts'), 'utf8');
+  assert(!farmScreenSrc.includes('FARM_FOREGROUNDS'), 'FarmScreen must not render stretched FARM_FOREGROUNDS filler');
+  assert(!farmScreenSrc.includes('foregroundHeight'), 'FarmScreen must not compute excess foregroundHeight filler');
+  assert(!farmScreenSrc.includes('resizeMode="stretch"'), 'FarmScreen must not stretch scene textures');
+  assert(!sceneTexturesSrc.includes('FARM_FOREGROUNDS'), 'sceneTextures must not bundle unused foreground filler strips');
+  assert(farmScreenSrc.includes('FarmBottomDock'), 'FarmScreen must render FarmBottomDock below the natural scene');
+  assert(farmScreenSrc.includes('maxHeight: sceneH'), 'FarmScreen scene viewport must clamp cleanly at sceneH');
+
+  console.log('PASS: resident hook isolates movement updates, 100% mode respects interval, and FarmScreen uses clean FarmBottomDock without stretched foreground fillers');
   } finally { Date.now = realNow; }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

@@ -43,12 +43,19 @@ interface WhalePetState {
   /** 桌宠是否在场（仅本次运行有效，退出应用即收回） */
   visible: boolean;
   care: WhaleCare;
+  /** 最近一次应用内位置归一化坐标（用于退后台时 0ms 无缝交给原生桌面桌宠） */
+  lastNormX: number;
+  lastNormY: number;
+  lastFace: number;
   show: () => void;
   hide: () => void;
+  setLastPosition: (normX: number, normY: number, face: number) => void;
   /** 心跳结算：把上次结算到现在这段时间的衰减补上 */
   tick: () => void;
   feed: () => void;
   pat: () => void;
+  /** 同步桌面悬浮窗期间的喂饭与摸头次数 */
+  applyDesktopCare: (feeds: number, pats: number) => void;
 }
 
 export const useWhalePet = create<WhalePetState>()(
@@ -56,12 +63,21 @@ export const useWhalePet = create<WhalePetState>()(
     (set) => ({
       visible: false,
       care: initialCare(),
+      lastNormX: 0.78,
+      lastNormY: 0.56,
+      lastFace: 1,
       show: () =>
         set((s) => ({
           visible: true,
           care: decayCare(s.care, Date.now()),
         })),
       hide: () => set({ visible: false }),
+      setLastPosition: (normX, normY, face) =>
+        set({
+          lastNormX: Math.max(0, Math.min(1, normX)),
+          lastNormY: Math.max(0, Math.min(1, normY)),
+          lastFace: face < 0 ? -1 : 1,
+        }),
       tick: () => set((s) => ({ care: decayCare(s.care, Date.now()) })),
       feed: () =>
         set((s) => {
@@ -83,6 +99,21 @@ export const useWhalePet = create<WhalePetState>()(
               ...now,
               mood: clamp(now.mood + 9),
               bond: clamp(now.bond + 2.5),
+            },
+          };
+        }),
+      applyDesktopCare: (feeds, pats) =>
+        set((s) => {
+          if (feeds <= 0 && pats <= 0) return s;
+          const now = decayCare(s.care, Date.now());
+          const f = Math.min(10, Math.max(0, Math.floor(feeds)));
+          const p = Math.min(15, Math.max(0, Math.floor(pats)));
+          return {
+            care: {
+              ...now,
+              fullness: clamp(now.fullness + f * 24),
+              mood: clamp(now.mood + f * 5 + p * 7),
+              bond: clamp(now.bond + f * 2 + p * 1.8),
             },
           };
         }),

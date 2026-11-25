@@ -1,4 +1,4 @@
-import { conversationSpots, freeResidentSpot } from './farmResidentSpace';
+import { approachSpotForTarget, conversationSpots, freeResidentSpot, gatheringSpots } from './farmResidentSpace';
 import { RESIDENT_PLACEMENTS, WAYPOINTS, type FarmPoint, type WaypointId } from '@/constants/farmMap';
 import { farmSegmentClear, nearestFarmWaypoint, safeFarmPoint, waypointFarmRoute } from './farmNavigation';
 import { DEFAULT_LIFE, LONG_TALK_MAX, RESIDENTS, RESIDENT_IDS, TALK_BATCH_ROUNDS, lifeDate, localConversation, normalizeLifeSettings, sharedTopicExchange, type FarmTopicId, type SharedFarmTopic, type LifeSettings, type ResidentId, type ResidentConversation, type ResidentLine } from './farmLife';
@@ -8,6 +8,18 @@ import { publicFarmTopic } from './farmMemory';
 import { ambientConversation } from './farmAmbientTalk';
 import { RESIDENT_PROJECTS, readResidentIntent, type ResidentIntent } from './farmAgency';
 import { formatRequestReport, readRequestReport, type RequestReport } from './farmRequestReport';
+import { readConversationMemoryNote, type NpcConversationMemoryNote } from './farmPersonaMemory';
+import {
+  pickAutonomousDutyAction,
+  pickResidentThought,
+  residentCurrentSchedule,
+  type FarmNeedsSnapshot,
+  type FarmWeather,
+  type ResidentDuty,
+  type TownEvent,
+} from './farmTown';
+import { pickNearbyDecorComment, type DecorId } from './farmDecor';
+import type { NightSoloEvent } from './farmSleep';
 export type ResidentState = 'idle' | 'wandering' | 'walking' | 'talking' | 'working' | 'going_home';
 export interface ResidentMotion {
   id: number;
@@ -24,6 +36,7 @@ export interface ResidentTask {
   discussion?: FarmDiscussion;
   checkpoint?: ResidentConversation;
   activity?: 'project' | 'rest';
+  autoDuty?: ResidentDuty;
   phase: 'walking' | 'working' | 'awaiting' | 'reserved' | 'conversation';
   workUntil: number;
 }
@@ -46,8 +59,17 @@ export interface ResidentModel {
   bubble: {
     text: string;
     until: number;
+    createdAt?: number;
+    kind?: 'speech' | 'thought';
   } | null;
+  currentActivity?: string;
   destination: FarmPoint | null;
+}
+export interface AutoWorkEvent {
+  id: string;
+  actor: ResidentId;
+  duty: ResidentDuty;
+  at: number;
 }
 export type ResidentEffect = {
   type: 'work';
@@ -66,7 +88,13 @@ export type ResidentEffect = {
   finalBatch: boolean;
   sharedTopic?: SharedFarmTopic;
   opening?: string;
+  townEvent?: { title: string; detail: string; teller?: ResidentId };
 };
+export interface ResidentMemoryEvent {
+  record: ResidentConversation;
+  aiMemory?: NpcConversationMemoryNote;
+  at: number;
+}
 interface PlayingConversation {
   record: ResidentConversation;
   planned: Omit<ResidentLine, 'at'>[];
@@ -81,6 +109,7 @@ interface PlayingConversation {
   sharedTopic?: SharedFarmTopic;
   next?: ResidentIntent;
   requestReport?: RequestReport;
+  aiMemory?: NpcConversationMemoryNote;
 }
 export const LOCATION_WAYPOINTS: Record<FarmLocation, WaypointId> = {
   pond: 'pond',
@@ -98,6 +127,14 @@ const PREFERENCES: Record<ResidentId, WaypointId[]> = {
   xiaoba: ['plaza', 'pondBench', 'farmLeft', 'houseDoor'],
   yujie: ['marketDoor', 'plaza', 'pond', 'farmBottom'],
   weigang: ['plaza', 'pond', 'farmCenter', 'pondBench']
+};
+const WALK_SPEEDS: Record<ResidentId, number> = {
+  door: 21,
+  gu: 21.5,
+  xiaoba: 21.5,
+  yujie: 23.5,
+  weigang: 22.5,
+  chicken: 16.5,
 };
 const distance = (a: FarmPoint, b: FarmPoint) => Math.hypot(a.x - b.x, a.y - b.y);
 const pairKey = (a: ResidentId, b: ResidentId) => [a, b].sort().join(':');
@@ -159,6 +196,13 @@ export function remainingResidentMotion(m: ResidentMotion, at: number) {
 export class FarmResidentEngine {
   residents: Record<ResidentId, ResidentModel>;
   history: ResidentConversation[] = [];
+  private placedDecor: DecorId[] = [];
+  private sleepingResidents = new Set<ResidentId>();
+  private sleepDeprived = false;
+  private nightSoloEvent: NightSoloEvent | null = null;
+  private lastWeatherKey = '';
+  private currentWeather: FarmWeather = 'clear';
+  private currentRainbow = false;
   historyRevision = 0;
   private conversations = new Map<string, PlayingConversation>();
   private activities = new Map<ResidentId, { type: 'project' | 'rest'; at: number }>();
@@ -167,6 +211,14 @@ export class FarmResidentEngine {
   private publicTopics: Partial<Record<ResidentId, FarmTopicId[]>> = {};
   private pairs = new Map<string, number>();
   private effects: ResidentEffect[] = [];
+  private memoryEvents: ResidentMemoryEvent[] = [];
+  private autoWorkEvents: AutoWorkEvent[] = [];
+  private townDuties: Partial<Record<ResidentId, ResidentDuty>> = {};
+  private townEvents: TownEvent[] = [];
+  private residentAffinities: Partial<Record<ResidentId, number>> = {};
+  private residentEpisodes: Partial<Record<ResidentId, { text: string; privacy: string }[]>> = {};
+  private lastAutoWorkAt = new Map<ResidentId, number>();
+  private lastThoughtAt = new Map<ResidentId, number>();
   private sequence = 0;
   private encounterAt = 0;
   private night = false;
@@ -203,6 +255,30 @@ export class FarmResidentEngine {
   setPublicTopics(topics: Record<ResidentId, FarmTopicId[]>) {
     this.publicTopics = topics;
   }
+  setTownContext(context: {
+    duties?: Partial<Record<ResidentId, ResidentDuty>>;
+    events?: TownEvent[];
+    affinities?: Partial<Record<ResidentId, number>>;
+    episodes?: Partial<Record<ResidentId, { text: string; privacy: string }[]>>;
+    placedDecor?: DecorId[];
+    sleepingResidents?: readonly ResidentId[];
+    sleepDeprived?: boolean;
+    nightSoloEvent?: NightSoloEvent | null;
+  }) {
+    if (context.duties) this.townDuties = context.duties;
+    if (context.events) this.townEvents = context.events;
+    if (context.affinities) this.residentAffinities = context.affinities;
+    if (context.episodes) this.residentEpisodes = context.episodes;
+    if (context.placedDecor) this.placedDecor = context.placedDecor;
+    if (context.sleepingResidents !== undefined) this.sleepingResidents = new Set(context.sleepingResidents);
+    if (context.sleepDeprived !== undefined) this.sleepDeprived = context.sleepDeprived;
+    if (context.nightSoloEvent !== undefined) this.nightSoloEvent = context.nightSoloEvent;
+  }
+  drainAutoWorkEvents() {
+    const events = this.autoWorkEvents;
+    this.autoWorkEvents = [];
+    return events;
+  }
   snapshot() {
     return RESIDENT_IDS.map(id => ({
       ...this.residents[id],
@@ -217,6 +293,11 @@ export class FarmResidentEngine {
   drainEffects() {
     const events = this.effects;
     this.effects = [];
+    return events;
+  }
+  drainMemoryEvents() {
+    const events = this.memoryEvents;
+    this.memoryEvents = [];
     return events;
   }
   getConversation(id: string) {
@@ -253,9 +334,33 @@ export class FarmResidentEngine {
       r.nextDecisionAt = at + 3000;
     }
   }
-  interact(who: ResidentId, at: number) {
-    this.residents[who].lastInteractionAt = at;
-    this.suspendAutonomy(at);
+  /**
+   * 玩家点开与某位居民 1v1 聊天：只暂停该居民自身，不粗暴打断远处其他家人的闲聊；
+   * 并让该居民立即转头面向玩家。
+   */
+  interact(who: ResidentId, at: number, playerX?: number) {
+    this.advancePositions(at);
+    const r = this.residents[who];
+    r.lastInteractionAt = at;
+    if (r.task?.activity || r.task?.discussion?.kind === 'followup') {
+      this.cancelTask(r, at);
+    }
+    const activeConv = [...this.conversations.values()].find(
+      c => c.record.source !== 'player_command' && c.record.participants.includes(who),
+    );
+    if (activeConv) {
+      this.finishConversation(activeConv.record.id, at);
+    }
+    if (!r.task) {
+      r.motion = null;
+      r.targetWaypoint = null;
+      r.destination = null;
+      r.state = 'idle';
+      r.nextDecisionAt = at + 4000;
+    }
+    if (typeof playerX === 'number' && Number.isFinite(playerX)) {
+      r.face = playerX >= r.logicalPosition.x ? 1 : -1;
+    }
   }
   fallbackPending(at: number) {
     for (const c of this.conversations.values()) {
@@ -308,7 +413,12 @@ export class FarmResidentEngine {
   private move(r: ResidentModel, to: FarmPoint, at: number, state: ResidentState = 'walking', direct = false) {
     if (!direct && !r.conversationPartner) {
       const others = Object.values(this.residents).filter(o => o.id !== r.id);
-      const spot = freeResidentSpot(safeFarmPoint(to), others.flatMap(o => [o.logicalPosition, ...(o.destination ? [o.destination] : [])]));
+      const spot = freeResidentSpot(
+        safeFarmPoint(to),
+        others.flatMap(o => [o.logicalPosition, ...(o.destination ? [o.destination] : [])]),
+        23,
+        r.logicalPosition,
+      );
       if (!spot) {
         if (r.task) { this.cancelTask(r, at); this.bubble(r, '这里有点挤，等空些再去吧。', at); }
         r.nextDecisionAt = at + 4000; return;
@@ -331,6 +441,8 @@ export class FarmResidentEngine {
     }
     r.face = points[0].x >= r.logicalPosition.x ? 1 : -1;
     r.state = state;
+    const baseSpeed = WALK_SPEEDS[r.id] ?? 22;
+    const speed = state === 'wandering' ? baseSpeed * 0.92 : r.task ? baseSpeed * 1.15 : baseSpeed;
     r.motion = {
       id: ++this.sequence,
       from: {
@@ -338,7 +450,7 @@ export class FarmResidentEngine {
       },
       points,
       startedAt: at,
-      speed: r.id === 'chicken' ? 17 : 22
+      speed
     };
   }
   private arrive(r: ResidentModel, at: number) {
@@ -367,23 +479,38 @@ export class FarmResidentEngine {
       r.logicalPosition = step.position;
       if (step.done) this.arrive(r, at);
     }
-    // Look ahead once per scheduler tick. Task walkers get priority, then a stable ID order.
+    // Look ahead along two horizons (450ms & 900ms) with lateral sidestepping to prevent head-on crowding.
     for (const r of actors) if (r.motion && !r.conversationPartner && at >= (this.yieldUntil.get(r.id) ?? 0)) {
-      const ahead = motionPosition(r.motion, at + 650).position;
-      const other = actors.find(o => o.id !== r.id && o.conversationPartner !== r.id &&
-        distance(ahead, o.motion ? motionPosition(o.motion, at + 650).position : o.logicalPosition) < 19 &&
-        (!o.motion || (!r.task && !!o.task) || (!!r.task === !!o.task && actors.indexOf(o) < actors.indexOf(r))));
+      const aheadNear = motionPosition(r.motion, at + 450).position;
+      const aheadFar = motionPosition(r.motion, at + 900).position;
+      const other = actors.find(o => {
+        if (o.id === r.id || o.conversationPartner === r.id) return false;
+        const oNear = o.motion ? motionPosition(o.motion, at + 450).position : o.logicalPosition;
+        const oFar = o.motion ? motionPosition(o.motion, at + 900).position : o.logicalPosition;
+        const close = distance(aheadNear, oNear) < 17 || distance(aheadFar, oFar) < 15;
+        if (!close) return false;
+        return !o.motion || (!r.task && !!o.task) || (!!r.task === !!o.task && actors.indexOf(o) < actors.indexOf(r));
+      });
       if (other) {
-        this.yieldUntil.set(r.id, at + 2500);
-        const side = freeResidentSpot(ahead, actors.filter(o => o !== r).map(o => o.logicalPosition), 21);
+        this.yieldUntil.set(r.id, at + 2200);
+        const dx = aheadFar.x - r.logicalPosition.x;
+        const dy = aheadFar.y - r.logicalPosition.y;
+        const len = Math.hypot(dx, dy) || 1;
+        // Prefer stepping laterally perpendicular to travel direction, away from the blocking resident
+        const perpA = { x: aheadNear.x - (dy / len) * 14, y: aheadNear.y + (dx / len) * 14 };
+        const perpB = { x: aheadNear.x + (dy / len) * 14, y: aheadNear.y - (dx / len) * 14 };
+        const preferSide = distance(perpA, other.logicalPosition) >= distance(perpB, other.logicalPosition) ? perpA : perpB;
+        const side = freeResidentSpot(aheadNear, actors.filter(o => o !== r).map(o => o.logicalPosition), 20, preferSide);
         const destination = r.destination;
         if (side && farmSegmentClear(r.logicalPosition, side) && distance(side, r.logicalPosition) > 3 && destination) {
           const rest = waypointFarmRoute(side, destination);
-          if (rest.length) r.motion = { ...r.motion, id: ++this.sequence, from: { ...r.logicalPosition }, points: [side, ...rest], startedAt: at };
-        } else {
-          const rest = remainingResidentMotion(r.motion, at);
-          r.motion = { ...r.motion, id: ++this.sequence, from: rest.start, points: rest.steps.map(s => s.point), startedAt: at + 500 };
+          if (rest.length) {
+            r.motion = { ...r.motion, id: ++this.sequence, from: { ...r.logicalPosition }, points: [side, ...rest], startedAt: at };
+            continue;
+          }
         }
+        const rest = remainingResidentMotion(r.motion, at);
+        r.motion = { ...r.motion, id: ++this.sequence, from: rest.start, points: rest.steps.map(s => s.point), startedAt: at + 550 };
       }
     }
   }
@@ -424,10 +551,12 @@ export class FarmResidentEngine {
     r.targetWaypoint = null;
     r.destination = null;
   }
-  private bubble(r: ResidentModel, text: string, at: number) {
+  private bubble(r: ResidentModel, text: string, at: number, kind: 'speech' | 'thought' = 'speech') {
     r.bubble = {
-      text: text.slice(0, 80),
-      until: at + 5000
+      text: text.slice(0, 120),
+      until: at + (kind === 'thought' ? 5400 : Math.max(4800, Math.min(8200, text.length * 90 + 1800))),
+      createdAt: at,
+      ...(kind === 'thought' ? { kind: 'thought' as const } : {}),
     };
   }
   cancelCommand(who: ResidentId, id: string, at: number) {
@@ -489,7 +618,9 @@ export class FarmResidentEngine {
       createdAt: at,
       expiresAt: at + 90000,
       phase: 'walking',
-      ...(action.type === 'talk_to' && action.purpose ? { discussion: { kind: 'request' as const, question: action.purpose } } : {}),
+      ...(action.type === 'talk_to' && action.purpose ? {
+        discussion: { kind: 'request' as const, question: action.purpose, ...(action.intent ? { intent: action.intent } : {}) },
+      } : {}),
       ...(checkpoint ? { checkpoint } : {}),
       workUntil: 0
     };
@@ -510,7 +641,10 @@ export class FarmResidentEngine {
         phase: 'reserved'
       };
       r.conversationPartner = target.id;
-      const approach = safeFarmPoint({
+      const others = Object.values(this.residents)
+        .filter(o => o.id !== who && o.id !== target.id)
+        .flatMap(o => [o.logicalPosition, ...(o.destination ? [o.destination] : [])]);
+      const approach = approachSpotForTarget(r.logicalPosition, target.logicalPosition, others) ?? safeFarmPoint({
         x: target.logicalPosition.x + (target.logicalPosition.x > 100 ? -16 : 16),
         y: target.logicalPosition.y
       });
@@ -546,13 +680,24 @@ export class FarmResidentEngine {
     const a = this.residents[first], b = this.residents[second];
     const occupied = Object.values(this.residents).filter(r => !participants.includes(r.id))
       .flatMap(r => [r.logicalPosition, ...(r.destination ? [r.destination] : [])]);
-    const slots: FarmPoint[] | null = gather ? [] : conversationSpots(a.logicalPosition, b.logicalPosition, occupied);
-    if (slots) for (const id of participants.slice(slots.length)) {
-      const anchor = gather ? WAYPOINTS.plaza : safeFarmPoint({ x: (slots[0].x + slots[1].x) / 2, y: (slots[0].y + slots[1].y) / 2 });
-      const spot = freeResidentSpot(anchor, [...occupied, ...slots]);
-      const origin = this.residents[id].logicalPosition;
-      if (!spot || (!farmSegmentClear(origin, spot) && !waypointFarmRoute(origin, spot).length)) break;
-      slots.push(spot);
+    let slots: FarmPoint[] | null = null;
+    if (gather) {
+      slots = gatheringSpots(WAYPOINTS.plaza, participants.map(pid => this.residents[pid].logicalPosition), occupied);
+    } else if (participants.length === 2) {
+      slots = conversationSpots(a.logicalPosition, b.logicalPosition, occupied);
+    } else {
+      const base = conversationSpots(a.logicalPosition, b.logicalPosition, occupied);
+      if (base) {
+        const extraSlots: FarmPoint[] = [...base];
+        for (const pid of participants.slice(2)) {
+          const anchor = safeFarmPoint({ x: (base[0].x + base[1].x) / 2, y: (base[0].y + base[1].y) / 2 });
+          const spot = freeResidentSpot(anchor, [...occupied, ...extraSlots], participants.length >= 5 ? 19 : 22, this.residents[pid].logicalPosition);
+          const origin = this.residents[pid].logicalPosition;
+          if (!spot || (!farmSegmentClear(origin, spot) && !waypointFarmRoute(origin, spot).length)) break;
+          extraSlots.push(spot);
+        }
+        slots = extraSlots;
+      }
     }
     if (!slots || slots.length !== participants.length) {
       if (source !== 'encounter' && !gather) { this.cancelTask(a, at); this.bubble(a, '这里有点挤，换个空些的地方聊吧。', at); }
@@ -568,7 +713,7 @@ export class FarmResidentEngine {
     }
     const commissioned = discussion?.kind === 'discussion' && !!discussion.question;
     const natural = !requested && !commissioned && participants.length === 2 && this.settings.longTalks && this.settings.naturalTalks;
-    const rounds = requested ? 3 : participants.length === 3 ? 3 : natural ? LONG_TALK_MAX : Math.max(discussion?.kind === 'debate' ? 3 : 2, this.settings.rounds);
+    const rounds = requested ? 3 : participants.length >= 3 ? (participants.length >= 5 ? 2 : 3) : natural ? LONG_TALK_MAX : Math.max(discussion?.kind === 'debate' ? 3 : 2, this.settings.rounds);
     const candidates = this.settings.shareTopics && participants.length === 2 && !discussion ? pair.flatMap(from => (this.publicTopics[from] ?? []).map(topic => ({ from, topic }))) : [];
     const candidate = candidates.find(({ from, topic }) => !this.history.some(record =>
       record.participants.includes(pair[0]) && record.participants.includes(pair[1]) &&
@@ -586,8 +731,27 @@ export class FarmResidentEngine {
     ] : [];
     const optedIn = this.settings.online && (source === 'player_command' || this.settings.aiRatio >= 100 || this.settings.aiRatio > 0 && this.random() * 100 < this.settings.aiRatio);
     const network = optedIn && !automaticLocalReason;
-    const ambient = source === 'encounter' && participants.length === 2 && !discussion && !opener.length && !moodLines.length
-      ? ambientConversation(pair, this.history, a.currentWaypoint + ' ' + b.currentWaypoint, this.night, this.random()) : [];
+    // Check if an active town rumor/event can organically spread in this encounter
+    const activeTownEvent = source === 'encounter' && !discussion
+      ? this.townEvents.find(ev => ev.expiresAt > at && participants.some(pid => ev.knownBy.includes(pid)) && participants.some(pid => !ev.knownBy.includes(pid)))
+        ?? this.townEvents.find(ev => ev.expiresAt > at && participants.every(pid => ev.knownBy.includes(pid)) && this.random() < 0.4)
+      : undefined;
+    const rumorTeller = activeTownEvent ? participants.find(pid => activeTownEvent.knownBy.includes(pid)) : undefined;
+    const rumorLines: Omit<ResidentLine, 'at'>[] = activeTownEvent && rumorTeller && participants.length === 2
+      ? (() => {
+          const listener = participants.find(pid => pid !== rumorTeller)!;
+          const tellerPrefix = rumorTeller === 'chicken' ? '咕！' : '';
+          const listenerPrefix = listener === 'chicken' ? '咕咕！' : '';
+          return [
+            { speaker: rumorTeller, text: `${tellerPrefix}你听说了吗？${activeTownEvent.title}！` },
+            { speaker: listener, text: `${listenerPrefix}真的假的？快跟我说说怎么回事！` },
+            { speaker: rumorTeller, text: `${tellerPrefix}${activeTownEvent.detail}` },
+            { speaker: listener, text: `${listenerPrefix}这事可有意思了，待会儿遇到别人我也跟他们提一句。` },
+          ];
+        })()
+      : [];
+    const ambient = source === 'encounter' && participants.length === 2 && !discussion && !opener.length && !moodLines.length && !rumorLines.length
+      ? ambientConversation(pair, this.history, a.currentWaypoint + ' ' + b.currentWaypoint, this.night, this.random(), this.currentWeather, this.currentRainbow) : [];
     const resumed = prefix.length > 0;
     const heardAnswer = prefix.some(line => line.speaker === second);
     const planned = resumed
@@ -595,7 +759,7 @@ export class FarmResidentEngine {
         ? Array.from({ length: 2 }, (_, i) => ({ speaker: pair[(prefix.length + i) % 2], text: '' }))
         : heardAnswer ? [] : local.slice(prefix.length))]
       : commissioned || requested ? local
-      : (opener.length ? opener : moodLines.length ? moodLines : local.length ? local : ambient.length ? ambient : localConversation(pair, rounds, pairHistory.length)).slice(0, rounds * participants.length);
+      : (rumorLines.length ? rumorLines : opener.length ? opener : moodLines.length ? moodLines : local.length ? local : ambient.length ? ambient : localConversation(pair, rounds, pairHistory.length)).slice(0, rounds * participants.length);
     if (network && !commissioned && !requested && planned.length < rounds * participants.length) {
       // Reserve streaming capacity only; these slots are never used as local dialogue.
       while (planned.length < rounds * participants.length) planned.push({ speaker: participants[planned.length % participants.length], text: "" });
@@ -685,7 +849,7 @@ export class FarmResidentEngine {
     const speakers = c.record.participants.length;
     // A commissioned meeting requests one complete discussion even when its offline answer is brief.
     const remaining = c.record.discussion?.kind === 'discussion' && c.record.discussion.question
-      ? 3 : (c.planned.length - c.index) / speakers;
+      ? (speakers >= 5 ? 2 : 3) : (c.planned.length - c.index) / speakers;
     const rounds = Math.min(TALK_BATCH_ROUNDS, remaining);
     c.batchEnd = c.index + rounds * speakers;
     c.waiting = true;
@@ -693,6 +857,9 @@ export class FarmResidentEngine {
     this.historyRevision++;
     c.deadline = at + 26000;
     const pair = speakers === 2 && c.index % 2 ? [c.record.participants[1], c.record.participants[0]] : c.record.participants;
+    const activeEvent = c.record.source === 'encounter' && !c.record.discussion
+      ? this.townEvents.find(ev => ev.expiresAt > at && c.record.participants.some(pid => ev.knownBy.includes(pid)))
+      : undefined;
     this.effects.push({
       type: 'conversation',
       id: c.record.id,
@@ -705,9 +872,10 @@ export class FarmResidentEngine {
       finalBatch: rounds === remaining,
       sharedTopic: c.sharedTopic,
       opening: c.record.source === 'encounter' && !c.record.discussion ? c.planned.slice(0, 2).map(line => RESIDENTS[line.speaker].name + '：' + line.text).join('\n') : undefined,
+      ...(activeEvent ? { townEvent: { title: activeEvent.title, detail: activeEvent.detail, teller: c.record.participants.find(pid => activeEvent.knownBy.includes(pid)) } } : {}),
     });
   }
-  supplyConversation(id: string, lines: Omit<ResidentLine, 'at'>[] | null, online: boolean, at: number, done = false, next?: ResidentIntent, localReason?: string, report?: unknown) {
+  supplyConversation(id: string, lines: Omit<ResidentLine, 'at'>[] | null, online: boolean, at: number, done = false, next?: ResidentIntent, localReason?: string, report?: unknown, aiMemory?: unknown) {
     const c = this.conversations.get(id);
     if (!c || !c.waiting) return false;
     const expected = c.batchEnd - c.index;
@@ -715,21 +883,33 @@ export class FarmResidentEngine {
     const ending = automaticShort || c.natural && done || c.record.discussion?.kind === 'discussion' && !!c.record.discussion.question;
     const speakers = c.record.participants.length;
     const minLines = automaticShort ? speakers : Math.min(2 * speakers, expected);
+    const flexibleMulti = speakers >= 3 && online;
     const repeatedOpening = lines && c.index === 0 && c.record.source === 'encounter' && this.history.filter(record => record.id !== id && c.record.participants.every(who => record.participants.includes(who))).slice(-3).some(record => record.lines[0]?.text === lines[0]?.text);
     const repeatedCheckpoint = c.record.resumedFrom && lines?.some(line => c.record.lines.some(previous => previous.speaker === line.speaker && previous.text === line.text));
     const question = c.record.discussion?.kind === 'discussion' ? c.record.discussion.question : undefined;
-    if (lines && !repeatedOpening && !repeatedCheckpoint && (!question || discussionBatchFits(question, lines)) && (c.record.discussion?.kind !== 'request' || requestBatchOnTopic(c.record.discussion.question ?? '', [...c.record.lines, ...lines], c.record.participants[1])) && (lines.length === expected || ending && lines.length >= minLines && lines.length < expected && lines.length % speakers === 0) &&
-        lines.every((line, index) => (speakers === 3 && online
+    const lengthOk = !!lines && (
+      lines.length === expected ||
+      (flexibleMulti && lines.length >= minLines && lines.length <= expected) ||
+      (ending && lines.length >= minLines && lines.length < expected && lines.length % speakers === 0)
+    );
+    const minPerSpeaker = question ? (speakers >= 4 ? 1 : 2) : 1;
+    if (lines && lengthOk && !repeatedOpening && !repeatedCheckpoint &&
+        (!question || discussionBatchFits(question, lines)) &&
+        (c.record.discussion?.kind !== 'request' || requestBatchOnTopic(c.record.discussion.question ?? '', [...c.record.lines, ...lines], c.record.participants[1], c.record.discussion.intent)) &&
+        lines.every((line, index) => (flexibleMulti
           ? c.record.participants.includes(line.speaker) && (index === 0 || lines[index - 1].speaker !== line.speaker)
           : line.speaker === c.record.participants[(c.index + index) % speakers]) && line.text.trim() && line.text.length <= 240) &&
-        c.record.participants.every(id => lines.filter(line => line.speaker === id).length >= (question ? 2 : 1))) {
-      c.planned.splice(c.index, ending ? c.planned.length - c.index : expected, ...lines);
+        c.record.participants.every(pid => lines.filter(line => line.speaker === pid).length >= minPerSpeaker)) {
+      c.planned.splice(c.index, ending || flexibleMulti ? c.planned.length - c.index : expected, ...lines);
       c.record.online ||= online;
-      if (online && c.record.discussion?.kind === 'request' && c.batchEnd === c.planned.length) {
+      if (online && c.record.discussion?.kind === 'request' && c.batchEnd >= c.planned.length) {
         c.requestReport = readRequestReport(report, [...c.record.lines, ...lines]);
       }
+      if (online && aiMemory) {
+        c.aiMemory = readConversationMemoryNote(aiMemory);
+      }
       delete c.record.localReason;
-      if (online && c.record.source === 'encounter' && (ending || c.batchEnd === c.planned.length)) {
+      if (online && c.record.source === 'encounter' && (ending || c.batchEnd >= c.planned.length)) {
         c.next = readResidentIntent(next, c.record.participants);
       }
     } else {
@@ -752,7 +932,7 @@ export class FarmResidentEngine {
       const [actor, target] = c.record.participants;
       if (completed) {
         const report = formatRequestReport(actor, target, c.record.discussion.question ?? '',
-          c.record.lines, c.record.online, c.requestReport);
+          c.record.lines, c.record.online, c.requestReport, c.record.discussion.intent);
         c.record.requestOutcome = report.text;
         c.record.requestStatus = report.needsDetails ? 'unanswered' : 'answered';
       } else {
@@ -761,8 +941,15 @@ export class FarmResidentEngine {
       }
       this.bubble(this.residents[actor], c.record.requestOutcome, at);
     }
+    if (completed && c.record.lines.length >= 2) {
+      this.memoryEvents.push({
+        record: { ...c.record, participants: [...c.record.participants], lines: c.record.lines.map(l => ({ ...l })) },
+        ...(c.aiMemory ? { aiMemory: c.aiMemory } : {}),
+        at,
+      });
+    }
     this.historyRevision++;
-    for (const who of c.record.participants) {
+    for (const [idx, who] of c.record.participants.entries()) {
       const r = this.residents[who];
       r.conversationPartner = null;
       r.conversationSize = 0;
@@ -775,7 +962,10 @@ export class FarmResidentEngine {
       r.state = 'idle';
       r.motion = null;
       r.lastConversationAt = at;
-      r.nextDecisionAt = at + 3000 + this.random() * 5000;
+      // Stagger post-chat dispersion so multi-party gatherings naturally drift apart instead of clumping
+      r.nextDecisionAt = c.record.participants.length >= 3
+        ? at + 2200 + idx * 1400
+        : at + 3000 + this.random() * 5000;
       if (r.task?.phase === 'conversation') r.task = null;
     }
     const participants = c.record.participants;
@@ -845,9 +1035,43 @@ export class FarmResidentEngine {
     this.bubble(r, type === 'project' ? '我想' + project.activity + '。' : '我先歇一会儿，等会再忙。', at);
     return true;
   }
-  private chooseDestination(r: ResidentModel, night: boolean): WaypointId {
+  private doAutoDuty(r: ResidentModel, duty: ResidentDuty, waypoint: WaypointId, bubbleText: string, at: number) {
+    const locationMap: Partial<Record<WaypointId, FarmLocation>> = {
+      pond: 'pond',
+      farmCenter: 'farm',
+      farmRight: 'farm',
+      farmLeft: 'farm',
+      houseDoor: 'house',
+      coop: 'coop',
+      plaza: 'plaza',
+      pondBench: 'bench',
+      marketDoor: 'market',
+    };
+    const loc = locationMap[waypoint] ?? 'farm';
+    const result = this.command(r.id, { type: 'visit', target: loc }, at);
+    const task = r.task;
+    if (!result.ok || !task) return false;
+    task.autoDuty = duty;
+    task.workUntil = 0;
+    this.lastAutoWorkAt.set(r.id, at);
+    this.bubble(r, bubbleText, at);
+    return true;
+  }
+  private chooseDestination(r: ResidentModel, night: boolean, farmNeeds?: FarmNeedsSnapshot, at = 0): WaypointId {
+    const activeEvents = this.townEvents.filter(ev => ev.expiresAt > at);
+    const scheduled = farmNeeds
+      ? residentCurrentSchedule(r.id, farmNeeds.period, farmNeeds.weather, farmNeeds.rainbow, activeEvents)
+      : null;
+    if (scheduled) {
+      r.currentActivity = scheduled.activity;
+    }
     const choices = (Object.keys(WAYPOINTS) as WaypointId[]).filter(id => id !== r.currentWaypoint);
-    const weights = choices.map(id => (PREFERENCES[r.id].includes(id) ? 5 : 1) * (night && (id === 'houseDoor' || r.id === 'chicken' && id === 'coop') ? 5 : 1) / (1 + distance(r.logicalPosition, WAYPOINTS[id]) / 80));
+    const weights = choices.map(id => {
+      const pref = PREFERENCES[r.id].includes(id) ? 5 : 1;
+      const scheduleBoost = scheduled && scheduled.waypoint === id ? 14 : 1;
+      const nightBoost = night && (id === 'houseDoor' || r.id === 'chicken' && id === 'coop') ? 5 : 1;
+      return pref * scheduleBoost * nightBoost / (1 + distance(r.logicalPosition, WAYPOINTS[id]) / 80);
+    });
     let choice = this.random() * weights.reduce((a, b) => a + b, 0);
     for (let i = 0; i < choices.length; i++) {
       choice -= weights[i];
@@ -859,12 +1083,16 @@ export class FarmResidentEngine {
     autonomous = true,
     night = false,
     reducedMotion = false,
-    automaticNetworkBlock
+    automaticNetworkBlock,
+    busyResident = null,
+    farmNeeds,
   }: {
     autonomous?: boolean;
     night?: boolean;
     reducedMotion?: boolean;
     automaticNetworkBlock?: { reason: string; wait: boolean };
+    busyResident?: ResidentId | null;
+    farmNeeds?: FarmNeedsSnapshot;
   } = {}) {
     if (this.pausedAt !== null) return;
     this.night = night;
@@ -874,10 +1102,16 @@ export class FarmResidentEngine {
         if (c.record.participants.some(id => this.residents[id].motion)) continue;
         c.arranging = false;
         c.nextAt = Math.max(c.nextAt, at + 300);
-        const [a, b] = c.record.participants.map(id => this.residents[id]);
-        a.state = b.state = 'talking';
-        a.face = b.logicalPosition.x >= a.logicalPosition.x ? 1 : -1;
-        b.face = a.face === 1 ? -1 : 1;
+        const group = c.record.participants.map(id => this.residents[id]);
+        const cx = group.reduce((sum, item) => sum + item.logicalPosition.x, 0) / group.length;
+        for (const member of group) {
+          member.state = 'talking';
+          member.face = cx >= member.logicalPosition.x ? 1 : -1;
+        }
+        if (group.length === 2) {
+          group[0].face = group[1].logicalPosition.x >= group[0].logicalPosition.x ? 1 : -1;
+          group[1].face = group[0].face === 1 ? -1 : 1;
+        }
       }
       if (c.waiting) {
         if (at >= c.deadline) {
@@ -920,6 +1154,44 @@ export class FarmResidentEngine {
       this.bubble(this.residents[line.speaker], line.text, at);
       c.nextAt = at + Math.max(2200, line.text.length * 95);
     }
+    if (farmNeeds) {
+      const prevWeather = this.currentWeather;
+      const prevRainbow = this.currentRainbow;
+      const weatherKey = `${farmNeeds.weather}-${farmNeeds.rainbow ? 'rb' : 'no'}`;
+      const weatherChanged = this.lastWeatherKey !== '' && this.lastWeatherKey !== weatherKey;
+      this.lastWeatherKey = weatherKey;
+      this.currentWeather = farmNeeds.weather;
+      this.currentRainbow = farmNeeds.rainbow;
+      const enteredWeather = farmNeeds.weather === 'rain' || farmNeeds.rainbow;
+      const clearedFromRain = !enteredWeather && prevWeather === 'rain';
+      const rainbowEnded = !enteredWeather && !clearedFromRain && prevRainbow;
+      if (weatherChanged && (enteredWeather || clearedFromRain || rainbowEnded) && !night) {
+        const activeEvents = this.townEvents.filter(ev => ev.expiresAt > at);
+        let reactedCount = 0;
+        const maxBubbles = enteredWeather ? 2 : clearedFromRain ? 1 : 0;
+        for (const r of Object.values(this.residents)) {
+          if (this.sleepingResidents.has(r.id) || r.id === busyResident || r.task || r.conversationPartner) continue;
+          const slot = residentCurrentSchedule(r.id, farmNeeds.period, farmNeeds.weather, farmNeeds.rainbow, activeEvents);
+          r.currentActivity = slot.activity;
+          if (farmNeeds.rainbow) {
+            r.mood = '开心';
+            r.moodUntil = at + 180_000;
+          }
+          const dest = WAYPOINTS[slot.waypoint];
+          if (distance(r.logicalPosition, dest) > 12) {
+            this.move(r, dest, at, 'wandering');
+          }
+          if (!r.bubble && reactedCount < maxBubbles) {
+            reactedCount++;
+            this.lastThoughtAt.set(r.id, at);
+            const clearLine = r.id === 'chicken'
+              ? '咕咕！雨停啦，出去抖抖羽毛晒太阳！'
+              : '雨停放晴了，空气里都是青草香，出去走走！';
+            this.bubble(r, enteredWeather ? slot.thought : clearLine, at, 'thought');
+          }
+        }
+      }
+    }
     for (const r of Object.values(this.residents)) {
       if (r.moodUntil && r.moodUntil <= at) { r.mood = '平静'; r.moodUntil = 0; }
       if (r.bubble && r.bubble.until <= at) r.bubble = null;
@@ -951,16 +1223,18 @@ export class FarmResidentEngine {
             ...task,
             phase: 'awaiting'
           };
-          if (task.action.type === 'fetch_water' || task.action.type === 'water_crops') this.effects.push({
+          if (task.autoDuty) {
+            this.autoWorkEvents.push({ id: task.id, actor: r.id, duty: task.autoDuty, at });
+          } else if (task.action.type === 'fetch_water' || task.action.type === 'water_crops') this.effects.push({
             type: 'work',
             id: task.id,
             actor: r.id,
             action: task.action
-          });else this.completeWork(task.id, r.id, task.action.type === 'go_home' ? '到家了，我在这里歇一会。' : task.action.type === 'rest' ? '休息好了，继续慢慢来。' : '已经到了，这里真舒服。', at);
+          }); else this.completeWork(task.id, r.id, task.action.type === 'go_home' ? '到家了，我在这里歇一会。' : task.action.type === 'rest' ? '休息好了，继续慢慢来。' : '已经到了，这里真舒服。', at);
         }
         continue;
       }
-      if (!autonomous || r.conversationPartner) continue;
+      if (!autonomous || r.conversationPartner || r.id === busyResident) continue;
       const activity = this.activities.get(r.id);
       if (activity && at >= activity.at) {
         this.activities.delete(r.id);
@@ -973,8 +1247,45 @@ export class FarmResidentEngine {
       }
       if (this.settings.roaming && !reducedMotion && !r.motion && at >= r.nextDecisionAt) {
         r.nextDecisionAt = at + this.settings.activitySeconds * 1000;
+        if (farmNeeds) {
+          if (this.sleepingResidents.has(r.id)) continue;
+          const activeEvents = this.townEvents.filter(ev => ev.expiresAt > at);
+          r.currentActivity = residentCurrentSchedule(r.id, farmNeeds.period, farmNeeds.weather, farmNeeds.rainbow, activeEvents).activity;
+          // Autonomous AI Farm helper duty execution (bounded per-resident cooldown)
+          const duty = this.townDuties[r.id];
+          const lastAuto = this.lastAutoWorkAt.get(r.id) ?? 0;
+          if (duty && at - lastAuto >= 95_000 && this.random() < 0.42) {
+            const plan = pickAutonomousDutyAction(r.id, duty, farmNeeds, this.residentAffinities[r.id] ?? 0);
+            if (plan && this.doAutoDuty(r, plan.duty, plan.waypoint, plan.bubble, at)) continue;
+          }
+          // Gentle occasional thought bubble reflecting schedule, weather, rainbow, sleep deprivation, solo emo or decor
+          const lastThought = this.lastThoughtAt.get(r.id) ?? 0;
+          if (!r.bubble && at - lastThought >= 32_000 && this.random() < 0.28) {
+            const decorNote = this.placedDecor.length && this.random() < 0.45
+              ? pickNearbyDecorComment(r.id, r.logicalPosition, this.placedDecor)
+              : null;
+            const thought =
+              decorNote?.text ??
+              pickResidentThought(r.id, farmNeeds, activeEvents, this.residentEpisodes[r.id], this.random(), {
+                sleepDeprived: this.sleepDeprived,
+                soloEvent: this.nightSoloEvent,
+              });
+            if (thought) {
+              this.lastThoughtAt.set(r.id, at);
+              this.bubble(r, thought, at, 'thought');
+            }
+          }
+        }
+        if (this.sleepingResidents.has(r.id)) continue;
+        if (night && this.nightSoloEvent?.resident === r.id) {
+          const spot = WAYPOINTS[this.nightSoloEvent.waypoint];
+          if (distance(r.logicalPosition, spot) > 12) {
+            this.move(r, spot, at, 'wandering');
+          }
+          continue;
+        }
         if (!night && this.projectDays.get(r.id) !== lifeDate(at) && this.random() < 0.2 && this.doActivity(r, 'project', at)) continue;
-        if (!night || this.random() * 100 < this.settings.nightActivity) this.move(r, WAYPOINTS[this.chooseDestination(r, night)], at, 'wandering');
+        if (!night || this.random() * 100 < this.settings.nightActivity) this.move(r, WAYPOINTS[this.chooseDestination(r, night, farmNeeds, at)], at, 'wandering');
       }
     }
     if (!autonomous || !this.settings.chatter || at - this.encounterAt < 2000) return;
@@ -987,6 +1298,7 @@ export class FarmResidentEngine {
       if (at - followup.at > 45000) { this.followups.delete(actor); continue; }
       const a = this.residents[actor], b = this.residents[followup.target];
       if (a.task || b.task || a.conversationPartner || b.conversationPartner) continue;
+      if (a.id === busyResident || b.id === busyResident) continue;
       this.followups.delete(actor);
       const result = this.command(actor, { type: 'talk_to', target: b.id }, at);
       if (result.ok) {
@@ -1001,7 +1313,9 @@ export class FarmResidentEngine {
       if (fullRatio && !automaticNetworkBlock && waitingForAutomatic()) return;
       const a = this.residents[RESIDENT_IDS[i]],
         b = this.residents[RESIDENT_IDS[j]];
+      if (this.sleepingResidents.has(a.id) || this.sleepingResidents.has(b.id)) continue;
       if (a.task || b.task || a.conversationPartner || b.conversationPartner) continue;
+      if (a.id === busyResident || b.id === busyResident) continue;
       if (at - Math.max(a.lastInteractionAt, b.lastInteractionAt) < 10000) continue;
       if (at - Math.max(a.lastConversationAt, b.lastConversationAt, this.pairs.get(pairKey(a.id, b.id)) ?? 0) < this.settings.conversationCooldown * 1000) continue;
       if (distance(a.logicalPosition, b.logicalPosition) > 22 || !farmSegmentClear(a.logicalPosition, b.logicalPosition)) continue;
@@ -1014,7 +1328,7 @@ export class FarmResidentEngine {
       const pool = fresh.length ? fresh : topics;
       const topic = pool[Math.floor(this.random() * pool.length) % pool.length];
       const guest = roll >= 0.12 && roll < 0.32 ? Object.values(this.residents).find(r =>
-        r.id !== a.id && r.id !== b.id && !r.task && !r.conversationPartner && at - r.lastConversationAt >= this.settings.conversationCooldown * 1000 &&
+        r.id !== a.id && r.id !== b.id && r.id !== busyResident && !this.sleepingResidents.has(r.id) && !r.task && !r.conversationPartner && at - r.lastConversationAt >= this.settings.conversationCooldown * 1000 &&
         distance(a.logicalPosition, r.logicalPosition) >= 18 && distance(a.logicalPosition, r.logicalPosition) < 48 && farmSegmentClear(a.logicalPosition, r.logicalPosition)
       ) : undefined;
       if (guest && this.startConversation([a.id, b.id, guest.id], 'encounter', at, { kind: 'discussion', topic }, false, automaticNetworkBlock?.reason)) continue;

@@ -6,6 +6,7 @@ export type FarmTone = 'paper' | 'sage' | 'rose' | 'blue';
 export const FARM_INK = '#59432E';
 export const FARM_BODY_FONT = Platform.select({ ios: 'System', android: 'sans-serif', web: 'system-ui' });
 const headingFont = Platform.select({ ios: 'Georgia', android: 'serif', web: 'Georgia, serif' });
+const SLOT_SKIN = require('../../../assets/images/farm-bag-slots-v6.png');
 
 export function FarmText({ style, variant = 'body', ...props }: TextProps & { variant?: 'body' | 'title' | 'label' }) {
   return <Text {...props} style={[typography.base, typography[variant], style]} />;
@@ -25,16 +26,109 @@ const covers = {
   chat: require('../../../assets/images/farm-cover-chat.png'),
   bugs: require('../../../assets/images/farm-cover-bugs.png'),
   house: require('../../../assets/images/farm-cover-house.png'),
+  town: require('../../../assets/images/farm-cover-town.png'),
+  group: require('../../../assets/images/farm-cover-group.png'),
+  orchard: require('../../../assets/images/farm-residents-orchard.png'),
 };
 
 export function FarmIllustration({ theme, compact = false }: { theme: keyof typeof covers; compact?: boolean }) {
-  return <Image
-    accessible={false}
-    source={covers[theme]}
-    resizeMode="contain"
-    fadeDuration={0}
-    style={{ width: compact ? 90 : '100%', aspectRatio: 150 / 44, maxWidth: 306, alignSelf: 'center', borderRadius: 8 }}
-  />;
+  const highResBanner = theme === 'town' || theme === 'group' || theme === 'journal' || theme === 'market' || theme === 'orchard';
+  return (
+    <View
+      style={{
+        width: compact ? 92 : '100%',
+        maxWidth: compact ? 92 : 380,
+        aspectRatio: theme === 'orchard' ? 600 / 220 : 150 / 44,
+        alignSelf: 'center',
+        borderRadius: compact ? 8 : 12,
+        overflow: 'hidden',
+        borderWidth: highResBanner ? 1.5 : 0,
+        borderColor: '#D6BD94',
+        backgroundColor: '#EFE3CA',
+      }}
+    >
+      <Image
+        accessible={false}
+        source={covers[theme]}
+        resizeMode={highResBanner ? 'cover' : 'contain'}
+        fadeDuration={0}
+        style={{ width: '100%', height: '100%' }}
+      />
+    </View>
+  );
+}
+
+/** 复用 farm-bag-slots-v6 品质缝线木框：rarity 0=木棕 1=羊皮 2=天蓝 3=紫韵 4=暖金 5=彩光 */
+export function FarmSlotFrame({
+  size = 44,
+  rarity = 1,
+  selected = false,
+  children,
+  style,
+}: {
+  size?: number;
+  rarity?: 0 | 1 | 2 | 3 | 4 | 5;
+  selected?: boolean;
+  children?: ReactNode;
+  style?: StyleProp<ViewStyle>;
+}) {
+  return (
+    <View
+      style={[
+        {
+          width: size,
+          height: size,
+          alignItems: 'center',
+          justifyContent: 'center',
+          overflow: 'hidden',
+        },
+        style,
+      ]}
+    >
+      <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0 }}>
+        <AtlasSprite
+          source={SLOT_SKIN}
+          columns={6}
+          rows={2}
+          column={rarity}
+          row={selected ? 1 : 0}
+          width={size}
+          height={size}
+        />
+      </View>
+      {children}
+    </View>
+  );
+}
+
+export function FarmParchmentCard({
+  children,
+  tone = 'cream',
+  style,
+}: {
+  children?: ReactNode;
+  tone?: 'cream' | 'sage' | 'warm';
+  style?: StyleProp<ViewStyle>;
+}) {
+  const bg = tone === 'sage' ? '#EDF2E1' : tone === 'warm' ? '#F6EADB' : '#FAF2E3';
+  const border = tone === 'sage' ? '#C4D4AB' : tone === 'warm' ? '#D9C09D' : '#DEC8A6';
+  return (
+    <View
+      style={[
+        {
+          padding: 12,
+          borderRadius: 14,
+          backgroundColor: bg,
+          borderWidth: 1.2,
+          borderBottomWidth: 2.2,
+          borderColor: border,
+        },
+        style,
+      ]}
+    >
+      {children}
+    </View>
+  );
 }
 
 const iconColumns = { shop: 0, journal: 1, bugs: 2, residents: 3, water: 4, chat: 5, market: 6, house: 7 };

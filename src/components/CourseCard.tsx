@@ -1,12 +1,15 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { LinearGradient } from "expo-linear-gradient";
-import { useEffect } from "react";
+import React, { useEffect, useMemo } from "react";
 import { Text, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
+  cancelAnimation,
+  Easing,
   FadeInDown,
   runOnJS,
   useAnimatedStyle,
+  useReducedMotion,
   useSharedValue,
   withRepeat,
   withSequence,
@@ -16,110 +19,167 @@ import Animated, {
 
 import { GlassContainer } from "@/components/GlassContainer";
 import { coursePalette } from "@/constants/palette";
+import { useAnimationActive } from "@/hooks/useAnimationActive";
 import { useSettings } from "@/store/useSettings";
 import type { Course, Period } from "@/types";
-import { getCourseTime } from "@/utils/time";
+import { renderQuality } from "@/utils/renderQuality";
+import { formatWeeksCompact, getCourseTime } from "@/utils/time";
 
 export interface CourseCardProps {
   course: Course;
   periods: Period[];
   /** 当前正在进行中（带呼吸光效 + 胶囊标签） */
   active?: boolean;
+  /** 今日该课程是否已结束（轻度弱化视觉层级） */
+  finished?: boolean;
+  /** 进行中剩余时间或即将上课倒计时文案 */
+  countdownLabel?: string;
   /** 与其他课程时间冲突（显示琥珀色警示徽标） */
   conflict?: boolean;
+  /** 与之冲突的具体课程名列表 */
+  conflictWith?: string[];
   /** 本卡片在列表中的序号，用于交错弹入 */
   index?: number;
   onPress?: (course: Course) => void;
   onLongPress?: (course: Course) => void;
 }
 
-/** 澎湃 OS 风格弹簧按压：跟手缩放到 0.95 */
-const PRESS_SPRING = { damping: 15, stiffness: 150, mass: 0.6 };
+/** 澎湃 OS 风格微弹按压：跟手缩放到 0.965，松手干净回位 */
+const PRESS_SPRING = { damping: 18, stiffness: 220, mass: 0.65 };
 
-export function CourseCard({
+export const CourseCard = React.memo(function CourseCard({
   course,
   periods,
   active = false,
+  finished = false,
+  countdownLabel,
   conflict = false,
+  conflictWith,
   index = 0,
   onPress,
   onLongPress,
 }: CourseCardProps) {
-  const palette = coursePalette[course.color];
+  const palette = coursePalette[course.color] ?? coursePalette.sky;
   const glass = useSettings((s) => s.material === "glass");
+  const quality = useSettings((s) => s.renderQuality);
+  const reducedMotion = useReducedMotion();
+  const animActive = useAnimationActive(active);
   const solidActive = active && !glass;
-  const time = getCourseTime(periods, course.startPeriod, course.endPeriod, course);
+  const dimmed = finished && !active;
+
+  const time = useMemo(
+    () => getCourseTime(periods, course.startPeriod, course.endPeriod, course),
+    [periods, course],
+  );
+  const periodLabel =
+    course.startPeriod === course.endPeriod
+      ? `第${course.startPeriod}节`
+      : `第${course.startPeriod}–${course.endPeriod}节`;
+  const weeksSummary = useMemo(
+    () => formatWeeksCompact(course.weeks),
+    [course.weeks],
+  );
+  const conflictText = useMemo(() => {
+    if (!conflict && !conflictWith?.length) return "";
+    if (conflictWith?.length) {
+      const names = [...new Set(conflictWith)].slice(0, 2).join("、");
+      return `与 ${names} 冲突`;
+    }
+    return "时间冲突";
+  }, [conflict, conflictWith]);
 
   /* ---------------- 按压跟手缩放（UI 线程弹簧） ---------------- */
   const scale = useSharedValue(1);
 
-  const tap = Gesture.Tap()
-    .onBegin(() => {
-      scale.value = withSpring(0.95, PRESS_SPRING);
-    })
-    .onFinalize(() => {
-      scale.value = withSpring(1, PRESS_SPRING);
-    })
-    .onEnd(() => {
-      if (onPress) runOnJS(onPress)(course);
-    });
+  const gesture = useMemo(() => {
+    const tap = Gesture.Tap()
+      .onBegin(() => {
+        scale.value = withSpring(0.965, PRESS_SPRING);
+      })
+      .onFinalize(() => {
+        scale.value = withSpring(1, PRESS_SPRING);
+      })
+      .onEnd((_e, success) => {
+        if (success && onPress) runOnJS(onPress)(course);
+      });
 
-  const longPress = Gesture.LongPress()
-    .minDuration(350)
-    .onBegin(() => {
-      scale.value = withSpring(0.95, PRESS_SPRING);
-    })
-    .onFinalize(() => {
-      scale.value = withSpring(1, PRESS_SPRING);
-    })
-    .onStart(() => {
-      if (onLongPress) runOnJS(onLongPress)(course);
-    });
+    if (!onLongPress) return tap;
 
-  const gesture = Gesture.Race(longPress, tap);
+    const longPress = Gesture.LongPress()
+      .minDuration(360)
+      .onBegin(() => {
+        scale.value = withSpring(0.965, PRESS_SPRING);
+      })
+      .onFinalize(() => {
+        scale.value = withSpring(1, PRESS_SPRING);
+      })
+      .onStart(() => {
+        runOnJS(onLongPress)(course);
+      });
+
+    return Gesture.Race(longPress, tap);
+  }, [course, onLongPress, onPress, scale]);
 
   const pressStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
   }));
 
-  /* ---------------- 进行中呼吸光效 ---------------- */
+  /* ---------------- 进行中呼吸光效（后台/流畅画质/减少动态自动停表） ---------------- */
   const glow = useSharedValue(0);
+  const allowPulse = active && animActive && !reducedMotion && renderQuality(quality).idleAnimation;
   useEffect(() => {
-    if (active) {
+    if (allowPulse) {
+      glow.value = 0.32;
       glow.value = withRepeat(
         withSequence(
-          withTiming(1, { duration: 1400 }),
-          withTiming(0.35, { duration: 1400 }),
+          withTiming(1, { duration: 1500, easing: Easing.inOut(Easing.sin) }),
+          withTiming(0.32, { duration: 1500, easing: Easing.inOut(Easing.sin) }),
         ),
         -1,
         true,
       );
+    } else if (active) {
+      cancelAnimation(glow);
+      glow.value = 0.7;
     } else {
-      glow.value = withTiming(0, { duration: 300 });
+      cancelAnimation(glow);
+      glow.value = 0;
     }
     return () => {
+      cancelAnimation(glow);
       glow.value = 0;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active]);
+  }, [active, allowPulse, glow]);
 
   const glowStyle = useAnimatedStyle(() => ({
     opacity: glow.value,
   }));
 
+  const statusPill = active
+    ? countdownLabel || "进行中"
+    : dimmed
+      ? "已结束"
+      : countdownLabel || "";
+
+  const entering = reducedMotion
+    ? undefined
+    : FadeInDown.delay(Math.min(index, 6) * 42)
+        .duration(240)
+        .easing(Easing.out(Easing.cubic));
+
   return (
-    /* 入场动画与按压缩放必须分层：布局动画(FadeInDown)会写 transform，
-       与 pressStyle 的 scale 挂在同一节点会冲突（Reanimated 告警 + Android 端
-       卡片卸载时反复抛原生错误），按官方建议外层管入场、内层管缩放 */
-    <Animated.View entering={FadeInDown.delay(index * 70).springify()}>
+    /* 入场动画、按压缩放与完成弱化透明度分层，避免 FadeInDown 覆写 opacity 或 transform */
+    <Animated.View entering={entering}>
+      <View style={dimmed ? { opacity: 0.62 } : undefined}>
       <Animated.View style={pressStyle}>
         <GestureDetector gesture={gesture}>
           <View>
             <GlassContainer
               radius={24}
-              borderOpacity={active ? glass ? 0.24 : 0 : 0.14}
+              borderOpacity={active ? (glass ? 0.28 : 0) : 0.2}
               style={
-                solidActive ? {
+                solidActive
+                  ? {
                       backgroundColor: palette.solid,
                       borderColor: "transparent",
                     }
@@ -129,97 +189,201 @@ export function CourseCard({
               {glass ? (
                 <LinearGradient
                   pointerEvents="none"
-                  colors={[`${palette.solid}${active ? "30" : "0D"}`, `${palette.solid}00`]}
+                  colors={[
+                    `${palette.solid}${active ? "22" : "0A"}`,
+                    `${palette.solid}00`,
+                  ]}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 0.85 }}
                   style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}
                 />
               ) : null}
-              {glass ? (
-                <View pointerEvents="none" style={{
-                  position: "absolute", left: 0, top: 22, bottom: 22,
-                  width: 3, borderRadius: 2, backgroundColor: palette.solid,
-                  opacity: active ? 0.9 : 0.5,
-                }} />
+              {!solidActive ? (
+                <View
+                  pointerEvents="none"
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    top: 18,
+                    bottom: 18,
+                    width: 3.5,
+                    borderRadius: 2,
+                    backgroundColor: palette.solid,
+                    opacity: active ? 0.95 : dimmed ? 0.35 : 0.72,
+                  }}
+                />
               ) : null}
+
               <View className="relative px-4 py-3.5">
-                {/* 进行中 胶囊标签 */}
-                {active ? (
-                  <View className="absolute right-4 top-3.5 flex-row items-center rounded-full border border-white/20 bg-white/15 px-2 py-1">
-                    <View className="mr-1.5 h-1.5 w-1.5 rounded-full" style={{ backgroundColor: glass ? palette.solid : "#FFFFFF" }} />
-                    <Text className={`text-[10px] font-semibold tracking-wide ${solidActive ? "text-white" : "text-slate-600 dark:text-slate-200"}`}>
-                      进行中
+                {/* 状态胶囊：进行中 / 倒计时 / 已结束 */}
+                {statusPill ? (
+                  <View
+                    className={`absolute right-3.5 top-3.5 flex-row items-center rounded-full border px-2.5 py-1 ${
+                      active
+                        ? glass
+                          ? "border-white/95 bg-white/88"
+                          : "border-white/25 bg-white/18"
+                        : dimmed
+                          ? "border-slate-300/30 bg-slate-400/15 dark:border-white/10 dark:bg-white/[0.06]"
+                          : glass
+                            ? "border-white/75 bg-white/55 dark:border-white/20 dark:bg-white/15"
+                            : "border-sky-400/35 bg-sky-400/15"
+                    }`}
+                  >
+                    {active ? (
+                      <View
+                        className="mr-1.5 h-1.5 w-1.5 rounded-full"
+                        style={{ backgroundColor: glass ? palette.solid : "#FFFFFF" }}
+                      />
+                    ) : null}
+                    <Text
+                      className={`text-[10px] font-semibold tracking-wide ${
+                        solidActive
+                          ? "text-white"
+                          : active
+                            ? glass
+                              ? "text-slate-800"
+                              : "text-slate-700 dark:text-slate-100"
+                            : dimmed
+                              ? "text-slate-500 dark:text-slate-400"
+                              : "text-sky-700 dark:text-sky-300"
+                      }`}
+                    >
+                      {statusPill}
                     </Text>
                   </View>
                 ) : null}
 
-                {/* 课程名：不设 lineHeight —— Android 端 lineHeight + numberOfLines
-                  会按 lineHeight×行数算高度，第二行被提前省略号截断；
-                  右侧留白仅在显示「进行中」胶囊时需要 */}
+                {/* 课程名：不设 lineHeight 避免 Android 提前截断 */}
                 <Text
                   numberOfLines={2}
-                  className={`text-[15px] font-bold ${active ? "pr-16" : ""} ${
+                  className={`text-[15.5px] font-bold ${statusPill ? "pr-20" : ""} ${
                     solidActive ? "text-white" : "text-slate-800 dark:text-slate-100"
                   }`}
                 >
                   {course.name}
                 </Text>
 
-                {/* 时间 + 冲突提示 */}
-                <View className="mt-1.5 flex-row items-center">
+                {/* 时间 + 节次 + 周次 */}
+                <View className="mt-1.5 flex-row flex-wrap items-center gap-x-2 gap-y-1">
                   <Text
-                    className={`text-[11px] font-medium ${
+                    className={`text-[11.5px] font-semibold ${
                       solidActive
-                        ? "text-white/85"
-                        : "text-slate-500 dark:text-slate-400"
+                        ? "text-white/90"
+                        : "text-slate-600 dark:text-slate-300"
                     }`}
                   >
                     {time.startTime}–{time.endTime}
                   </Text>
-                  {conflict ? (
-                    <View className="ml-2 flex-row items-center rounded-full border border-amber-400/50 bg-amber-400/25 px-2 py-0.5">
-                      <Ionicons name="warning" size={9} color="#F59E0B" />
-                      <Text className="ml-1 text-[9px] font-bold text-amber-600 dark:text-amber-300">
-                        时间冲突
+                  <View
+                    className={`rounded-md px-1.5 py-0.5 ${
+                      solidActive
+                        ? "bg-white/20"
+                        : "bg-slate-400/15 dark:bg-white/[0.07]"
+                    }`}
+                  >
+                    <Text
+                      className={`text-[9.5px] font-semibold ${
+                        solidActive
+                          ? "text-white/95"
+                          : "text-slate-600 dark:text-slate-300"
+                      }`}
+                    >
+                      {periodLabel}
+                    </Text>
+                  </View>
+                  {weeksSummary ? (
+                    <Text
+                      className={`text-[10px] ${
+                        solidActive
+                          ? "text-white/75"
+                          : "text-slate-400 dark:text-slate-500"
+                      }`}
+                    >
+                      {weeksSummary}
+                    </Text>
+                  ) : null}
+                </View>
+
+                {/* 冲突提示（直接展示具体冲突课程名） */}
+                {conflictText ? (
+                  <View className="mt-1.5 self-start flex-row items-center rounded-full border border-amber-400/50 bg-amber-400/20 px-2 py-0.5">
+                    <Ionicons name="warning" size={10} color="#F59E0B" />
+                    <Text
+                      numberOfLines={1}
+                      className="ml-1 text-[10px] font-bold text-amber-700 dark:text-amber-300"
+                    >
+                      {conflictText}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {/* 教室 / 教师 */}
+                <View className="mt-2 flex-row items-center gap-x-3">
+                  {course.classroom ? (
+                    <View className="flex-1 flex-row items-center">
+                      <View
+                        className={`mr-1.5 h-1.5 w-1.5 rounded-full ${
+                          solidActive ? "bg-white/90" : palette.bar
+                        }`}
+                      />
+                      <Text
+                        numberOfLines={1}
+                        className={`flex-1 text-[11.5px] font-medium ${
+                          solidActive
+                            ? "text-white/95"
+                            : "text-slate-700 dark:text-slate-200"
+                        }`}
+                      >
+                        {course.classroom}
+                      </Text>
+                    </View>
+                  ) : null}
+                  {course.teacher ? (
+                    <View className="flex-row items-center">
+                      <Ionicons
+                        name="person-outline"
+                        size={11}
+                        color={solidActive ? "rgba(255,255,255,0.85)" : "#94A3B8"}
+                      />
+                      <Text
+                        numberOfLines={1}
+                        className={`ml-1 text-[11px] ${
+                          solidActive
+                            ? "text-white/85"
+                            : "text-slate-500 dark:text-slate-400"
+                        }`}
+                      >
+                        {course.teacher}
                       </Text>
                     </View>
                   ) : null}
                 </View>
 
-                {/* 教师 / 教室 */}
-                <View className="mt-1 gap-y-0.5">
-                  <Text
-                    numberOfLines={1}
-                    className={`text-[11px] ${
-                      solidActive
-                        ? "text-white/85"
-                        : "text-slate-500 dark:text-slate-400"
-                    }`}
-                  >
-                    {course.teacher}
-                  </Text>
-                  <View className="flex-row items-center">
-                    <View
-                      className={`mr-1 h-1.5 w-1.5 rounded-full ${
-                        solidActive ? "bg-white/85" : palette.bar
-                      }`}
+                {/* 课程备注（若有） */}
+                {course.note?.trim() ? (
+                  <View className="mt-1.5 flex-row items-center">
+                    <Ionicons
+                      name="document-text-outline"
+                      size={10.5}
+                      color={solidActive ? "rgba(255,255,255,0.8)" : "#94A3B8"}
                     />
                     <Text
                       numberOfLines={1}
-                      className={`flex-1 text-[11px] font-medium ${
-                        solidActive ? "text-white/95" : "text-slate-600 dark:text-slate-300"
+                      className={`ml-1 flex-1 text-[10.5px] ${
+                        solidActive
+                          ? "text-white/80"
+                          : "text-slate-500 dark:text-slate-400"
                       }`}
                     >
-                      {course.classroom}
+                      {course.note.trim()}
                     </Text>
                   </View>
-                </View>
+                ) : null}
               </View>
             </GlassContainer>
 
-            {/* 呼吸光晕（覆盖在卡片上层的描边，靠 opacity 呼吸）：
-              不用 Android elevation 阴影 —— 转场/缩放动画时会被光栅化成
-              实心灰块，且会强制抬升 z 层级盖住卡片内容 */}
+            {/* 呼吸光晕描边：不用 Android elevation，避免缩放光栅化灰块 */}
             {active ? (
               <Animated.View
                 pointerEvents="none"
@@ -231,8 +395,8 @@ export function CourseCard({
                     left: 0,
                     right: 0,
                     borderRadius: 24,
-                    borderWidth: 1,
-                    borderColor: glass ? `${palette.solid}80` : "#FFFFFF",
+                    borderWidth: 1.2,
+                    borderColor: glass ? `${palette.solid}88` : "#FFFFFF",
                   },
                   glowStyle,
                 ]}
@@ -241,17 +405,18 @@ export function CourseCard({
           </View>
         </GestureDetector>
       </Animated.View>
+      </View>
     </Animated.View>
   );
-}
+});
 
 /** 极简占位卡片（空闲时段） */
-export function EmptySlotCard({ label }: { label: string }) {
+export const EmptySlotCard = React.memo(function EmptySlotCard({ label }: { label: string }) {
   return (
     <View className="items-center justify-center rounded-[24px] border border-dashed border-slate-300/60 bg-white/25 px-3 py-4 dark:border-slate-600/50 dark:bg-white/[0.03]">
-      <Text className="text-[10px] text-slate-400 dark:text-slate-500">
+      <Text className="text-[10.5px] text-slate-400 dark:text-slate-500">
         {label}
       </Text>
     </View>
   );
-}
+});

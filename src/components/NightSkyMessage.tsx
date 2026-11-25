@@ -1,149 +1,242 @@
 /* eslint-disable react-hooks/immutability -- Reanimated shared values drive UI-thread transitions. */
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
-import { chat } from "@/services/deepseek";
-import { useSettings } from "@/store/useSettings";
+import {
+  NIGHT_SKY_QUOTES,
+  QUOTE_CATEGORY_LABELS,
+  createQuoteBag,
+  formatQuoteAttribution,
+  parseHitokotoQuote,
+  type NightSkyQuote,
+} from "@/constants/nightSkyQuotes";
 import { tapHaptic } from "@/utils/haptics";
 
-const LETTERS = [
-  "今晚不用成为很厉害的人。在这里，安静地待一会儿就很好。",
-  "没有赶上的日落，可以留给明天。此刻的晚风也值得停一停。",
-  "有些日子只是好好吃饭、慢慢呼吸，就已经很用力了。",
-  "星星也有被云遮住的时候，你不必每一天都闪闪发光。",
-  "把暂时想不明白的事放在这里。回去时，只带走一点轻盈。",
-  "今天的进度可以停在这里，你的生活还有很多温柔的空白。",
-];
+const HITOKOTO_URL =
+  "https://v1.hitokoto.cn/?c=d&c=h&c=i&c=k&min_length=12&max_length=46";
+const ONLINE_TIMEOUT_MS = 4000;
 
-/** Isolated from the sky: fetching and changing a letter never rerender its particles. */
+/** 跨多次进入星空共享的洗牌袋，避免每次夜航都停在第一句 */
+const sharedQuoteBag = createQuoteBag(NIGHT_SKY_QUOTES);
+
+async function fetchOnlineQuote(
+  signal: AbortSignal,
+  excludeText: string,
+): Promise<NightSkyQuote | null> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (signal.aborted) return null;
+    const response = await fetch(HITOKOTO_URL, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      signal,
+    });
+    if (!response.ok) return null;
+    const data: unknown = await response.json();
+    const parsed = parseHitokotoQuote(data);
+    if (parsed && parsed.text !== excludeText) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+/** Isolated from the sky: changing quotes never rerenders background particles. */
 export function NightSkyMessage({ closing }: { closing: boolean }) {
-  const apiKey = useSettings((s) => s.apiKey);
-  const [letter, setLetter] = useState(LETTERS[0]);
-  const [source, setSource] = useState("星空来信");
-  const [busy, setBusy] = useState(Boolean(apiKey));
-  const [request, setRequest] = useState(0);
-  const previous = useRef(LETTERS[0]);
-  const serial = useRef(0);
+  const [quote, setQuote] = useState<NightSkyQuote>(() => sharedQuoteBag.next());
+  const [busy, setBusy] = useState(false);
+  const [fallbackNote, setFallbackNote] = useState(false);
+
+  const currentRef = useRef<NightSkyQuote>(quote);
+  const controllerRef = useRef<AbortController | null>(null);
+  const serialRef = useRef(0);
+
   const opacity = useSharedValue(0);
   const style = useAnimatedStyle(() => ({ opacity: opacity.value }));
 
   useEffect(() => {
+    currentRef.current = quote;
     opacity.value = 0;
-    opacity.value = withTiming(1, { duration: 480 });
-  }, [letter, opacity]);
+    opacity.value = withTiming(1, { duration: 420 });
+  }, [quote, opacity]);
+
+  const abortInFlight = useCallback(() => {
+    serialRef.current += 1;
+    if (controllerRef.current) {
+      controllerRef.current.abort();
+      controllerRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
+    if (closing) abortInFlight();
+  }, [closing, abortInFlight]);
+
+  useEffect(() => () => abortInFlight(), [abortInFlight]);
+
+  const handleNextLocal = useCallback(() => {
     if (closing) return;
+    tapHaptic();
+    abortInFlight();
+    setBusy(false);
+    setFallbackNote(false);
+    const next = sharedQuoteBag.next(currentRef.current.id);
+    setQuote(next);
+  }, [closing, abortInFlight]);
+
+  const handleFetchOnline = useCallback(async () => {
+    if (closing || busy) return;
+    tapHaptic();
+    abortInFlight();
+
+    const id = ++serialRef.current;
     const controller = new AbortController();
-    const id = ++serial.current;
-    // Let the entrance settle before starting network work.
-    const timer = setTimeout(
-      async () => {
-        setBusy(Boolean(apiKey));
-        if (!apiKey) {
-          const text = LETTERS[request % LETTERS.length];
-          previous.current = text;
-          setLetter(text);
-          setSource("星空来信");
-          return;
-        }
-        try {
-          const raw = await chat(
-            [
-              {
-                role: "system",
-                content:
-                  "为星空休憩空间写一句原创中文治愈短笺，24到50字。温柔、具体、克制，允许休息，不说教、不许诺、不诊断、不冒充名人名言。只返回句子，不加标题、引号或Markdown。",
-              },
-              {
-                role: "user",
-                content: `现在是本地${new Date().getHours()}点。用星光、晚风或日常的小事表达陪伴。换一个意象，不重复这句：${previous.current}`,
-              },
-            ],
-            apiKey,
-            { temperature: 0.9, timeoutMs: 12000, signal: controller.signal },
-          );
-          const text = raw.trim().replace(/^[“"「]+|[”"」]+$/g, "");
-          if (text.length < 8 || text.length > 64 || /[\r\n#*<>]/.test(text))
-            throw new Error("Invalid letter");
-          if (controller.signal.aborted || id !== serial.current) return;
-          previous.current = text;
-          setLetter(text);
-          setSource("神秘星笺");
-        } catch {
-          if (controller.signal.aborted || id !== serial.current) return;
-          const text = LETTERS[request % LETTERS.length];
-          previous.current = text;
-          setLetter(text);
-          setSource("离线星笺");
-        } finally {
-          if (!controller.signal.aborted && id === serial.current)
-            setBusy(false);
-        }
-      },
-      request === 0 ? 850 : 150,
-    );
-    return () => {
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [apiKey, request, closing]);
+    controllerRef.current = controller;
+    const timeout = setTimeout(() => controller.abort(), ONLINE_TIMEOUT_MS);
+
+    setBusy(true);
+    setFallbackNote(false);
+
+    try {
+      const online = await fetchOnlineQuote(
+        controller.signal,
+        currentRef.current.text,
+      );
+      if (controller.signal.aborted || id !== serialRef.current) return;
+      if (online) {
+        setQuote(online);
+      } else {
+        setFallbackNote(true);
+        setQuote(sharedQuoteBag.next(currentRef.current.id));
+      }
+    } catch {
+      if (id !== serialRef.current) return;
+      setFallbackNote(true);
+      setQuote(sharedQuoteBag.next(currentRef.current.id));
+    } finally {
+      clearTimeout(timeout);
+      if (controllerRef.current === controller) {
+        controllerRef.current = null;
+      }
+      if (id === serialRef.current) {
+        setBusy(false);
+      }
+    }
+  }, [closing, busy, abortInFlight]);
+
+  const isFetching = busy && !closing;
+  const headerLabel = isFetching
+    ? "正在星海采一句…"
+    : fallbackNote
+      ? "离线 · 书影精选"
+      : QUOTE_CATEGORY_LABELS[quote.category];
+  const attribution = formatQuoteAttribution(quote);
 
   return (
-    <View style={{ marginTop: 12 }}>
+    <View style={{ marginTop: 10 }}>
       <View
         style={{
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "space-between",
+          gap: 8,
         }}
       >
-        <Text style={{ color: "#A8B6D1", fontSize: 10, letterSpacing: 2 }}>
-          {busy ? "星光正在写信…" : source}
-        </Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="换一句治愈星笺"
-          accessibilityState={{ disabled: busy || closing, busy }}
-          disabled={busy || closing}
-          hitSlop={4}
-          onPress={() => {
-            tapHaptic();
-            setBusy(Boolean(apiKey));
-            setRequest((v) => v + 1);
+        <Text
+          numberOfLines={1}
+          style={{
+            flexShrink: 1,
+            color: "#A8B6D1",
+            fontSize: 10,
+            letterSpacing: 1.8,
           }}
-          style={({ pressed }) => ({
-            minHeight: 44,
-            justifyContent: "center",
-            paddingHorizontal: 12,
-            borderRadius: 22,
-            backgroundColor: pressed
-              ? "rgba(186,211,255,0.14)"
-              : "rgba(186,211,255,0.06)",
-            opacity: busy ? 0.5 : 1,
-          })}
         >
-          <Text style={{ color: "#C5D7F3", fontSize: 11 }}>换一封 ↗</Text>
-        </Pressable>
+          {headerLabel}
+        </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="联网随机采一句书影名言"
+            accessibilityState={{ disabled: isFetching || closing, busy: isFetching }}
+            disabled={isFetching || closing}
+            hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+            onPress={() => {
+              void handleFetchOnline();
+            }}
+            style={({ pressed }) => ({
+              minHeight: 34,
+              justifyContent: "center",
+              paddingHorizontal: 10,
+              borderRadius: 17,
+              borderWidth: 1,
+              borderColor: "rgba(125,211,252,0.22)",
+              backgroundColor: pressed
+                ? "rgba(125,211,252,0.18)"
+                : "rgba(125,211,252,0.08)",
+              opacity: isFetching ? 0.5 : 1,
+            })}
+          >
+            <Text style={{ color: "#BAE6FD", fontSize: 11 }}>联网 ✦</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="换一句精选书影语录"
+            accessibilityState={{ disabled: closing }}
+            disabled={closing}
+            hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+            onPress={handleNextLocal}
+            style={({ pressed }) => ({
+              minHeight: 34,
+              justifyContent: "center",
+              paddingHorizontal: 11,
+              borderRadius: 17,
+              backgroundColor: pressed
+                ? "rgba(186,211,255,0.16)"
+                : "rgba(186,211,255,0.08)",
+            })}
+          >
+            <Text style={{ color: "#C5D7F3", fontSize: 11 }}>换一句 ↗</Text>
+          </Pressable>
+        </View>
       </View>
-      <Animated.View style={style}>
+      <Animated.View
+        style={[
+          {
+            minHeight: 82,
+            paddingTop: 8,
+            justifyContent: "space-between",
+          },
+          style,
+        ]}
+      >
         <Text
           accessibilityLiveRegion="polite"
           style={{
             color: "#ECE9F5",
             fontSize: 15,
-            lineHeight: 25,
-            minHeight: 75,
-            paddingTop: 6,
-            letterSpacing: 0.5,
+            lineHeight: 24,
+            letterSpacing: 0.4,
           }}
         >
-          {letter}
+          {quote.text}
         </Text>
+        {attribution ? (
+          <Text
+            numberOfLines={1}
+            style={{
+              color: "rgba(218,229,250,0.72)",
+              fontSize: 11.5,
+              marginTop: 6,
+              textAlign: "right",
+              letterSpacing: 0.5,
+            }}
+          >
+            {attribution}
+          </Text>
+        ) : null}
       </Animated.View>
     </View>
   );

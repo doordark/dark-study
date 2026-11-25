@@ -229,8 +229,104 @@ async function run() {
   await store.persist.rehydrate();
   assert.equal(store.getState().messages[0].id, user.id);
   assert.equal(store.getState().autoMemory, true);
+  assert.equal(store.getState().autoReflect, true);
   assert.ok(Array.isArray(store.getState().petMessages));
-  console.log("Whale checks passed: persona bounds and preset switching, contextual stickers and correction, image-only and shared history, evidence validation, manual protection, request races, deletion, archive and legacy storage.");
+  assert.ok(Array.isArray(store.getState().episodes));
+  assert.ok(Array.isArray(store.getState().openLoops));
+  assert.ok(Array.isArray(store.getState().reflections));
+
+  // New cognitive memory checks: Mem0 delete op, semantic dedup, episodes, open loops, 3D retrieval, PAD emotion & bond.
+  const emotion = load("src/utils/whaleEmotion.ts");
+  const behavior = load("src/utils/whaleBehavior.ts");
+  let emo = emotion.createInitialEmotion(persona.DEFAULT_WHALE_PERSONA, 1_000_000);
+  emo = emotion.applyEmotionDelta(emo, { pleasure: 35, arousal: 28, reason: "被夸奖了" }, 1_000_100, persona.DEFAULT_WHALE_PERSONA);
+  assert.equal(emotion.describeWhaleEmotion(emo).id, "ecstatic");
+  const decayedEmo = emotion.decayWhaleEmotion(emo, 1_000_100 + 24 * 3_600_000, persona.DEFAULT_WHALE_PERSONA);
+  assert.ok(decayedEmo.pleasure < emo.pleasure, "PAD emotion decays smoothly toward persona baseline");
+  assert.equal(decayedEmo.reason, "", "stale short-term emotion reason clears after 6h");
+
+  let bond = emotion.createInitialBondProfile(1_000_000);
+  bond = emotion.recordBondActivity(bond, "chat", 1_000_100);
+  assert.equal(bond.chatTurns, 1);
+  assert.ok(bond.xp >= 6);
+  const stage = emotion.resolveBondStage({ ...bond, xp: 600 }, 80, 10);
+  assert.equal(stage.level, 4, "bond stage advances with companionship XP");
+
+  // Mem0 upsert + semantic dedup + delete (respecting manual immutability & evidence check)
+  const teaMsg = { id: "u-tea", role: "user", content: "我平时特别爱喝茉莉花茶", timestamp: 300 };
+  let f2 = memory.mergeWhaleFacts([], [{ key: "饮品喜好", category: "preference", importance: 7, text: "用户特别爱喝茉莉花茶", evidence: "特别爱喝茉莉花茶" }], teaMsg, 301);
+  assert.equal(f2.length, 1);
+  assert.equal(f2[0].category, "preference");
+  const delMsg = { id: "u-del", role: "user", content: "其实我现在不喝茉莉花茶了", timestamp: 310 };
+  f2 = memory.mergeWhaleFacts(f2, [{ op: "delete", key: "饮品喜好", evidence: "不喝茉莉花茶了" }], delMsg, 311);
+  assert.equal(f2.length, 0, "Mem0 delete op removes obsolete auto fact when evidenced");
+  const manualFact = [{ id: "m-1", key: "饮品喜好", text: "爱喝白开水", source: "manual", updatedAt: 300 }];
+  assert.equal(memory.mergeWhaleFacts(manualFact, [{ op: "delete", key: "饮品喜好", evidence: "不喝茉莉花茶了" }], delMsg, 312).length, 1, "manual facts cannot be deleted by auto op");
+
+  // Episodes & prospective open loops
+  const examMsg = { id: "u-exam", role: "user", content: "这周五要考数据结构，我有点紧张", timestamp: 400 };
+  const eps = memory.mergeWhaleEpisode([], { summary: "用户提到周五考数据结构感到紧张", emotion: "焦虑", importance: 8 }, examMsg, 401);
+  assert.equal(eps.length, 1);
+  let loops = memory.mergeWhaleOpenLoops([], { topic: "数据结构考试", dueHint: "明天", evidence: "这周五要考数据结构", status: "open" }, examMsg, 401);
+  assert.equal(loops.length, 1);
+  assert.ok(loops[0].dueAt > 401, "relative dueHint parses into timestamp");
+  const promptWithCognition = memory.buildWhaleMemoryPrompt(f2, [], [examMsg], {
+    episodes: eps,
+    openLoops: loops,
+    reflections: [{ id: "ref-1", kind: "insight", text: "考前紧张时喜欢被温柔打气", importance: 8, updatedAt: 400 }],
+    now: 402,
+  });
+  assert.match(promptWithCognition, /数据结构考试/);
+  assert.match(promptWithCognition, /考前紧张时喜欢被温柔打气/);
+  assert.match(promptWithCognition, /近期重要情景回忆/);
+
+  loops = memory.mergeWhaleOpenLoops(loops, { topic: "数据结构考试", evidence: "考完数据结构啦", status: "resolved" }, { id: "u-done", role: "user", content: "考完数据结构啦！", timestamp: 500 }, 501);
+  assert.ok(loops[0].resolvedAt, "resolved status closes matching open loop");
+
+  // Reflection application race protection & manual fact preservation
+  store.getState().clearMemory();
+  store.getState().setMessages([examMsg]);
+  store.getState().saveFact("手动记住的事");
+  const manualSavedId = store.getState().facts[0].id;
+  store.getState().learnCognitive({
+    memoryUpdates: [{ key: "考试", text: "准备数据结构考试", evidence: "考数据结构" }],
+    episode: { summary: "聊到数据结构考试有点紧张", emotion: "焦虑", importance: 7 },
+    openLoop: { topic: "数据结构考试", dueHint: "周五", evidence: "这周五要考数据结构", status: "open" },
+    moodShift: { pleasure: -6, arousal: 8, reason: "担心用户考前太紧张" },
+  }, examMsg, store.getState().revision, 450);
+  assert.equal(store.getState().facts.length, 2);
+  assert.equal(store.getState().episodes.length, 1);
+  assert.equal(store.getState().openLoops.length, 1);
+  const autoFactId = store.getState().facts.find((f) => f.source === "auto").id;
+  const staleEpoch = store.getState().epoch;
+  const staleRev = store.getState().revision;
+  store.getState().applyReflection({
+    reflections: [{ id: "r1", kind: "insight", text: "考前需要安静鼓励", importance: 8, updatedAt: 460 }],
+    prunedFactIds: [manualSavedId, autoFactId],
+  }, staleEpoch, staleRev, 460);
+  assert.equal(store.getState().reflections.length, 1);
+  assert.equal(store.getState().facts.length, 1, "pruning drops targeted auto fact but preserves manual fact");
+  assert.equal(store.getState().facts[0].id, manualSavedId);
+
+  // Autonomous pet behavior engine checks
+  const sampleNow = new Date(2026, 10, 25, 7, 50, 0); // Wed 07:50
+  const alert = behavior.findUpcomingCourse({
+    id: "s1", name: "测试", kind: "fall", startDate: "2026-09-07", endDate: "2027-01-10", totalWeeks: 18,
+    periods: [{ index: 1, label: "1-2", startTime: "08:00", endTime: "09:40" }],
+    courses: [{ id: "c1", name: "数据结构", teacher: "王老师", classroom: "A201", weekday: 3, startPeriod: 1, endPeriod: 1, weeks: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16], color: "sky" }],
+  }, sampleNow, 20);
+  assert.ok(alert && alert.name === "数据结构" && alert.minutesUntil === 10, "upcoming course detected accurately");
+  const decision = behavior.decideAutonomousBehavior({
+    care: { fullness: 80, mood: 80, bond: 60, lastSeenAt: Date.now() },
+    persona: persona.DEFAULT_WHALE_PERSONA,
+    nearEdge: false,
+    hour: 7,
+    upcomingCourse: alert,
+  });
+  assert.equal(decision.kind, "action");
+  assert.match(decision.bubble, /数据结构/);
+
+  console.log("Whale checks passed: persona bounds, 4-tier cognitive memory, Mem0 upsert/delete, episodes, open loops, reflections, PAD emotion, bond growth, autonomous pet engine, request races, deletion, archive and legacy storage.");
 }
 
 run().catch((error) => { console.error(error); process.exitCode = 1; });

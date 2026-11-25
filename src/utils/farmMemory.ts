@@ -1,6 +1,15 @@
 import { PERSONALITIES } from './farmPersonality';
 import { restoreAssignment, type FarmAssignment } from './farmAssignment';
+import {
+  applyFarmEmotionDelta,
+  describeFarmEmotion,
+  normalizeFarmEmotion,
+  socialReactionEmotionDelta,
+  type FarmEmotionDelta,
+  type FarmEmotionState,
+} from './farmEmotion';
 import { FARM_TOPICS, RESIDENTS, RESIDENT_IDS, type FarmTopicId, type ResidentConversation, type ResidentId, type SharedFarmTopic } from './farmLife';
+import { restorePersonaMemoryFields, type FarmMemoryEpisode, type PeerImpression, type PlayerFact } from './farmPersonaMemory';
 
 export const CONTINUE_FARM_CHAT = '接着上次聊';
 export const NPC_CHAT_UNAVAILABLE = '现在不方便聊天，稍后再来找我吧。';
@@ -21,7 +30,17 @@ export interface ResidentMemory {
   affinity: number;
   turns: FarmChatTurn[];
   mood?: SocialMood;
+  /** 4 维连续情绪数值（愉悦/精力/平和/社交，向后兼容旧版存档） */
+  emotion?: FarmEmotionState;
   assignment?: FarmAssignment;
+  /** 长期人格记忆流（Smallville 三因子检索，向后兼容 v4 存档） */
+  episodes?: FarmMemoryEpisode[];
+  /** 对玩家的长期结构化认知（带原话佐证，防编造） */
+  playerFacts?: PlayerFact[];
+  /** 对其他家人的动态关系印象 */
+  peerImpressions?: Partial<Record<ResidentId, PeerImpression>>;
+  /** 阶段性高阶反思 */
+  reflections?: string[];
 }
 export type FarmMemories = Record<ResidentId, ResidentMemory>;
 
@@ -31,6 +50,7 @@ function object(value: unknown): Record<string, unknown> {
 
 export function restoreFarmMemories(raw?: unknown): FarmMemories {
   const value = object(raw);
+  const now = Date.now();
   return Object.fromEntries(RESIDENT_IDS.map(id => {
     const record = object(value[id]);
     const turns = Array.isArray(record.turns) ? record.turns.slice(-MAX_TURNS).flatMap(entry => {
@@ -42,9 +62,35 @@ export function restoreFarmMemories(raw?: unknown): FarmMemories {
     const affinity = typeof record.affinity === 'number' && Number.isFinite(record.affinity)
       ? Math.min(MAX_AFFINITY, Math.max(0, Math.round(record.affinity))) : 0;
     const mood = Object.values(SOCIAL_MOODS).find(item => item === record.mood);
+    const emotion = record.emotion && typeof record.emotion === 'object' && !Array.isArray(record.emotion)
+      ? normalizeFarmEmotion(record.emotion, id, mood, now)
+      : undefined;
     const assignment = restoreAssignment(record.assignment);
-    return [id, { turns, affinity, ...(mood ? { mood } : {}), ...(assignment ? { assignment } : {}) }];
+    const persona = restorePersonaMemoryFields(record);
+    return [id, { turns, affinity, ...(emotion ? { emotion } : {}), ...(mood ? { mood } : {}), ...(assignment ? { assignment } : {}), ...persona }];
   })) as FarmMemories;
+}
+
+/** 快捷读取并兜底居民的 4 维情绪数值 */
+export function getResidentEmotion(memory: ResidentMemory | undefined, id: ResidentId, now = Date.now()): FarmEmotionState {
+  return normalizeFarmEmotion(memory?.emotion, id, memory?.mood, now);
+}
+
+/** 对单个居民的记忆施加一次情绪数值变动，并同步兼容旧 mood 字段 */
+export function shiftResidentMemoryEmotion(
+  memory: ResidentMemory,
+  id: ResidentId,
+  delta: FarmEmotionDelta,
+  now = Date.now(),
+): ResidentMemory {
+  const current = getResidentEmotion(memory, id, now);
+  const nextEmotion = applyFarmEmotionDelta(current, id, delta, now);
+  const desc = describeFarmEmotion(nextEmotion);
+  return {
+    ...memory,
+    emotion: nextEmotion,
+    ...(desc.legacyMood ? { mood: desc.legacyMood } : {}),
+  };
 }
 
 export const affinityLabel = (affinity: number) => affinity >= 60 ? '亲近' : affinity >= 24 ? '熟络' : affinity >= 10 ? '渐熟' : '初识';
@@ -73,14 +119,26 @@ export function recordFarmChatTurn(memory: ResidentMemory, turn: FarmChatTurn, r
   const repeated = continuing || memory.turns.some(previous => !previous.unavailable && normalized(previous.player) === topic);
   const upset = memory.mood === '生气' || memory.mood === '不悦';
   const p = personalityId ? PERSONALITIES[personalityId] : undefined;
-  const interested = p?.interests.some(topic => turn.player.includes(topic)) && turn.player.length >= 6;
+  const interested = Boolean(p?.interests.some(topic => turn.player.includes(topic)) && turn.player.length >= 6);
   const delta = reaction === 'insult' ? -(p?.insultLoss ?? 8) : reaction === 'teasing' ? -(p?.teaseLoss ?? 4)
     : repeated ? 0 : reaction === 'apology' && upset ? (p?.apologyGain ?? 1) : reaction === 'warm' && !upset ? (p?.warmGain ?? 2) : reaction === 'neutral' && !upset && interested ? 1 : 0;
   const mood = reaction === 'neutral' || reaction === 'warm' && upset ? memory.mood : SOCIAL_MOODS[reaction];
+  const actorId: ResidentId = (personalityId && (RESIDENT_IDS as readonly string[]).includes(personalityId) ? personalityId : 'door') as ResidentId;
+  const baseEmotion = normalizeFarmEmotion(memory.emotion, actorId, memory.mood);
+  const nextEmotion = applyFarmEmotionDelta(
+    baseEmotion,
+    actorId,
+    socialReactionEmotionDelta(reaction, interested),
+  );
   return {
     affinity: Math.min(MAX_AFFINITY, Math.max(0, memory.affinity + delta)),
     ...(memory.assignment ? { assignment: memory.assignment } : {}),
     ...(mood ? { mood } : {}),
+    emotion: nextEmotion,
+    ...(memory.episodes?.length ? { episodes: memory.episodes } : {}),
+    ...(memory.playerFacts?.length ? { playerFacts: memory.playerFacts } : {}),
+    ...(memory.peerImpressions && Object.keys(memory.peerImpressions).length ? { peerImpressions: memory.peerImpressions } : {}),
+    ...(memory.reflections?.length ? { reflections: memory.reflections } : {}),
     turns: [...turns, turn].slice(-MAX_TURNS),
   };
 }

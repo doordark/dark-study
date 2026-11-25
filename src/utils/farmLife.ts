@@ -1,5 +1,6 @@
 import { personalityContext } from './farmPersonality';
 import type { FarmDiscussion } from './farmDiscussion';
+import { isRelayIntent } from './farmAssignment';
 
 export const RESIDENT_IDS = ["door", "gu", "xiaoba", "yujie", "weigang", "chicken"] as const;
 export type ResidentId = typeof RESIDENT_IDS[number];
@@ -334,13 +335,38 @@ export function readLifeBatch(raw: string, pair: readonly ResidentId[], rounds: 
     const value = object(JSON.parse(raw));
     if (natural && typeof value.done !== 'boolean') return null;
     const done = natural && value.done === true;
+    if (flexible && Array.isArray(value.lines)) {
+      const minLines = done
+        ? Math.min(rounds * pair.length, Math.max(pair.length, 2 * pair.length))
+        : minimumRounds < rounds
+          ? Math.max(pair.length, minimumRounds * pair.length)
+          : rounds * pair.length;
+      const maxLines = rounds * pair.length;
+      if (value.lines.length < minLines || value.lines.length > maxLines) return null;
+      const lines = readFlexibleLifeLines(value.lines, pair, maxLength);
+      return lines ? { lines, done, report: value.report, memory: value.memory } : null;
+    }
     const count = (done || minimumRounds < rounds) && Array.isArray(value.lines) ? value.lines.length / pair.length : rounds;
     if (!Number.isInteger(count) || count < (done ? Math.min(rounds, 2) : minimumRounds) || count > rounds) return null;
     const lines = readLifeReply(raw, pair, count, flexible, maxLength);
-    return lines ? { lines, done, report: value.report } : null;
+    return lines ? { lines, done, report: value.report, memory: value.memory } : null;
   } catch {
     return null;
   }
+}
+
+function readFlexibleLifeLines(rawLines: unknown[], pair: readonly ResidentId[], maxLength: number): Omit<ResidentLine, 'at'>[] | null {
+  if (!rawLines.length) return null;
+  if (!rawLines.every((raw, i) => {
+    const l = object(raw);
+    const validSpeaker = isResidentId(l.speaker) && pair.includes(l.speaker) && (i === 0 || l.speaker !== object(rawLines[i - 1]).speaker);
+    return validSpeaker && typeof l.text === 'string' && l.text.trim().length > 0 && l.text.length <= maxLength;
+  })) return null;
+  if (!pair.every(id => rawLines.some(line => object(line).speaker === id))) return null;
+  return rawLines.map(raw => {
+    const l = object(raw);
+    return { speaker: l.speaker as ResidentId, text: (l.text as string).trim() };
+  });
 }
 
 export function readLifeReply(raw: string, pair: readonly ResidentId[], rounds = 1, flexible = false, maxLength = 240): Omit<ResidentLine, 'at'>[] | null {
@@ -372,7 +398,7 @@ export function restoreConversations(raw: unknown): ResidentConversation[] {
     const v = object(entry);
     if (Array.isArray(v.lines) && typeof v.id === 'string' && Array.isArray(v.participants)) {
       const participants = [...new Set(v.participants.filter(isResidentId))];
-      const lines = v.lines.map(object).filter(l => isResidentId(l.speaker) && participants.includes(l.speaker) && typeof l.text === 'string' && l.text.length <= 240).slice(0, LONG_TALK_MAX * 3).map(l => ({
+      const lines = v.lines.map(object).filter(l => isResidentId(l.speaker) && participants.includes(l.speaker) && typeof l.text === 'string' && l.text.length <= 240).slice(0, LONG_TALK_MAX * 6).map(l => ({
         speaker: l.speaker as ResidentId,
         text: (l.text as string).trim(),
         at: number(l.at, 0, 0, Number.MAX_SAFE_INTEGER)
@@ -384,11 +410,12 @@ export function restoreConversations(raw: unknown): ResidentConversation[] {
         kind,
         ...(typeof rawDiscussion.topic === 'string' && Object.hasOwn(FARM_TOPICS, rawDiscussion.topic) ? { topic: rawDiscussion.topic as FarmTopicId } : {}),
         ...(typeof rawDiscussion.question === 'string' && v.source === 'player_command' ? { question: rawDiscussion.question.slice(0, 160) } : {}),
+        ...(isRelayIntent(rawDiscussion.intent) ? { intent: rawDiscussion.intent } : {}),
         ...(isResidentId(rawDiscussion.relayedBy) ? { relayedBy: rawDiscussion.relayedBy } : {}),
       } : undefined;
       const restorableRequest = kind === 'request' && participants.length === 2 && !!discussion?.question;
       const interrupted = restorableRequest && v.endedAt === null;
-      if (participants.length && participants.length <= 3 && (lines.length || restorableRequest)) result.push({
+      if (participants.length && participants.length <= 6 && (lines.length || restorableRequest)) result.push({
         ...(kind === 'request' && typeof v.requestOutcome === 'string' ? { requestOutcome: v.requestOutcome.slice(0, 240) } : {}),
         ...(kind === 'request' && (v.requestStatus === 'answered' || v.requestStatus === 'unanswered' || v.requestStatus === 'interrupted')
           ? { requestStatus: v.requestStatus } : {}),

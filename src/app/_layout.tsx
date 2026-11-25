@@ -1,12 +1,16 @@
-import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from "expo-router";
+import { DarkTheme, DefaultTheme, Stack, ThemeProvider, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { colorScheme as appColorScheme, useColorScheme } from "nativewind";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, AppState, Pressable, Text, View } from "react-native";
 import { useDataSession } from '@/store/useDataSession';
 import { recoverInterruptedRestore } from '@/services/restoreTransaction';
 import { flushPendingWrites, withPendingWritesSuspended } from '@/utils/coalescedWriter';
 import { disposeWhaleVoice, stopWhaleVoice } from "@/services/whaleVoice";
+import { stopAllSfx } from "@/services/soundEffects";
+import { useSoundEffects } from "@/store/useSoundEffects";
+import { useWhaleMemory } from "@/store/useWhaleMemory";
+import { useWhalePet } from "@/store/useWhalePet";
 import { useWhaleVoice } from "@/store/useWhaleVoice";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
@@ -14,8 +18,63 @@ import { CourseReminderSync } from "@/components/CourseReminderSync";
 import { CourseWidgetSync } from "@/components/CourseWidgetSync";
 import { ImportTaskOverlay } from "@/components/ImportTaskOverlay";
 import { WhalePet } from "@/components/WhalePet";
+import { triggerWhaleWave, WhaleWaveOverlay } from "@/components/WhaleSummonFX";
 import { useSettings } from "@/store/useSettings";
 import "@/global.css";
+
+/** 衔接大肥鱼界面进出、人格切换与主题色温变更时的全局径向水波纹扩散 */
+function WhaleWaveCoordinator() {
+  const pathname = usePathname();
+  const prevPathRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const prev = prevPathRef.current;
+    prevPathRef.current = pathname;
+    if (!prev || prev === pathname) return;
+    const whaleOn = useWhaleMemory.getState().active || useWhalePet.getState().visible;
+    if (!whaleOn) return;
+    const tint = useSettings.getState().backgroundTint;
+    if (prev === "/assistant" && pathname !== "/assistant") {
+      triggerWhaleWave({ kind: "exit", tint });
+    } else if (prev !== "/assistant" && pathname === "/assistant") {
+      triggerWhaleWave({ kind: "enter", tint });
+    }
+  }, [pathname]);
+
+  useEffect(() => {
+    let settingsReady = useSettings.persist.hasHydrated();
+    const unsubHydrate = useSettings.persist.onFinishHydration(() => {
+      settingsReady = true;
+    });
+    const unsubSettings = useSettings.subscribe((next, prev) => {
+      if (!settingsReady) return;
+      if (
+        next.backgroundTint !== prev.backgroundTint ||
+        next.appearance !== prev.appearance ||
+        next.material !== prev.material
+      ) {
+        triggerWhaleWave({ kind: "theme", tint: next.backgroundTint });
+      }
+    });
+    const unsubMemory = useWhaleMemory.subscribe((next, prev) => {
+      if (!prev.hydrated || !next.hydrated) return;
+      if (next.active !== prev.active) {
+        triggerWhaleWave({
+          kind: next.active ? "summon" : "leave",
+          tint: useSettings.getState().backgroundTint,
+          silent: true,
+        });
+      }
+    });
+    return () => {
+      unsubHydrate();
+      unsubSettings();
+      unsubMemory();
+    };
+  }, []);
+
+  return <WhaleWaveOverlay />;
+}
 
 export default function RootLayout() {
   const { colorScheme } = useColorScheme();
@@ -38,16 +97,18 @@ export default function RootLayout() {
   }, [retry]);
 
   useEffect(() => {
-
     void useWhaleVoice.getState().hydrate();
+    void useSoundEffects.getState().hydrate();
     const state = AppState.addEventListener("change", (next) => {
-      if (next !== "active") { stopWhaleVoice(); void flushPendingWrites().catch(() => {}); }
+      if (next !== "active") { stopWhaleVoice(); stopAllSfx(); void flushPendingWrites().catch(() => {}); }
     });
     const unsubscribe = useWhaleVoice.subscribe((next, prev) => {
       if (!next.on && prev.on) stopWhaleVoice();
-
     });
-    return () => { state.remove(); unsubscribe(); disposeWhaleVoice(); };
+    const unsubscribeSfx = useSoundEffects.subscribe((next, prev) => {
+      if (!next.on && prev.on) stopAllSfx();
+    });
+    return () => { state.remove(); unsubscribe(); unsubscribeSfx(); disposeWhaleVoice(); stopAllSfx(); };
   }, []);
 
   // Reapply the saved theme after storage hydration, including direct web loads.
@@ -90,6 +151,8 @@ export default function RootLayout() {
         <CourseReminderSync />
         <CourseWidgetSync />
         <ImportTaskOverlay />
+        {/* 大肥鱼进退场与主题切换径向扩散波纹层（精确锚定底部中央按钮） */}
+        <WhaleWaveCoordinator />
         {/* 大肥鱼桌宠：从对话里叫出来后常驻在所有页面之上 */}
         <WhalePet key={`pet-${dataRevision}`} />
         {restoring ? <View style={{ position: 'absolute', inset: 0, backgroundColor: isDark ? '#111928EE' : '#FFFFFFEE', justifyContent: 'center', alignItems: 'center', gap: 14 }}>

@@ -7,7 +7,8 @@ let response;
 const mocks = {
   "@/services/deepseek": { chatJson: async () => response },
   "@/services/offlineImport": {},
-  "@/services/whaleContext": {},
+  "@/services/whaleContext": { formatTimeContext: () => "" },
+  "@/services/whaleReflection": { maybeScheduleWhaleReflection: () => {} },
   "@/utils/whaleMemory": {},
   "@/utils/whalePersona": {},
   "@/store/useWhalePersona": {},

@@ -10,6 +10,7 @@ export type WidgetAccent =
   | "red"
   | "blue"
   | "orange"
+  | "amber"
   | "indigo"
   | "purple"
   | "pink"
@@ -24,12 +25,18 @@ export interface WidgetAccentPalette {
   /** 色板主色，用于设置页色块与预览 */
   color: string;
   bgDark: string;
+  bgDarkEnd: string;
   borderDark: string;
   brandDark: string;
   bgLight: string;
+  bgLightEnd: string;
   borderLight: string;
   brandLight: string;
-  /** 色块上的文字颜色 */
+  porcelainDark: string;
+  porcelainDarkEnd: string;
+  porcelainLight: string;
+  porcelainLightEnd: string;
+  /** 色块上的文字/勾选图标颜色 */
   textDark: string;
 }
 

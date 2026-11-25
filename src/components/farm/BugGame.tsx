@@ -5,6 +5,7 @@ import { Image, Modal, Pressable, View, useWindowDimensions } from "react-native
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 
 import { FarmToolSprite } from "./CropSprite";
+import { playSfx, risingRate } from "@/services/soundEffects";
 import { compostReward } from "@/utils/farmProgress";
 
 export interface BugGameProps {
@@ -55,6 +56,7 @@ export function BugGame({ visible, onClose, onFinish }: BugGameProps) {
         if (spawn) clearInterval(spawn);
         setBugs([]);
         setPhase("result");
+        playSfx("farm_level_up", { volume: 0.68 });
       }
     }, 200);
 
@@ -82,7 +84,11 @@ export function BugGame({ visible, onClose, onFinish }: BugGameProps) {
 
   const catchBug = (id: number) => {
     if (phase !== "playing") return;
-    setScore((s) => s + 1);
+    setScore((s) => {
+      const next = s + 1;
+      playSfx("bug_catch", { rate: risingRate(next - 1, 0.045, 0.92, 1.55), ignoreCooldown: true });
+      return next;
+    });
     setBugs((prev) => prev.filter((b) => b.id !== id));
   };
 
@@ -242,7 +248,7 @@ export function BugGame({ visible, onClose, onFinish }: BugGameProps) {
                   backgroundColor: "#4C8A3F",
                 }}
               >
-                <Image pointerEvents="none" source={require('../../../assets/images/farm-bug-garden-v7.png')} resizeMode="cover" style={{ position: 'absolute', width: '100%', height: '100%' }} />
+                <Image pointerEvents="none" source={require('../../../assets/images/farm-bug-garden-v7.webp')} resizeMode="cover" style={{ position: 'absolute', width: '100%', height: '100%' }} />
                 {/* 虫子 */}
                 {bugs.map((bug) => (
                   <Animated.View

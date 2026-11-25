@@ -16,9 +16,9 @@ const { ChatMessageList } = load('src/components/ChatMessageList.tsx');
 const messages = Array.from({ length: 200 }, (_, i) => ({ id: String(i), role: i % 2 ? 'assistant' : 'user', text: `message ${i}` }));
 const renderMessage = message => jsx('row', message);
 let scrolls = 0, node;
-function render(data) {
+function render(data, extraProps = {}) {
   cursor = 0;
-  node = ChatMessageList({ messages: data, renderMessage, maxHeight: 120 });
+  node = ChatMessageList({ messages: data, renderMessage, maxHeight: 120, ...extraProps });
   node.props.ref.current = { scrollToOffset: () => scrolls++ };
   effects.splice(0).forEach(fn => fn());
 }
@@ -27,6 +27,7 @@ assert.equal(node.type, 'FlatList'); assert.equal(node.props.inverted, true);
 assert.equal(node.props.data.length, 200); assert.equal(node.props.data[0].id, '199');
 assert.equal(messages[0].id, '0', 'list ordering must not mutate persisted history');
 assert(node.props.initialNumToRender < 200 && node.props.windowSize === 5);
+assert.equal(node.props.overScrollMode, 'never');
 node.props.onScroll({ nativeEvent: { contentOffset: { y: 400 } } });
 const before = scrolls;
 render([...messages, { id: '200', role: 'assistant', text: 'new reply' }]);
@@ -35,5 +36,13 @@ render([...messages, { id: '201', role: 'user', text: 'my next question' }]);
 assert(scrolls > before, 'sending a user message returns to the newest message');
 const item = node.props.renderItem({ item: messages[0] });
 assert.equal(item.props.children.props.id, '0', 'visible rows receive the correct message');
+assert.equal(item.props.style.marginBottom, 8, 'default item gap stays 8px');
 assert.equal(node.props.keyExtractor(messages[12]), '12');
-console.log('PASS: actual compact list virtualizes 200 messages, preserves IDs/order, keeps history position and follows new user messages');
+
+// Custom compact styling props for floating pet dialog
+const emptyNode = jsx('empty', {});
+render([], { itemGap: 10, contentContainerStyle: { paddingHorizontal: 10 }, emptyComponent: emptyNode });
+const customItem = node.props.renderItem({ item: messages[0] });
+assert.equal(customItem.props.style.marginBottom, 10, 'custom itemGap propagates cleanly');
+assert.equal(node.props.ListEmptyComponent, emptyNode, 'emptyComponent forwards to FlatList');
+console.log('PASS: actual compact list virtualizes 200 messages, preserves IDs/order, keeps history position, follows new user messages, and supports compact gap/empty props');

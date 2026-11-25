@@ -6,6 +6,10 @@ import { type CropKind } from "@/utils/farmEconomy";
 const NEW_CROPS = require("../../../assets/images/farm-new-crops-stages-v6.png");
 const CROPS = require("../../../assets/images/farm-classic-crops-stages-v7.png");
 const TOOLS = require("../../../assets/images/farm-tools.png");
+const DISHES_FISH = require("../../../assets/images/farm-dishes-fish.png");
+const UI_ICONS = require("../../../assets/images/farm-ui-icons.png");
+const EXPANSION_PROPS = require("../../../assets/images/farm-expansion-props.png");
+
 const ROW: Partial<Record<CropKind, number>> = {
   radish: 0, wheat: 1, carrot: 2, berry: 3, tomato: 4,
   corn: 5, pumpkin: 6, grape: 7, star: 8,
@@ -29,4 +33,55 @@ export function CropSprite({ kind, stage = 2, size }: { kind: CropKind; stage?: 
 export function FarmToolSprite({ kind, size }: { kind: "bug" | "seed" | "water" | "compost"; size: number }) {
   const index = { bug: 0, seed: 1, water: 2, compost: 3 }[kind];
   return <AtlasSprite source={TOOLS} columns={2} rows={2} column={index % 2} row={Math.floor(index / 2)} width={size} />;
+}
+
+export type FarmDishOrFishKind = "bread" | "jam" | "soup" | "pie" | "fish_soup" | "crucian" | "koi" | "moonfish";
+const DISH_FISH_INDEX: Record<FarmDishOrFishKind, number> = {
+  bread: 0,
+  jam: 1,
+  soup: 2,
+  pie: 3,
+  fish_soup: 4,
+  crucian: 5,
+  koi: 6,
+  moonfish: 7,
+};
+
+export function FarmDishSprite({ kind, size = 28 }: { kind: FarmDishOrFishKind; size?: number }) {
+  const index = DISH_FISH_INDEX[kind];
+  return <AtlasSprite source={DISHES_FISH} columns={4} rows={2} column={index % 4} row={Math.floor(index / 4)} width={size} height={size} />;
+}
+
+export type FarmUiIconName = "coin" | "gazette" | "groupChat" | "settings" | "gift" | "memory" | "wish" | "camera";
+const UI_ICON_INDEX: Record<FarmUiIconName, number> = {
+  coin: 0,
+  gazette: 1,
+  groupChat: 2,
+  settings: 3,
+  gift: 4,
+  memory: 5,
+  wish: 6,
+  camera: 7,
+};
+
+export function FarmUiIcon({ name, size = 20 }: { name: FarmUiIconName; size?: number }) {
+  const index = UI_ICON_INDEX[name];
+  return <AtlasSprite source={UI_ICONS} columns={4} rows={2} column={index % 4} row={Math.floor(index / 4)} width={size} height={size} />;
+}
+
+export type FarmPropName = "focus" | "campfire" | "rod" | "bottle" | "album" | "lights" | "windmill" | "lantern";
+const PROP_INDEX: Record<FarmPropName, number> = {
+  focus: 0,
+  campfire: 1,
+  rod: 2,
+  bottle: 3,
+  album: 4,
+  lights: 5,
+  windmill: 6,
+  lantern: 7,
+};
+
+export function FarmPropSprite({ name, size = 26 }: { name: FarmPropName; size?: number }) {
+  const index = PROP_INDEX[name];
+  return <AtlasSprite source={EXPANSION_PROPS} columns={4} rows={2} column={index % 4} row={Math.floor(index / 4)} width={size} height={size} />;
 }

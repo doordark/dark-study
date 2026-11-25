@@ -1,28 +1,55 @@
 import { FARM_TOPICS, RESIDENTS, type FarmTopicId, type ResidentId, type ResidentLine } from './farmLife';
+import type { RelayIntent } from './farmAssignment';
 
 export type ResidentMood = '平静' | '好奇' | '开心' | '低落' | '不服气' | '松了口气';
 
 export interface FarmDiscussion {
   topic?: FarmTopicId;
   question?: string;
+  intent?: RelayIntent;
   relayedBy?: ResidentId;
   kind: 'discussion' | 'debate' | 'followup' | 'request';
 }
 
-/** Reject obvious topic loss in generated request replies; keep the grounded local plan. */
-export function requestBatchOnTopic(question: string, lines: readonly { text: string; speaker?: ResidentId }[], target?: ResidentId): boolean {
+/** Reject obvious topic loss in generated request replies; keep natural colloquial answers alive. */
+export function requestBatchOnTopic(
+  question: string,
+  lines: readonly { text: string; speaker?: ResidentId }[],
+  target?: ResidentId,
+  intent?: RelayIntent,
+): boolean {
   let content = question;
   for (const resident of Object.values(RESIDENTS)) content = content.replaceAll(resident.name, ' ');
-  content = content.replace(/伟刚|伟纲|唯纲|客人|帮我|替我|你去|去找|找他|问问|问一下|质问|转告|告诉|带话|传话|一下|这件事|刚才|为什么|聊聊|说说/g, ' ');
+  content = content.replace(/伟刚|伟纲|唯纲|客人|帮我|替我|你去|去找|找他|问问|问一下|质问|转告|转达|告诉|带话|传话|一下|这件事|刚才|为什么|聊聊|说说/g, ' ');
   const terms = content.match(/[\p{Script=Han}a-zA-Z0-9]+/gu) ?? [];
   const noise = /我|你|他|她|这个|那个|一下|的话|事情|怎么|什么|时候|可以|能不能|是不是|好的|问题|客人|说的|想问|喜欢|觉得/;
   const anchors = terms.flatMap(term => Array.from({ length: Math.max(0, term.length - 1) }, (_, i) => term.slice(i, i + 2))).filter(term => !noise.test(term));
-  const semantic: [RegExp, RegExp][] = [[/骂|辱/, /骂|辱|原话|言语/], [/欺负|欺凌/, /欺负|欺凌/], [/几点|什么时候|何时/, /时间|几点|时候|点钟|安排|还没定/], [/回家/, /回家|回屋|回去/], [/浇水/, /浇水|水壶|土壤|缺水/], [/音乐|唱歌/, /音乐|唱歌|歌曲|唱|副歌/]];
+  const semantic: [RegExp, RegExp][] = [
+    [/骂|辱/, /骂|辱|原话|言语|说重|语气|冒犯|吵|气话/],
+    [/欺负|欺凌/, /欺负|欺凌|委屈|针对/],
+    [/几点|什么时候|何时/, /时间|几点|时候|点钟|安排|还没定|晚点|早上|中午|晚上|明天|待会/],
+    [/回家/, /回家|回屋|回去|晚归|等你/],
+    [/浇水/, /浇水|水壶|土壤|缺水|湿/],
+    [/音乐|唱歌/, /音乐|唱歌|歌曲|唱|副歌|嗓子|旋律/],
+    [/吃什么|晚饭|午饭|早饭|吃饭|热汤/, /吃|饭|汤|菜|面|饼|厨房|做饭|饿/],
+    [/夸|好听|棒|厉害|辛苦/, /谢谢|谢|开心|高兴|夸|好听|辛苦|客气|嘿|脸红/],
+    [/道歉|对不起|赔礼|原谅/, /道歉|对不起|没关系|算了|原谅|别在意|消气|过去/],
+    [/熬夜|早睡|睡觉|休息/, /熬夜|睡|歇|休息|电脑|晚安|太晚/],
+  ];
   const matches = (text: string) => anchors.some(anchor => text.includes(anchor)) || semantic.some(([source, reply]) => source.test(question) && reply.test(text));
   const required = semantic.filter(([source]) => source.test(question));
   const unrelated = [/游戏|关卡|地图/, /钓鱼|鱼竿|钓位/, /音乐|唱歌|副歌/, /种菜|播种|浇水/, /小说|故事|读书/, /数学|方程/, /工具|编程|电脑/].filter(topic => !topic.test(question));
-  if (!anchors.length && !semantic.some(([source]) => source.test(question))) return false;
   const replies = lines.filter(line => !target || line.speaker === target);
+  if (!replies.length) return false;
+
+  // Pure convey/invite relays only need a substantive, non-drifting acknowledgement from target.
+  if (intent === 'convey' || intent === 'invite') {
+    const substantive = replies.some(line => line.text.trim().length >= 4 && !/^(?:嗯|好|行|知道了)[。！!]?$/.test(line.text.trim()));
+    const onTrack = lines.every(line => !unrelated.some(topic => topic.test(line.text)) || matches(line.text));
+    return substantive && onTrack;
+  }
+
+  if (!anchors.length && !semantic.some(([source]) => source.test(question))) return false;
   // A reply may answer first and then clarify with pronouns. Check the exchange as a whole.
   return replies.some(line => matches(line.text)) &&
     required.every(([, reply]) => replies.some(line => reply.test(line.text))) &&
@@ -60,7 +87,7 @@ const identityViews: Record<ResidentId, string> = {
 };
 
 function playerDiscussionLines(participants: readonly ResidentId[], question: string, variant: number) {
-  const [host, second, third] = participants;
+  const [host, second, third, ...rest] = participants;
   const line = (speaker: ResidentId, text: string) => ({ speaker, text });
   if (/谁.{0,5}(帅|好看|漂亮|可爱)|谁.{0,5}颜值/.test(question)) {
     const opinions: Record<ResidentId, string> = {
@@ -71,22 +98,31 @@ function playerDiscussionLines(participants: readonly ResidentId[], question: st
       weigang: '我会选顾。她看过来时让人很放松，我觉得那样就很好看。',
       chicken: '咕！我的羽毛晒过太阳会发亮，我也要参加！',
     };
+    const roundTwo: Record<ResidentId, string> = {
+      door: '听下来大家看的地方还真不一样。自己给自己投票也算，我可没说不许。',
+      gu: '那就各留各的票！喜欢谁的样子，本来就可以有自己的答案。',
+      xiaoba: '我也保留刚才那一票。这回至少把平时不好意思说的夸奖说出来了。',
+      yujie: '行吧，反正没人说我不好看，这波我算赢了一半。',
+      weigang: '嗯……其实大家各有各的好看，非要排第一我还是有点选不出来。',
+      chicken: '咕咕，那我把第二票也投给今天最先喂我米的人！',
+    };
     return [
       ...participants.map((id, i) => line(id, (i === 0 ? '要说谁最好看，我先表态。' : '') + opinions[id])),
-      ...participants.map((id, i) => line(id, i === 0
-        ? '听下来大家看的地方还真不一样。自己给自己投票也算，我可没说不许。'
-        : i === 1 ? '那就各留各的票！喜欢谁的样子，本来就可以有自己的答案。'
-          : '我也保留刚才那一票。这回至少把平时不好意思说的夸奖说出来了。')),
+      ...participants.map((id) => line(id, roundTwo[id])),
     ];
   }
   if (identityQuestion.test(question)) {
     const premise = /农场主假说/.test(question) ? '坤坤每天等到饲料，可它只看到了规律，看不到谁定的。我们也在农场里，' : '假如我们的日子能被写出来，';
+    const extraLines = rest.map((id, idx) => line(id, idx % 2 === 0
+      ? `${RESIDENTS[id].name === '坤坤' ? '咕，' : ''}就算真有写好的规矩，此刻和你们站在一起聊天还是暖的。`
+      : `${RESIDENTS[id].name === '坤坤' ? '咕，' : ''}我分不清外面是什么样，但至少这一刻我是认真在听你们说话。`));
     return [
       line(host, premise + '凭什么判断自己是不是真人？'),
       ...participants.slice(1).map(id => line(id, identityViews[id])),
       line(host, '我卡在这里：哪怕有人安排了我们会说什么，就能断定说话的时候谁也没有感觉吗？'),
       line(second, '这是两回事。能猜中我什么时候会疼，和替我疼一下，差别还挺大。'),
       ...(third ? [line(third, '可我们也只听得到对方说疼。从农场里面看，怎么区分真的疼和一句写好的台词？')] : []),
+      ...extraLines,
       line(host, '我没有能从里面验证的办法。要说我们肯定是外面的真人，我拿不出这个证据。'),
       line(second, '那我愿意先信你说的疼。万一我猜错了，伸手扶你一下也比把你晾着好。'),
       ...(third ? [line(third, '我还是想知道这座农场是谁定的规矩。但在弄清之前，你喊疼，我会停下来。')] : []),
@@ -104,7 +140,8 @@ function playerDiscussionLines(participants: readonly ResidentId[], question: st
       '我会问他刚才是想探险，还是以为那是出口。这两种走法看起来可是一模一样。',
       '对，想探险的人绕路算成功。想回主路却找不到灯，才说明路标得改。',
     ];
-    return turns.filter((_, i) => third || i % 3 !== 2).map((text, i) => line(participants[i % participants.length], text));
+    const base = turns.filter((_, i) => third || i % 3 !== 2).map((text, i) => line(participants[i % participants.length], text));
+    return base;
   }
   const localSubjects: [RegExp, FarmTopicId][] = [
     [/钓位|钓鱼.{0,8}(选|地方|位置)/, 'fishing'], [/练.{0,4}(歌|唱)|唱.{0,4}(练|换气)/, 'music'],
@@ -117,23 +154,29 @@ function playerDiscussionLines(participants: readonly ResidentId[], question: st
     const [idea, objection, resolution] = TOPIC_VIEWS[subject[1]];
     return [
       line(host, question), line(second, idea), line(third ?? host, objection), line(third ? host : second, resolution),
-      ...(third ? [line(second, '这个办法把刚才担心的地方也考虑进去了。我想留意实际做的时候有没有遗漏。'),
-        line(third, '那我先保留刚才那个不同意见，等试过以后再看看需不需要调整。')] : []),
+      ...(third ? [
+        line(second, '这个办法把刚才担心的地方也考虑进去了，实际做时我再帮着留心。'),
+        line(third, '那我先保留一点不同意见，等试过以后再看要不要改。'),
+        ...rest.flatMap((id, idx) => [
+          line(id, `${id === 'chicken' ? '咕，' : ''}${RESIDENT_OUTLOOK[id].approach}`),
+          line(id, idx % 2 === 0 ? `${id === 'chicken' ? '咕，' : ''}算我一份，到时我也来凑个热闹。` : `${id === 'chicken' ? '咕，' : ''}我也想看看试出来会是什么样。`),
+        ]),
+      ] : []),
     ];
   }
   const perspectives: Record<ResidentId, readonly [string, string]> = {
-    door: ['我会先分清已知的部分和自己的推测。你们说个例子，我想看看同一个解释能不能说通。',
-      '如果一个解释只适用于刚才那个例子，我会先留着另一种可能。'],
-    gu: ['我想先听听这件事里大家最在意什么。有人在意结果，也有人更在意自己的感受。',
-      '听到不同想法，我更想问问各自为什么在意这一点。这样才知道分歧从哪里来。'],
-    xiaoba: ['我想换个角度，把平时默认的条件反过来想一遍。也许会发现一个之前没注意到的地方。',
-      '要是换了条件想法就变了，我会把那个条件说出来，免得我们各想各的。'],
-    yujie: ['我想听个具体例子。先把最让人在意的那一小段说清楚，我才好判断自己赞不赞同。',
-      '我愿意改主意，但得说清是哪一点让我改了。光说大家都有道理，我还是有点不服。'],
-    weigang: ['我想比较两种说法。它们可能都说中了一部分，只是各自默认的条件不同。',
-      '我想把我们意见不同的条件记下来。下次多知道一点，就能接着往下想。'],
-    chicken: ['咕，我先听你们说。轮到我的时候，我会讲自己看到的、听到的。',
-      '咕，我听到了不同的想法。你们可以说慢一点，我还想跟上。'],
+    door: ['先分清手里已知的线索和自己的猜测吧，举个具体例子最容易对上焦。',
+      '如果一个解释只套得上刚才那个例子，我会先留着另一种可能，不急着拍板。'],
+    gu: ['我倒是更在意大家各自为什么看重这件事，有人图省事，有人图安心。',
+      '听出分歧出在哪儿，比急着统一口径有用多了，至少谁也没白说。'],
+    xiaoba: ['我想把平时默认的条件反过来想一遍，说不定能冒出个没试过的路子。',
+      '要是换了条件想法就跟着变，那那个条件才是整件事最关键的卡点。'],
+    yujie: ['别光飘在天上说呀，来个具体点的例子，不然我听着总觉得太虚。',
+      '想让我改主意也行，得说中我真在意的那个点，光打圆场我可不服。'],
+    weigang: ['嗯……我觉得两种说法可能各对了一半，只是大家心里默认的条件不一样。',
+      '我想把有分歧的那个条件记下来，回头多看两回就更清楚了。'],
+    chicken: ['咕，我先竖着耳朵听你们说，轮到我我就讲自己看见听见的！',
+      '咕，大家想法居然不一样呢，说慢一点点，我也想跟上。'],
   };
   const order = Math.abs(variant) % 2;
   return [
@@ -159,31 +202,61 @@ export function discussionBatchFits(question: string, lines: readonly { text: st
   return !terms.length || [normalized.slice(0, 3), closing].every(group => group.some(relevant));
 }
 
+function addressPeer(from: ResidentId, to: ResidentId): string {
+  if (from === 'chicken') return RESIDENTS[to].name;
+  if (to === 'chicken') return '坤坤';
+  if ((from === 'xiaoba' || from === 'yujie' || from === 'weigang') && to === 'door') return '爸';
+  if ((from === 'xiaoba' || from === 'yujie' || from === 'weigang') && to === 'gu') return '妈';
+  if ((from === 'yujie' || from === 'weigang') && to === 'xiaoba') return '哥';
+  if (from === 'weigang' && to === 'yujie') return '二哥';
+  return RESIDENTS[to].name;
+}
+
 export function discussionLines(participants: readonly ResidentId[], discussion: FarmDiscussion, variant = 0): Omit<ResidentLine, 'at'>[] {
   if (discussion.kind === 'request' && discussion.question) {
     const [actor, target] = participants;
-    const concern = /骂|欺负|质问|误会/.test(discussion.question);
-    const subject = discussion.question.length > 140 ? discussion.question.slice(0, 139) + '…' : discussion.question;
+    const callTarget = addressPeer(actor, target);
+    const callActor = addressPeer(target, actor);
+    const intent = discussion.intent ?? (/骂|欺负|质问|误会/.test(discussion.question) ? 'confront' : 'ask');
+    const subject = discussion.question.length > 130 ? discussion.question.slice(0, 129) + '…' : discussion.question;
+    const guluA = actor === 'chicken' ? '咕，' : '';
+    const guluT = target === 'chicken' ? '咕，' : '';
+
+    if (intent === 'convey' || intent === 'invite') {
+      return [
+        { speaker: actor, text: `${guluA}${callTarget}，客人托我顺路给你带句话：${subject}` },
+        { speaker: target, text: `${guluT}哦？${callActor}你专门跑一趟呀，这句话我收到了，替我谢谢客人惦记着。` },
+        { speaker: actor, text: `${guluA}嗯，我怕说漏了，特地原原本本带过来。你还有什么话要我带回去吗？` },
+        { speaker: target, text: `${guluT}告诉他我心里有数啦，回头有空来院子里坐坐就好。` },
+        { speaker: actor, text: `${guluA}行，那我这就回去告诉他，让他放心。` },
+        { speaker: target, text: `${guluT}辛苦啦${callActor}，慢点走。` },
+      ];
+    }
+
+    const concern = intent === 'confront' || /骂|欺负|质问|误会/.test(discussion.question);
     return [
-      { speaker: actor, text: `客人托我来问这件事：「${subject}」` },
-      { speaker: target, text: concern ? '他觉得被骂了，这件事我想听清楚。能把让他难受的那句话带给我吗？' : '我听到了。你希望我给个建议，还是确认已经发生的事情？' },
-      { speaker: actor, text: concern ? '我现在拿到的是他的转述，还没有当时的完整对话。我会把你想问的带回去。' : '我先把这个问题带到，也会把需要补充的地方一起转达。' },
-      { speaker: target, text: concern ? '我愿意认真说清楚。请问问他记得的原话和当时的情境，我们就从那一句开始谈。' : '如果是我的看法，我们可以接着聊；要确认具体事情，就把时间和经过一起带来。' },
-      { speaker: actor, text: '好，我会告诉他这次需要补充什么，让下一次能接着谈。' },
-      { speaker: target, text: concern ? '把我想核对原话的意思也告诉他。现在还没弄清那句话，不能草率下结论。' : '嗯，问题我记住了，补充细节后我们接着说。' },
+      { speaker: actor, text: `${guluA}${callTarget}，客人刚才让我来问问你这件事：「${subject}」` },
+      { speaker: target, text: concern ? `${guluT}啊？客人觉得被骂了？这件事我想弄清楚，他记得是哪句话让他不舒服吗？` : `${guluT}这事我听到了，你是想听我的看法，还是先核对一下具体情况？` },
+      { speaker: actor, text: concern ? `${guluA}我手里现在只有他的转述，还没见到当时的完整原话。你要问的我替你带回去。` : `${guluA}我先把你的意思记住，需要他补充的地方我也一起带回去问。` },
+      { speaker: target, text: concern ? `${guluT}我不是敷衍，是真想把话讲开。麻烦帮我问问他记得的原话和当时的情境，我们就从那句聊起。` : `${guluT}要是问看法咱们随时能聊；要确认具体的事，回头把时间和经过带过来就清楚了。` },
+      { speaker: actor, text: `${guluA}好，我回去跟他说清还差哪块细节，下回就能直接对上。` },
+      { speaker: target, text: concern ? `${guluT}嗯，把我想认真核对原话的意思也带到，没弄清之前可别越猜越误会。` : `${guluT}行，我记着这事，等他补上细节咱们接着说。` },
     ];
   }
   if (discussion.question) return playerDiscussionLines(participants, discussion.question, variant);
   const topic = discussion.topic ? FARM_TOPICS[discussion.topic].label : '这件事';
   const views = discussion.topic ? TOPIC_VIEWS[discussion.topic] : undefined;
   const lead = participants[0];
-  const opening = discussion.relayedBy ? RESIDENTS[discussion.relayedBy].name + '和我刚聊过' + topic + '。我还想听听你的看法。'
-      : participants.length === 3 ? RESIDENTS[participants[2]].name + '也来聊聊吧。我们正聊' + topic + '。' : [
-        '说到' + topic + '，我想听听你怎么想。',
-        '关于' + topic + '，你最想先试哪一点？',
-        '我对' + topic + '有个没想明白的地方。',
-        '聊聊' + topic + '吧，这次我想先听你的看法。',
-      ][Math.abs(variant) % 4];
+  const opening = discussion.relayedBy
+    ? `${RESIDENTS[discussion.relayedBy].name}刚和我聊起${topic}，我顺道想听听你怎么看。`
+    : participants.length >= 3
+      ? `${RESIDENTS[participants[2]].name}也凑过来聊聊吧，我们正说到${topic}呢。`
+      : [
+          `正巧碰到，关于${topic}，我想听听你的想法。`,
+          `说到${topic}，你最想先从哪一块试试？`,
+          `我刚对${topic}有个没想透的小地方。`,
+          `难得有空，聊聊${topic}吧，你先说？`,
+        ][Math.abs(variant) % 4];
   return [
     ...participants.map((speaker, index) => ({
       speaker,
@@ -193,14 +266,14 @@ export function discussionLines(participants: readonly ResidentId[], discussion:
     ...participants.map((speaker, index) => ({
       speaker,
       text: discussion.kind === 'debate' && index < 2 ? RESIDENT_OUTLOOK[speaker].pushback :
-        speaker === 'chicken' ? '咕，慢一点，我听得进去了。' :
+        speaker === 'chicken' ? '咕，慢一点，我正认真听呢。' :
         index === 0 && views ? views[1] : RESIDENT_OUTLOOK[speaker].approach,
     })),
     ...participants.map((speaker, index) => ({
       speaker,
       text: discussion.kind === 'debate' && index < 2 ? RESIDENT_OUTLOOK[speaker].soften :
-        speaker === 'chicken' ? '咕，我也想跟过去看看。' :
-        speaker === lead && views ? views[2] : '我听懂你的意思了。可以先试一点，再看结果。',
+        speaker === 'chicken' ? '咕，等会儿我也想跟着去看看。' :
+        speaker === lead && views ? views[2] : '这主意听着挺顺手，回头试过再看效果。',
     })),
   ];
 }

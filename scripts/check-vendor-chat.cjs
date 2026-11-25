@@ -19,10 +19,11 @@ let calls = 0, payload;
 const response = raw => ({ ok: true, json: async () => ({ choices: [{ message: { content: raw } }] }) });
 async function main() {
   global.fetch = async (_url, init) => { calls++; payload = JSON.parse(init.body); return response(JSON.stringify({ reply: '这次可以给你些优惠。', reaction: 'neutral', action: { type: 'set_discount', discountPercent: 10 } })); };
-  let result = await vendorChat(options);
+  let result = await vendorChat({ ...options, weather: 'rain', rainbow: false, period: 'noon' });
   assert.equal(result.discountPercent, 10); assert.equal(result.unavailable, undefined);
   assert(payload.messages.some(message => message.content === '可以谈谈，你想买什么？'));
   assert(payload.messages.some(message => message.role === 'system' && message.content.includes('真实报价')));
+  assert(payload.messages.some(message => message.role === 'system' && message.content.includes('细雨绵绵')));
   const before = calls; result = await vendorChat({ ...options, apiKey: '' });
   assert.equal(result.reply, NPC_CHAT_UNAVAILABLE); assert(result.unavailable); assert.equal(calls, before);
   // A recoverable HTTP error really retries instead of substituting an unrelated greeting.

@@ -20,15 +20,18 @@ import Animated, {
   withSpring,
   withTiming,
 } from "react-native-reanimated";
-
 import Svg, { Circle, Defs, LinearGradient, Stop } from "react-native-svg";
 
 import { GlassContainer } from "@/components/GlassContainer";
 import { ImportRowEditor } from "@/components/ImportRowEditor";
 import { useImportTask, type TaskStatus } from "@/store/useImportTask";
-import { useStore } from "@/store/useStore";
+import { extendPeriodsToCount, useStore } from "@/store/useStore";
 import type { MergeReport, Schedule } from "@/types";
-import { formatCourseGpa } from "@/utils/grades";
+import {
+  formatCourseGpa,
+  gradeDuplicateKey,
+  semesterLabel,
+} from "@/utils/grades";
 
 const BALL_SIZE = 52;
 const EDGE_PAD = 10;
@@ -84,14 +87,13 @@ const STATUS_META: Record<
 
 /**
  * 全局导入任务悬浮层：
- * - 弹窗形态：进度条 + 阶段文案，可「收起」为进度球
+ * - 弹窗形态：进度条 + 阶段文案，可「收起」为进度球，也可随时取消
  * - 进度球形态：吸附屏幕边框、可拖动、点按还原弹窗
  * - 挂载于根布局，退出导入页后任务继续后台分析
  */
 export function ImportTaskOverlay() {
   const status = useImportTask((s) => s.status);
   const expanded = useImportTask((s) => s.expanded);
-  /** 每个任务一个弹窗实例：新任务重挂，弹窗内选择（如适用周数）自动回到默认 */
   const seq = useImportTask((s) => s.seq);
 
   if (status === "idle") return null;
@@ -129,69 +131,75 @@ function TaskDialog() {
   const retry = useImportTask((s) => s.retry);
   const setExpanded = useImportTask((s) => s.setExpanded);
   const clear = useImportTask((s) => s.clear);
+  const cancel = useImportTask((s) => s.cancel);
   const ack = useImportTask((s) => s.ack);
+
   const importSchedule = useStore((s) => s.importSchedule);
   const setPeriods = useStore((s) => s.setPeriods);
   const addScheduleWithData = useStore((s) => s.addScheduleWithData);
   const mergeIncoming = useStore((s) => s.mergeIncoming);
-  const addGrade = useStore((s) => s.addGrade);
-  /** 识别结果默认归入当前学年 */
+  const upsertGrades = useStore((s) => s.upsertGrades);
+  const existingGrades = useStore((s) => s.grades);
+  const gradeYears = useStore((s) => s.gradeYears);
+  const gradeTypes = useStore((s) => s.gradeTypes);
   const activeGradeYearId = useStore((s) => s.activeGradeYearId);
-  /** 当前课表已有课程时，导入前需选择：融合 / 新建 / 覆盖 */
-  const hasCourses = useStore((s) => {
-    const cur =
-      s.schedules.find((x) => x.id === s.activeScheduleId) ?? s.schedules[0];
-    return (cur?.courses.length ?? 0) > 0;
-  });
+  const activeSchedule = useStore(
+    (s) =>
+      s.schedules.find((x) => x.id === s.activeScheduleId) ?? s.schedules[0],
+  );
+  const currentCourseCount = activeSchedule?.courses.length ?? 0;
+  const hasCourses = currentCourseCount > 0;
   const pathname = usePathname();
 
-  /** 导入方式选择："none"=未选 "choose"=三选一 "mergeConfirm"=冲突确认 */
-  const [pick, setPick] = React.useState<"none" | "choose" | "mergeConfirm">(
-    "none",
-  );
+  const [pick, setPick] = React.useState<
+    "none" | "choose" | "mergeConfirm" | "replaceConfirm" | "gradeDupConfirm"
+  >("none");
   const [mergePreview, setMergePreview] = React.useState<MergeReport | null>(
     null,
   );
 
   /* ---------------- 课表适用周数：默认沿用识别出的每门课周次 ---------------- */
-  /** null = 沿用识别结果（默认）；数组 = 手动勾选并统一覆盖全部课程 */
   const scheduleResult =
     result?.type === "schedule" ? result.schedule : undefined;
   const scheduleKey = scheduleResult?.id ?? "none";
-  // 以识别结果 id 为 key：新结果自动回到「沿用识别周次」，无需 effect 重置
   const [weekSelState, setWeekSelState] = React.useState<{
     key: string;
     value: number[] | null;
   }>({ key: scheduleKey, value: null });
   const weekSel = weekSelState.key === scheduleKey ? weekSelState.value : null;
-  const setWeekSel: React.Dispatch<
-    React.SetStateAction<number[] | null>
-  > = (next) =>
+  const setWeekSel: React.Dispatch<React.SetStateAction<number[] | null>> = (
+    next,
+  ) =>
     setWeekSelState((prev) => {
       const current = prev.key === scheduleKey ? prev.value : null;
       const value = typeof next === "function" ? next(current) : next;
       return { key: scheduleKey, value };
     });
-  const totalWeeks = Math.max(1, scheduleResult?.totalWeeks ?? 18);
+  const totalWeeks = Math.max(
+    1,
+    activeSchedule?.totalWeeks ?? scheduleResult?.totalWeeks ?? 18,
+  );
   const allWeeks = React.useMemo(
     () => Array.from({ length: totalWeeks }, (_, i) => i + 1),
     [totalWeeks],
   );
   const applyWeeks = weekSel?.length ? weekSel : allWeeks;
-  /** 把所选周数写入全部课程（覆盖识别出的周次），融合/新建/覆盖统一生效；
-      未手动选择时保留每门课识别出的周次（同一门课可能只在少数周上课） */
   const withWeeks = (s: Schedule): Schedule =>
     weekSel?.length
       ? { ...s, courses: s.courses.map((c) => ({ ...c, weeks: weekSel })) }
       : s;
+
+  /**
+   * 修复反选 Bug：未手动覆盖（null）时点选某周 w，直接开始选中 [w]；
+   * 若取消最后一周，自动回到「沿用识别周次（null）」。
+   */
   const toggleWeek = (w: number) =>
     setWeekSel((prev) => {
-      const cur = prev ?? allWeeks;
-      const next = cur.includes(w)
-        ? cur.filter((x) => x !== w)
-        : [...cur, w].sort((a, b) => a - b);
-      // 至少保留 1 周
-      return next.length ? next : cur;
+      if (prev === null) return [w];
+      const next = prev.includes(w)
+        ? prev.filter((x) => x !== w)
+        : [...prev, w].sort((a, b) => a - b);
+      return next.length ? next : null;
     });
 
   /** 融合：先 dryRun 预检冲突，有冲突则先进确认页 */
@@ -227,32 +235,143 @@ function TaskDialog() {
   const applyReplace = () => {
     if (!result || result.type !== "schedule") return;
     importSchedule(withWeeks(result.schedule));
-    ack(`已覆盖当前课表，导入 ${result.schedule.courses.length} 门课程`);
-  };
-
-  const applyGrades = () => {
-    if (!result || result.type !== "grades") return;
-    const yearId = result.yearId ?? activeGradeYearId;
-    result.grades.forEach((g) => addGrade({ ...g, yearId }));
     ack(
-      `已导入 ${result.grades.length} 条成绩，可在「成绩」页按学年、学期查看和修改`,
+      `已覆盖当前课表，导入 ${result.schedule.courses.length} 门课程（已保留当前作息设置）`,
     );
   };
 
+  /* ---------------- 成绩重复项检测 ---------------- */
+  const gradeTargetYearId =
+    result?.type === "grades"
+      ? (result.yearId && gradeYears.some((y) => y.id === result.yearId)
+          ? result.yearId
+          : activeGradeYearId)
+      : activeGradeYearId;
+
+  const existingGradeKeys = React.useMemo(
+    () =>
+      new Set(
+        existingGrades.map((g) =>
+          gradeDuplicateKey(g.yearId, g.semester, g.name),
+        ),
+      ),
+    [existingGrades],
+  );
+
+  const duplicateGradeCount = React.useMemo(() => {
+    if (result?.type !== "grades") return 0;
+    return result.grades.filter((g) =>
+      existingGradeKeys.has(
+        gradeDuplicateKey(gradeTargetYearId, g.semester, g.name),
+      ),
+    ).length;
+  }, [result, existingGradeKeys, gradeTargetYearId]);
+
+  const commitGrades = (
+    mode: "skipDuplicates" | "overwriteDuplicates" | "append",
+  ) => {
+    if (!result || result.type !== "grades" || !result.grades.length) return;
+    const rows = result.grades.map((g) => ({ ...g, yearId: gradeTargetYearId }));
+    const summary = upsertGrades(rows, mode);
+    const parts = [
+      summary.added ? `新增 ${summary.added} 条` : null,
+      summary.updated ? `更新 ${summary.updated} 条` : null,
+      summary.skipped ? `跳过重复 ${summary.skipped} 条` : null,
+    ].filter(Boolean);
+    const yearName =
+      gradeYears.find((y) => y.id === gradeTargetYearId)?.name ?? "当前学年";
+    ack(`成绩导入完成（${yearName}）：${parts.join("，") || "无变更"}`);
+  };
+
+  const handleImportGradesPress = () => {
+    if (!result || result.type !== "grades" || !result.grades.length) return;
+    if (duplicateGradeCount > 0) {
+      setPick("gradeDupConfirm");
+      return;
+    }
+    commitGrades("append");
+  };
+
+  const handleApplyPeriods = () => {
+    if (!result || result.type !== "periods" || !result.periods.length) return;
+    const state = useStore.getState();
+    if (result.scheduleId && state.activeScheduleId !== result.scheduleId) {
+      Alert.alert("无法应用作息", "课表已切换，请切回导入时的课表再应用作息");
+      return;
+    }
+    const targetSched =
+      state.schedules.find((x) => x.id === state.activeScheduleId) ??
+      state.schedules[0];
+    const maxUsed = Math.max(
+      0,
+      ...(targetSched?.courses.map((c) => c.endPeriod) ?? []),
+    );
+    if (maxUsed > result.periods.length) {
+      Alert.alert(
+        "当前课表包含更高节次的课程",
+        `识别出 ${result.periods.length} 节作息，但当前课表有排到第 ${maxUsed} 节的课程。是否按末节时长自动顺延补齐至 ${maxUsed} 节后应用？`,
+        [
+          { text: "取消", style: "cancel" },
+          {
+            text: `补齐至 ${maxUsed} 节并应用`,
+            onPress: () => {
+              try {
+                const extended = extendPeriodsToCount(result.periods, maxUsed);
+                setPeriods(extended);
+                ack(
+                  `作息表已应用（共 ${extended.length} 节，其中末 ${extended.length - result.periods.length} 节已自动顺延补齐）`,
+                );
+              } catch (err) {
+                Alert.alert(
+                  "无法应用作息",
+                  err instanceof Error ? err.message : "作息时间无效",
+                );
+              }
+            },
+          },
+        ],
+      );
+      return;
+    }
+    try {
+      setPeriods(result.periods);
+      ack("作息表已应用，可在设置 → 课表与学期 → 作息时间表查看和编辑");
+    } catch (error) {
+      Alert.alert(
+        "无法应用作息",
+        error instanceof Error ? error.message : "作息时间无效",
+      );
+    }
+  };
+
+  const typeName = (id: string) =>
+    gradeTypes.find((t) => t.id === id)?.name ?? "未分类";
+
   const meta = STATUS_META[status === "idle" ? "analyzing" : status];
-  /** 未进入识别流程就失败（如未填 API Key）时 label 为空，给兜底标题 */
   const titleLabel = label || "AI 智能导入";
 
-  /** 关闭弹窗并跳转（已在目标页则不重复跳转） */
   const goto = (path: "/import" | "/grades") => {
     clear();
     if (pathname !== path) router.push(path);
   };
 
+  // 给课表行编辑器提供安全的作息与总周数上下文
+  const editorSchedule = React.useMemo(() => {
+    if (result?.type !== "schedule") return undefined;
+    const base = activeSchedule ?? result.schedule;
+    const maxCoursePeriod = Math.max(
+      base.periods.length,
+      ...result.schedule.courses.map((c) => c.endPeriod),
+    );
+    return {
+      ...base,
+      totalWeeks,
+      periods: extendPeriodsToCount(base.periods, maxCoursePeriod),
+    };
+  }, [result, activeSchedule, totalWeeks]);
+
   return (
-    <View className="flex-1 items-center justify-center px-8">
-      {/* 半透明遮罩：分析中点按无副作用（避免误关）；
-          有未确认结果时点按仅收起为悬浮球（防止误丢结果），其余情况关闭 */}
+    <View className="flex-1 items-center justify-center px-6">
       <Pressable
         style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0 }}
         className="bg-black/35"
@@ -264,7 +383,7 @@ function TaskDialog() {
       />
       <Animated.View
         entering={FadeInDown.springify()}
-        style={{ width: "100%", maxWidth: 360 }}
+        style={{ width: "100%", maxWidth: 390 }}
       >
         <GlassContainer radius={28} borderOpacity={0.22}>
           <View className="px-5 py-5">
@@ -290,6 +409,7 @@ function TaskDialog() {
               </View>
               {status === "analyzing" ? (
                 <Pressable
+                  accessibilityLabel="收起为悬浮球"
                   onPress={() => setExpanded(false)}
                   className="h-8 w-8 items-center justify-center rounded-full bg-white/20 dark:bg-white/[0.07]"
                 >
@@ -297,6 +417,7 @@ function TaskDialog() {
                 </Pressable>
               ) : (
                 <Pressable
+                  accessibilityLabel="关闭弹窗"
                   onPress={clear}
                   className="h-8 w-8 items-center justify-center rounded-full bg-white/20 dark:bg-white/[0.07]"
                 >
@@ -338,28 +459,67 @@ function TaskDialog() {
               </View>
             )}
 
-            {/* 结果摘要：适用周数选择 + 识别出的课程（确认前可滚动核对） */}
+            {/* 失败页重试条 */}
             {retry ? (
               <View className="mt-2.5 gap-2 rounded-2xl bg-amber-500/10 px-3.5 py-2.5">
                 <Text className="text-[11.5px] text-amber-800 dark:text-amber-200">
-                  原批次第 {retry.pages.join("、")} 张未识别成功。{result ? "已识别的结果会保留。" : ""}
+                  原批次第 {retry.pages.join("、")} 张未识别成功。
+                  {result ? "已识别的结果会保留。" : ""}
                 </Text>
-                <Pressable accessibilityRole="button" onPress={() => void retry.run()} className="self-start rounded-xl bg-sky-600 px-3 py-2">
-                  <Text className="text-xs font-bold text-white">只重试失败图片</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => void retry.run()}
+                  className="self-start rounded-xl bg-sky-600 px-3 py-2"
+                >
+                  <Text className="text-xs font-bold text-white">
+                    只重试失败图片
+                  </Text>
                 </Pressable>
               </View>
             ) : null}
+
+            {/* 课表预览 */}
             {result?.type === "schedule" ? (
               <View className="mt-2.5 rounded-2xl bg-white/20 px-3.5 py-2.5 dark:bg-white/[0.05]">
                 <View className="flex-row items-center justify-between">
                   <Text className="text-[11px] font-semibold text-slate-700 dark:text-slate-200">
                     课表适用周数
                   </Text>
-                  <Pressable hitSlop={6} onPress={() => setWeekSel(null)}>
-                    <Text className="text-[10px] font-semibold text-sky-500 dark:text-sky-300">
-                      沿用识别周次（默认）
-                    </Text>
-                  </Pressable>
+                  <View className="flex-row items-center gap-2">
+                    <Pressable
+                      hitSlop={4}
+                      onPress={() => setWeekSel(allWeeks)}
+                    >
+                      <Text className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                        全选
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      hitSlop={4}
+                      onPress={() =>
+                        setWeekSel(allWeeks.filter((w) => w % 2 === 1))
+                      }
+                    >
+                      <Text className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                        单周
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      hitSlop={4}
+                      onPress={() =>
+                        setWeekSel(allWeeks.filter((w) => w % 2 === 0))
+                      }
+                    >
+                      <Text className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                        双周
+                      </Text>
+                    </Pressable>
+                    <Pressable hitSlop={4} onPress={() => setWeekSel(null)}>
+                      <Text className="text-[10px] font-semibold text-sky-500 dark:text-sky-300">
+                        沿用识别
+                      </Text>
+                    </Pressable>
+                  </View>
                 </View>
                 <ScrollView
                   horizontal
@@ -395,84 +555,256 @@ function TaskDialog() {
                 <Text className="mt-1 text-[9.5px] text-slate-400 dark:text-slate-500">
                   {weekSel == null
                     ? "默认保留每门课识别出的周次；点选上方周次可统一覆盖全部课程"
-                    : `已选 ${applyWeeks.length} 周，将统一覆盖全部课程的周次`}
+                    : `已选 ${applyWeeks.length} 周（第 ${weeksLabel(applyWeeks)} 周），将统一覆盖全部课程`}
                 </Text>
 
-                <ScrollView className="mt-2 max-h-[110px]">
+                <ScrollView className="mt-2 max-h-[240px]" nestedScrollEnabled>
                   {result.schedule.courses.map((c, i) => (
-                    <Pressable key={i} accessibilityRole="button" accessibilityLabel={`修正课程 ${c.name}`}
-                      onPress={() => setEditing(i)} className="min-h-9 flex-row items-center gap-2">
-                      <Text className="flex-1 text-[11px] text-slate-600 dark:text-slate-300">
-                        {c.name} · 周{c.weekday} 第{c.startPeriod}–{c.endPeriod}节 · 第{weeksLabel(c.weeks)}周
-                        {result.sources?.[i]?.pages.length ? ` · 图 ${result.sources[i].pages.join("、")}` : ""}
-                      </Text>
-                      <Text className="text-[11px] font-semibold text-sky-600 dark:text-sky-300">修正</Text>
-                    </Pressable>
+                    <View
+                      key={`${c.id || c.name}-${i}`}
+                      className="min-h-10 flex-row items-center gap-2 border-b border-white/10 py-1 dark:border-white/[0.05]"
+                    >
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`修正课程 ${c.name}`}
+                        onPress={() => setEditing(i)}
+                        className="flex-1 flex-row items-center gap-2 py-0.5"
+                      >
+                        <Text className="flex-1 text-[11px] leading-4 text-slate-600 dark:text-slate-300">
+                          {c.name}
+                          {c.teacher ? `（${c.teacher}）` : ""} · 周{c.weekday}{" "}
+                          第{c.startPeriod}–{c.endPeriod}节 · 第
+                          {weeksLabel(c.weeks)}周
+                          {result.sources?.[i]?.pages.length
+                            ? ` · 图 ${result.sources[i].pages.join("、")}`
+                            : ""}
+                        </Text>
+                        <Text className="text-[11px] font-semibold text-sky-600 dark:text-sky-300">
+                          修正
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`移除识别课程 ${c.name}`}
+                        hitSlop={6}
+                        onPress={() =>
+                          useImportTask.getState().removeCourse(result, i)
+                        }
+                        className="h-7 w-7 items-center justify-center rounded-full bg-rose-500/10"
+                      >
+                        <Ionicons
+                          name="trash-outline"
+                          size={13}
+                          color="#F43F5E"
+                        />
+                      </Pressable>
+                    </View>
                   ))}
+                  {!result.schedule.courses.length ? (
+                    <Text className="py-3 text-center text-[11px] text-slate-400">
+                      已移除全部识别课程，可点击下方放弃并重新识别
+                    </Text>
+                  ) : null}
                 </ScrollView>
                 <Text className="mt-1 text-[10px] text-slate-400">
-                  共 {result.schedule.courses.length} 门课
+                  共 {result.schedule.courses.length} 条上课记录
                 </Text>
               </View>
             ) : null}
+
+            {/* 作息表预览（支持逐行修正与删除误识别行） */}
             {result?.type === "periods" ? (
               <View className="mt-2.5 rounded-2xl bg-white/20 px-3.5 py-2.5 dark:bg-white/[0.05]">
-                {result.periods.slice(0, 4).map((p) => (
-                  <Text
-                    key={p.index}
-                    className="text-[10.5px] text-slate-600 dark:text-slate-300"
-                  >
-                    {p.label} · {p.startTime}–{p.endTime}
-                  </Text>
-                ))}
+                <ScrollView className="max-h-[220px]" nestedScrollEnabled>
+                  {result.periods.map((p, i) => (
+                    <View
+                      key={`${p.index}-${p.startTime}-${i}`}
+                      className="min-h-9 flex-row items-center gap-2 border-b border-white/10 py-1 dark:border-white/[0.05]"
+                    >
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`修正第 ${p.index} 节`}
+                        onPress={() => setEditing(i)}
+                        className="flex-1 flex-row items-center justify-between py-0.5"
+                      >
+                        <Text className="text-[11px] text-slate-600 dark:text-slate-300">
+                          {p.index}. {p.label} · {p.startTime}–{p.endTime}
+                        </Text>
+                        <Text className="text-[11px] font-semibold text-sky-600 dark:text-sky-300">
+                          修正
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`移除第 ${p.index} 节`}
+                        hitSlop={6}
+                        onPress={() =>
+                          useImportTask.getState().removePeriod(result, i)
+                        }
+                        className="h-7 w-7 items-center justify-center rounded-full bg-rose-500/10"
+                      >
+                        <Ionicons
+                          name="trash-outline"
+                          size={13}
+                          color="#F43F5E"
+                        />
+                      </Pressable>
+                    </View>
+                  ))}
+                  {!result.periods.length ? (
+                    <Text className="py-3 text-center text-[11px] text-slate-400">
+                      已移除全部节次，请放弃后重新识别
+                    </Text>
+                  ) : null}
+                </ScrollView>
                 <Text className="mt-1 text-[10px] text-slate-400">
-                  共 {result.periods.length} 节…
+                  共 {result.periods.length} 节 · 点击行可修正时间，右侧可删多余行
                 </Text>
               </View>
             ) : null}
+
+            {/* 成绩预览（支持切换归属学年、逐行改学期/类型、单条删除与重复提醒） */}
             {result?.type === "grades" ? (
               <View className="mt-2.5 rounded-2xl bg-white/20 px-3.5 py-2.5 dark:bg-white/[0.05]">
+                {/* 归属学年快速切换 */}
+                <View className="mb-2 flex-row items-center">
+                  <Text className="mr-2 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                    归入学年
+                  </Text>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={{ gap: 6 }}
+                    className="flex-1"
+                  >
+                    {gradeYears.map((y) => {
+                      const on = y.id === gradeTargetYearId;
+                      return (
+                        <Pressable
+                          key={y.id}
+                          onPress={() =>
+                            useImportTask
+                              .getState()
+                              .setGradeTargetYear(result, y.id)
+                          }
+                          className={`rounded-full px-2.5 py-1 ${
+                            on
+                              ? "bg-sky-500/85"
+                              : "bg-white/25 dark:bg-white/[0.08]"
+                          }`}
+                        >
+                          <Text
+                            className={`text-[10px] font-semibold ${
+                              on
+                                ? "text-white"
+                                : "text-slate-600 dark:text-slate-300"
+                            }`}
+                          >
+                            {y.name}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+
+                {duplicateGradeCount > 0 ? (
+                  <View className="mb-2 rounded-xl bg-amber-500/15 px-2.5 py-1.5">
+                    <Text className="text-[10px] font-semibold text-amber-700 dark:text-amber-200">
+                      检测到 {duplicateGradeCount} 条与该学年已有成绩同名，点导入时可选择跳过或覆盖
+                    </Text>
+                  </View>
+                ) : null}
+
                 <View className="flex-row items-center pb-1">
                   <Text className="flex-1 text-[10px] font-semibold text-slate-400 dark:text-slate-500">
                     课程
                   </Text>
-                  <Text className="w-12 text-right text-[10px] font-semibold text-slate-400 dark:text-slate-500">
+                  <Text className="w-10 text-right text-[10px] font-semibold text-slate-400 dark:text-slate-500">
                     学分
                   </Text>
-                  <Text className="w-12 text-right text-[10px] font-semibold text-slate-400 dark:text-slate-500">
+                  <Text className="w-11 text-right text-[10px] font-semibold text-slate-400 dark:text-slate-500">
                     分数
                   </Text>
-                  <Text className="w-12 text-right text-[10px] font-semibold text-slate-400 dark:text-slate-500">
+                  <Text className="w-11 text-right text-[10px] font-semibold text-slate-400 dark:text-slate-500">
                     绩点
                   </Text>
+                  <View className="w-14" />
                 </View>
-                <ScrollView className="max-h-[150px]">
-                  {result.grades.map((g, i) => (
-                    <Pressable key={i} accessibilityRole="button" accessibilityLabel={`修正成绩 ${g.name}`}
-                      onPress={() => setEditing(i)} className="min-h-9 flex-row items-center">
-                      <Text
-                        numberOfLines={1}
-                        className="flex-1 text-[10.5px] text-slate-600 dark:text-slate-300"
+
+                <ScrollView className="max-h-[220px]" nestedScrollEnabled>
+                  {result.grades.map((g, i) => {
+                    const isDup = existingGradeKeys.has(
+                      gradeDuplicateKey(gradeTargetYearId, g.semester, g.name),
+                    );
+                    return (
+                      <View
+                        key={`${g.name}-${i}`}
+                        className="min-h-10 flex-row items-center border-b border-white/10 py-1 dark:border-white/[0.05]"
                       >
-                        {g.name}{result.sources?.[i]?.pages.length ? ` · 图 ${result.sources[i].pages.join("、")}` : ""}
-                      </Text>
-                      <Text className="w-12 text-right text-[10.5px] text-slate-500 dark:text-slate-400">
-                        {g.credit != null ? g.credit : "待补"}
-                      </Text>
-                      <Text className="w-12 text-right text-[10.5px] text-slate-500 dark:text-slate-400">
-                        {g.score || "--"}
-                      </Text>
-                      <Text className="w-12 text-right text-[10.5px] font-semibold text-sky-500 dark:text-sky-300">
-                        {formatCourseGpa(g.gpa)}
-                      </Text>
-                      <Text className="ml-2 text-[11px] font-semibold text-sky-600 dark:text-sky-300">修正</Text>
-                    </Pressable>
-                  ))}
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`修正成绩 ${g.name}`}
+                          onPress={() => setEditing(i)}
+                          className="flex-1 flex-row items-center"
+                        >
+                          <View className="flex-1 pr-1">
+                            <Text
+                              numberOfLines={1}
+                              className="text-[10.5px] font-semibold text-slate-700 dark:text-slate-200"
+                            >
+                              {g.name}
+                              {isDup ? " [已存在]" : ""}
+                            </Text>
+                            <Text
+                              numberOfLines={1}
+                              className="text-[9px] text-slate-400 dark:text-slate-500"
+                            >
+                              {semesterLabel(g.semester)} · {typeName(g.type)}
+                              {result.sources?.[i]?.pages.length
+                                ? ` · 图 ${result.sources[i].pages.join("、")}`
+                                : ""}
+                            </Text>
+                          </View>
+                          <Text className="w-10 text-right text-[10.5px] text-slate-500 dark:text-slate-400">
+                            {g.credit != null ? g.credit : "待补"}
+                          </Text>
+                          <Text className="w-11 text-right text-[10.5px] text-slate-500 dark:text-slate-400">
+                            {g.score || "--"}
+                          </Text>
+                          <Text className="w-11 text-right text-[10.5px] font-semibold text-sky-500 dark:text-sky-300">
+                            {formatCourseGpa(g.gpa)}
+                          </Text>
+                          <Text className="ml-1.5 text-[10.5px] font-semibold text-sky-600 dark:text-sky-300">
+                            改
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`移除识别成绩 ${g.name}`}
+                          hitSlop={6}
+                          onPress={() =>
+                            useImportTask.getState().removeGrade(result, i)
+                          }
+                          className="ml-1.5 h-6 w-6 items-center justify-center rounded-full bg-rose-500/10"
+                        >
+                          <Ionicons
+                            name="trash-outline"
+                            size={12}
+                            color="#F43F5E"
+                          />
+                        </Pressable>
+                      </View>
+                    );
+                  })}
+                  {!result.grades.length ? (
+                    <Text className="py-3 text-center text-[11px] text-slate-400">
+                      已移除全部识别成绩，可点击下方放弃
+                    </Text>
+                  ) : null}
                 </ScrollView>
                 <Text className="mt-1 text-[10px] text-slate-400">
-                  共 {result.grades.length} 条成绩
-                  {" · "}
-                  将按学期归入「成绩」页
+                  共 {result.grades.length} 条成绩 · 点行可改分数、学期与类型
                 </Text>
               </View>
             ) : null}
@@ -480,17 +812,26 @@ function TaskDialog() {
             {/* 底部操作 */}
             <View className="mt-4 flex-row gap-x-2.5">
               {status === "analyzing" ? (
-                <Pressable
-                  onPress={() => setExpanded(false)}
-                  className="flex-1 items-center rounded-2xl border border-white/20 bg-white/15 py-2.5 dark:border-white/10 dark:bg-white/[0.05]"
-                >
-                  <Text className="text-[12px] font-semibold text-slate-600 dark:text-slate-300">
-                    收起，后台分析
-                  </Text>
-                </Pressable>
+                <>
+                  <Pressable
+                    onPress={cancel}
+                    className="items-center rounded-2xl border border-rose-400/35 bg-rose-500/10 px-4 py-2.5"
+                  >
+                    <Text className="text-[12px] font-semibold text-rose-600 dark:text-rose-300">
+                      取消识别
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => setExpanded(false)}
+                    className="flex-1 items-center rounded-2xl border border-white/20 bg-white/15 py-2.5 dark:border-white/10 dark:bg-white/[0.05]"
+                  >
+                    <Text className="text-[12px] font-semibold text-slate-600 dark:text-slate-300">
+                      收起，后台分析
+                    </Text>
+                  </Pressable>
+                </>
               ) : result?.type === "schedule" ? (
                 pick === "choose" ? (
-                  /* 三选一：融合 / 新建 / 覆盖 */
                   <View className="flex-1 gap-y-2">
                     <Pressable
                       onPress={applyMerge}
@@ -506,7 +847,7 @@ function TaskDialog() {
                           融合到当前课表
                         </Text>
                         <Text className="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">
-                          时间、周数自动换算，保留现有课程
+                          时间、周数自动对齐，保留现有课程与作息
                         </Text>
                       </View>
                     </Pressable>
@@ -529,7 +870,7 @@ function TaskDialog() {
                       </View>
                     </Pressable>
                     <Pressable
-                      onPress={applyReplace}
+                      onPress={() => setPick("replaceConfirm")}
                       className="flex-row items-center rounded-2xl border border-white/20 bg-white/15 px-3.5 py-2.5 dark:border-white/10 dark:bg-white/[0.05]"
                     >
                       <Ionicons
@@ -542,7 +883,7 @@ function TaskDialog() {
                           覆盖当前课表
                         </Text>
                         <Text className="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">
-                          清空现有课程后导入
+                          清空现有课程后导入（保留自定义作息）
                         </Text>
                       </View>
                     </Pressable>
@@ -555,8 +896,39 @@ function TaskDialog() {
                       </Text>
                     </Pressable>
                   </View>
+                ) : pick === "replaceConfirm" ? (
+                  <View className="flex-1 gap-y-2.5">
+                    <View className="rounded-2xl border border-rose-500/40 bg-rose-500/12 px-3.5 py-2.5">
+                      <Text className="text-[11.5px] font-bold text-rose-600 dark:text-rose-300">
+                        确认覆盖当前课表？
+                      </Text>
+                      <Text className="mt-1 text-[10.5px] leading-4 text-rose-700/90 dark:text-rose-200/90">
+                        将清空当前课表现有的 {currentCourseCount}{" "}
+                        条课程记录（含手动调课记录），并用本次识别的{" "}
+                        {result.schedule.courses.length}{" "}
+                        条记录替换。当前作息时间表会保留。
+                      </Text>
+                    </View>
+                    <View className="flex-row gap-x-2.5">
+                      <Pressable
+                        onPress={() => setPick("choose")}
+                        className="flex-1 items-center rounded-2xl border border-white/20 bg-white/15 py-2.5 dark:border-white/10 dark:bg-white/[0.05]"
+                      >
+                        <Text className="text-[12px] font-semibold text-slate-600 dark:text-slate-300">
+                          返回
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={applyReplace}
+                        className="flex-1 items-center rounded-2xl bg-rose-600 py-2.5"
+                      >
+                        <Text className="text-[12px] font-bold text-white">
+                          确认覆盖
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </View>
                 ) : pick === "mergeConfirm" && mergePreview ? (
-                  /* 融合前冲突确认 */
                   <View className="flex-1 gap-y-2.5">
                     <View className="rounded-2xl border border-amber-400/45 bg-amber-400/15 px-3.5 py-2.5">
                       <Text className="text-[11.5px] font-semibold text-amber-600 dark:text-amber-300">
@@ -610,17 +982,19 @@ function TaskDialog() {
                       </Text>
                     </Pressable>
                     <Pressable
+                      disabled={!result.schedule.courses.length}
                       onPress={() => {
+                        if (!result.schedule.courses.length) return;
                         if (hasCourses) {
                           setPick("choose");
                           return;
                         }
                         importSchedule(withWeeks(result.schedule));
                         ack(
-                          "已导入当前课表，可在首页查看；开学/放假日期可在「设置」中调整",
+                          "已导入当前课表（保留现有作息），可在首页查看；开学/放假日期可在「设置」中调整",
                         );
                       }}
-                      className="flex-1 items-center rounded-2xl bg-sky-500/85 py-2.5"
+                      className={`flex-1 items-center rounded-2xl bg-sky-500/85 py-2.5 ${!result.schedule.courses.length ? "opacity-40" : ""}`}
                     >
                       <Text className="text-[12px] font-bold text-white">
                         导入课表
@@ -639,14 +1013,9 @@ function TaskDialog() {
                     </Text>
                   </Pressable>
                   <Pressable
-                    onPress={() => {
-                      try {
-                        if (result.scheduleId && useStore.getState().activeScheduleId !== result.scheduleId) throw new Error("课表已切换，请切回导入时的课表再应用作息");
-                        setPeriods(result.periods);
-                        ack("作息表已应用，可在设置 → 课表与学期 → 作息时间表查看和编辑");
-                      } catch (error) { Alert.alert("无法应用作息", error instanceof Error ? error.message : "作息时间无效"); }
-                    }}
-                    className="flex-1 items-center rounded-2xl bg-violet-500/85 py-2.5"
+                    disabled={!result.periods.length}
+                    onPress={handleApplyPeriods}
+                    className={`flex-1 items-center rounded-2xl bg-violet-500/85 py-2.5 ${!result.periods.length ? "opacity-40" : ""}`}
                   >
                     <Text className="text-[12px] font-bold text-white">
                       应用作息表
@@ -654,24 +1023,65 @@ function TaskDialog() {
                   </Pressable>
                 </>
               ) : result?.type === "grades" ? (
-                <>
-                  <Pressable
-                    onPress={clear}
-                    className="flex-1 items-center rounded-2xl border border-white/20 bg-white/15 py-2.5 dark:border-white/10 dark:bg-white/[0.05]"
-                  >
-                    <Text className="text-[12px] font-semibold text-slate-600 dark:text-slate-300">
-                      放弃
+                pick === "gradeDupConfirm" ? (
+                  <View className="flex-1 gap-y-2">
+                    <Text className="text-[11px] font-semibold text-amber-600 dark:text-amber-300">
+                      目标学年已有 {duplicateGradeCount} 门同名同期的成绩，请选择处理方式：
                     </Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={applyGrades}
-                    className="flex-1 items-center rounded-2xl bg-sky-500/85 py-2.5"
-                  >
-                    <Text className="text-[12px] font-bold text-white">
-                      导入 {result.grades.length} 条成绩
-                    </Text>
-                  </Pressable>
-                </>
+                    <Pressable
+                      onPress={() => commitGrades("skipDuplicates")}
+                      className="items-center rounded-2xl bg-sky-500/85 py-2.5"
+                    >
+                      <Text className="text-[12px] font-bold text-white">
+                        跳过重复（仅导入新增）
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => commitGrades("overwriteDuplicates")}
+                      className="items-center rounded-2xl border border-amber-400/45 bg-amber-500/15 py-2.5"
+                    >
+                      <Text className="text-[12px] font-semibold text-amber-700 dark:text-amber-200">
+                        覆盖更新已有记录
+                      </Text>
+                    </Pressable>
+                    <View className="flex-row gap-x-2">
+                      <Pressable
+                        onPress={() => commitGrades("append")}
+                        className="flex-1 items-center rounded-2xl border border-white/20 bg-white/15 py-2 dark:border-white/10 dark:bg-white/[0.05]"
+                      >
+                        <Text className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                          全部保留（含重修）
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => setPick("none")}
+                        className="items-center rounded-2xl px-4 py-2"
+                      >
+                        <Text className="text-[11px] text-slate-400">返回</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                ) : (
+                  <>
+                    <Pressable
+                      onPress={clear}
+                      className="flex-1 items-center rounded-2xl border border-white/20 bg-white/15 py-2.5 dark:border-white/10 dark:bg-white/[0.05]"
+                    >
+                      <Text className="text-[12px] font-semibold text-slate-600 dark:text-slate-300">
+                        放弃
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      disabled={!result.grades.length}
+                      onPress={handleImportGradesPress}
+                      className={`flex-1 items-center rounded-2xl bg-sky-500/85 py-2.5 ${!result.grades.length ? "opacity-40" : ""}`}
+                    >
+                      <Text className="text-[12px] font-bold text-white">
+                        导入 {result.grades.length} 条成绩
+                      </Text>
+                    </Pressable>
+                  </>
+                )
               ) : result?.type === "count" ? (
                 <>
                   <Pressable
@@ -711,7 +1121,6 @@ function TaskDialog() {
                   </Pressable>
                 </>
               ) : (
-                /* 结果已确认应用 */
                 <Pressable
                   onPress={clear}
                   className="flex-1 items-center rounded-2xl bg-sky-500/85 py-2.5"
@@ -723,23 +1132,55 @@ function TaskDialog() {
 
             {status === "analyzing" ? (
               <Text className="mt-2.5 text-center text-[10px] text-slate-400 dark:text-slate-500">
-                可收起为悬浮球，拖动调整位置，分析在后台继续
+                可收起为悬浮球后台继续，或随时点击左侧取消识别
               </Text>
             ) : null}
           </View>
         </GlassContainer>
       </Animated.View>
-      {editing != null && result?.type === "schedule" && result.schedule.courses[editing] ? (
-        <ImportRowEditor pages={result.sources?.[editing]?.pages} onClose={() => setEditing(null)} target={{
-          type: "course", schedule: result.schedule, course: result.schedule.courses[editing],
-          save: course => useImportTask.getState().editCourse(result, editing, course),
-        }} />
+
+      {editing != null &&
+      result?.type === "schedule" &&
+      editorSchedule &&
+      result.schedule.courses[editing] ? (
+        <ImportRowEditor
+          pages={result.sources?.[editing]?.pages}
+          onClose={() => setEditing(null)}
+          target={{
+            type: "course",
+            schedule: editorSchedule,
+            course: result.schedule.courses[editing],
+            save: (course) =>
+              useImportTask.getState().editCourse(result, editing, course),
+          }}
+        />
       ) : null}
-      {editing != null && result?.type === "grades" && result.grades[editing] ? (
-        <ImportRowEditor pages={result.sources?.[editing]?.pages} onClose={() => setEditing(null)} target={{
-          type: "grade", grade: result.grades[editing],
-          save: grade => useImportTask.getState().editGrade(result, editing, grade),
-        }} />
+      {editing != null &&
+      result?.type === "grades" &&
+      result.grades[editing] ? (
+        <ImportRowEditor
+          pages={result.sources?.[editing]?.pages}
+          onClose={() => setEditing(null)}
+          target={{
+            type: "grade",
+            grade: result.grades[editing],
+            save: (grade) =>
+              useImportTask.getState().editGrade(result, editing, grade),
+          }}
+        />
+      ) : null}
+      {editing != null &&
+      result?.type === "periods" &&
+      result.periods[editing] ? (
+        <ImportRowEditor
+          onClose={() => setEditing(null)}
+          target={{
+            type: "period",
+            period: result.periods[editing],
+            save: (period) =>
+              useImportTask.getState().editPeriod(result, editing, period),
+          }}
+        />
       ) : null}
     </View>
   );
@@ -760,11 +1201,9 @@ function ProgressBall() {
   const edgeX = width - BALL_SIZE - EDGE_PAD;
   const edgeY = Math.round(height * 0.32);
 
-  // 拖拽位置（手势写入）：初始吸附右侧边框
   const x = useSharedValue(edgeX);
   const y = useSharedValue(edgeY);
   const scale = useSharedValue(1);
-  // 入场偏移（仅效果内写入）：收起瞬间球在屏幕中心，弹簧归零即「弹到边框」
   const entryX = useSharedValue((width - BALL_SIZE) / 2 - edgeX);
   const entryY = useSharedValue((height - BALL_SIZE) / 2 - edgeY);
 
@@ -774,18 +1213,13 @@ function ProgressBall() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 进度环平滑推进（仅效果内写入，UI 线程 withTiming 插值）
   const ring = useSharedValue(progress);
   React.useEffect(() => {
     ring.value = withTiming(progress, { duration: 450 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [progress]);
 
-  // 注意：以下手势回调运行在 UI 线程（worklet），
-  // 只能用 Math 等全局 + 捕获的原始值，严禁调用组件作用域普通 JS 函数
-  // （Reanimated 4 会同步跨线程调用失败直接闪退）
   const pan = Gesture.Pan()
-    // 需要明显拖动才激活：否则轻微手指抖动会抢走点击（点球无反应）
     .activeOffsetX([-12, 12])
     .activeOffsetY([-12, 12])
     .onBegin(() => {
@@ -802,7 +1236,6 @@ function ProgressBall() {
       );
     })
     .onEnd(() => {
-      // 松手后吸附最近的竖向边框
       x.value = withSpring(
         x.value + BALL_SIZE / 2 < width / 2
           ? EDGE_PAD
@@ -817,7 +1250,6 @@ function ProgressBall() {
   const tap = Gesture.Tap()
     .maxDuration(500)
     .onEnd(() => {
-      // 还原为进度弹窗，实时显示当前进度
       runOnJS(setExpanded)(true);
     });
 
@@ -837,8 +1269,6 @@ function ProgressBall() {
 
   return (
     <GestureDetector gesture={gesture}>
-      {/* 入场动画与拖动位移必须分层：布局动画(FadeIn)会写 transform，
-          与 ballStyle 同节点冲突（Reanimated 告警 + 原生端报错） */}
       <Animated.View
         entering={FadeIn.springify().damping(15).stiffness(150)}
         style={{
@@ -848,13 +1278,11 @@ function ProgressBall() {
         }}
       >
         <Animated.View style={ballStyle}>
-          {/* 玻璃球体：与全站 GlassContainer 同质感（雾面 + 发丝边框） */}
           <GlassContainer
             radius={BALL_SIZE / 2}
             borderOpacity={0.22}
             style={{ width: BALL_SIZE, height: BALL_SIZE }}
           >
-            {/* 内容层铺满整个球体（含 1px 边框），圆心即球体正中心 */}
             <View
               style={{
                 position: "absolute",
@@ -866,7 +1294,6 @@ function ProgressBall() {
                 justifyContent: "center",
               }}
             >
-              {/* 渐变进度环：铺满球体，绕球心旋转起始角（12 点方向起） */}
               <Svg
                 width={BALL_SIZE}
                 height={BALL_SIZE}

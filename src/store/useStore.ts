@@ -1,15 +1,17 @@
 import { create, type StateCreator } from "zustand";
 import { persist } from "zustand/middleware";
-import { normalizeCourseTasks, normalizeTaskDraft, type CourseTask, type CourseTaskDraft } from "@/utils/courseTasks";
+import { normalizeCourseTasks, type CourseTask } from "@/utils/courseTasks";
 
 import { DEFAULT_GRADE_RULES, DEFAULT_GRADE_TYPES, DEFAULT_GRADE_YEARS, SAMPLE_SCHEDULE } from "@/constants/sample";
 import type {
   Course,
+  GpaScaleId,
   GradeRecord,
   GradeRule,
   GradeType,
   GradeYear,
   MergeReport,
+  Period,
   Schedule,
   SemesterKind,
 } from "@/types";
@@ -23,13 +25,18 @@ import {
   periodAtTime,
   periodEndingAtTime,
   resolveSemester,
+  timeToMinutes,
   toIsoDate,
   weeksFromDates,
 } from "@/utils/time";
 import { coordinatedJSONStorage } from "@/utils/storage";
-import { normalizeGradeInput } from "@/utils/grades";
+import {
+  deriveGpa,
+  gradeDuplicateKey,
+  normalizeGradeInput,
+} from "@/utils/grades";
 
-import { editCourseWeeks, normalizeCoursePatch, validatePeriods } from "@/utils/courseEditing";
+import { editCourseWeeks, normalizeCoursePatch, sameCourseIdentity, validatePeriods } from "@/utils/courseEditing";
 
 const uid = () =>
   `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
@@ -48,13 +55,6 @@ const rekeyCourses = (courses: Course[]): Course[] => {
   });
 };
 
-/**
- * 同一门课可能按每次上课拆成多条记录（如周一 3-4 节 + 周三 1-2 节），
- * 判定为同一门课：名称 + 教师 + 教室一致。
- */
-const sameIdentity = (a: Course, b: Course) =>
-  a.name === b.name && a.teacher === b.teacher && a.classroom === b.classroom;
-
 /** 同一门课的共享字段：改动需同步到该课的全部上课时间记录 */
 const SHARED_FIELDS = [
   "name",
@@ -65,12 +65,13 @@ const SHARED_FIELDS = [
   "note",
 ] as const;
 
-/** 从 patch 中挑出共享字段（时间字段 weekday/节次/周次 不同步，仅改本条） */
+/** 从 patch 中挑出共享字段（时间字段 weekday/节次/周次 不同步，仅改本条；显式清空如 credits: undefined 也会同步） */
 const pickShared = (patch: Partial<Course>): Partial<Course> => {
   const out: Partial<Course> = {};
   for (const k of SHARED_FIELDS) {
-    const v = patch[k];
-    if (v !== undefined) (out as Record<string, unknown>)[k] = v;
+    if (Object.hasOwn(patch, k)) {
+      (out as Record<string, unknown>)[k] = patch[k];
+    }
   }
   return out;
 };
@@ -83,26 +84,87 @@ const mapActive = (
   schedules: s.schedules.map((x) => (x.id === s.activeScheduleId ? fn(x) : x)),
 });
 
+function minsToClock(total: number): string {
+  const clamped = Math.max(0, Math.min(23 * 60 + 59, total));
+  return `${String(Math.floor(clamped / 60)).padStart(2, "0")}:${String(clamped % 60).padStart(2, "0")}`;
+}
+
+/** 若导入课程或兼容场景需要更多节次，沿最后一节规律自动顺延补齐，不覆盖原有自定义作息 */
+export function extendPeriodsToCount(
+  periods: Period[],
+  targetCount: number,
+): Period[] {
+  const base = periods.map((p, idx) => ({ ...p, index: idx + 1 }));
+  if (targetCount <= base.length) return base;
+  const out = [...base];
+  while (out.length < targetCount) {
+    const last = out[out.length - 1];
+    let startMin = 8 * 60;
+    let duration = 45;
+    if (last && /^\d{1,2}:\d{2}$/.test(last.startTime) && /^\d{1,2}:\d{2}$/.test(last.endTime)) {
+      const s = timeToMinutes(last.startTime);
+      const e = timeToMinutes(last.endTime);
+      duration = Math.max(30, Math.min(90, e - s || 45));
+      startMin = Math.min(23 * 60 + 58 - 1, e + 10);
+    }
+    const endMin = Math.min(23 * 60 + 59, startMin + duration);
+    const safeStart = endMin > startMin ? startMin : Math.max(0, endMin - 1);
+    const idx = out.length + 1;
+    out.push({
+      index: idx,
+      label: `第${idx}节`,
+      startTime: minsToClock(safeStart),
+      endTime: minsToClock(endMin),
+    });
+  }
+  return out;
+}
+
+function periodsMatch(a: Period[], b: Period[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (
+      a[i].index !== b[i].index ||
+      a[i].startTime !== b[i].startTime ||
+      a[i].endTime !== b[i].endTime
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /**
  * 融合计划（纯计算）：把 src 的课程换算进 dst 的作息节次与周数，
- * 时间按真实时刻映射、周数按真实日期对齐，合并后全量冲突检测。
+ * 同作息直接保节次避免时刻换算错位；异作息按真实时刻映射、周数按真实日期对齐，合并后全量冲突检测。
  */
 function planMerge(
   dst: Schedule,
   src: Schedule,
-): { merged: Course[]; report: MergeReport } {
+): { merged: Course[]; periods: Period[]; report: MergeReport } {
   let skipped = 0;
   const added: Course[] = [];
+  const sameBells = periodsMatch(dst.periods, src.periods);
+  let maxNeededPeriod = dst.periods.length;
+
   for (const c of src.courses) {
-    // 时间换算：源节次的真实时刻 -> 目标作息的节次
-    const { startTime, endTime } = getCourseTime(
-      src.periods,
-      c.startPeriod,
-      c.endPeriod,
-      c,
-    );
-    const startP = periodAtTime(dst.periods, startTime);
-    const endP = periodEndingAtTime(dst.periods, endTime);
+    let startP: number | null;
+    let endP: number | null;
+    if (sameBells && !c.startTime && !c.endTime) {
+      startP = Math.max(1, c.startPeriod);
+      endP = Math.max(startP, c.endPeriod);
+      if (endP > maxNeededPeriod) maxNeededPeriod = endP;
+    } else {
+      // 时间换算：源节次的真实时刻 -> 目标作息的节次
+      const { startTime, endTime } = getCourseTime(
+        src.periods,
+        c.startPeriod,
+        c.endPeriod,
+        c,
+      );
+      startP = periodAtTime(dst.periods, startTime);
+      endP = periodEndingAtTime(dst.periods, endTime);
+    }
     if (startP == null || endP == null) {
       skipped++;
       continue;
@@ -133,9 +195,10 @@ function planMerge(
     });
   }
 
+  const nextPeriods = extendPeriodsToCount(dst.periods, maxNeededPeriod);
   // 冲突检测（合并后的全量课程）
   const merged = [...dst.courses, ...added];
-  const conflictMap = findConflicts(merged, undefined, dst.periods);
+  const conflictMap = findConflicts(merged, undefined, nextPeriods);
   const pairs = new Set<string>();
   for (const [id, names] of conflictMap) {
     const me = merged.find((x) => x.id === id);
@@ -145,6 +208,7 @@ function planMerge(
 
   return {
     merged,
+    periods: nextPeriods,
     report: { added: added.length, skipped, conflicts: [...pairs] },
   };
 }
@@ -156,10 +220,8 @@ export type ScheduleMetaPatch = Partial<
 interface AppState {
   /** 全部课表（如 "大二下"、"大三上"），可自由命名、切换 */
   schedules: Schedule[];
+  /** 旧版待办仅用于保留已保存的数据和兼容备份。 */
   courseTasks: CourseTask[];
-  saveCourseTask: (draft: CourseTaskDraft, id?: string) => void;
-  toggleCourseTask: (id: string) => void;
-  removeCourseTask: (id: string) => void;
   /** 当前选中的课表 id */
   activeScheduleId: string;
   grades: GradeRecord[];
@@ -180,9 +242,15 @@ interface AppState {
   setActiveSchedule: (id: string) => void;
   /** 新建课表（复制当前作息，课程为空），并切换为当前 */
   addSchedule: (name: string) => void;
+  /** 复制指定课表（保留作息、学期日期和全部课程，自动生成新课程 ID），并切换为当前 */
+  duplicateSchedule: (id: string) => string | null;
+  /** 仅清空当前课表的全部课程，保留作息、学期与其他课表/成绩 */
+  clearActiveCourses: () => void;
   removeSchedule: (id: string) => void;
   /** 更新课表信息（命名 / 开学、放假日期），日期变更后自动重算总周数 */
   updateScheduleMeta: (id: string, patch: ScheduleMetaPatch) => void;
+  /** 将当前课表的作息时间同步到所有课表（校验无法兼容的课表将被跳过并返回结果） */
+  applyPeriodsToAllSchedules: () => { updated: number; skipped: string[] };
   /**
    * 把另一份课表（id 或名称）合并进当前课表：
    * 课程时间按真实时刻换算到当前作息，周数按真实日期换算，冲突在报告中列出。
@@ -198,8 +266,8 @@ interface AppState {
   ) => MergeReport;
 
   /* ---------------- 当前课表内容 ---------------- */
-  /** 应用 DeepSeek 识别出的课表（替换当前课表的课程，保留命名与学期日期） */
-  importSchedule: (schedule: Schedule) => void;
+  /** 应用识别出的课表（替换当前课表的课程，默认保留自定义作息与学期日期；课程节次超出时自动补齐末节） */
+  importSchedule: (schedule: Schedule, opts?: { replacePeriods?: boolean }) => void;
   /** 把识别出的课表存为一份新课表，并切换为当前 */
   addScheduleWithData: (incoming: Schedule) => string;
   addCourse: (course: Omit<Course, "id">) => string;
@@ -211,6 +279,13 @@ interface AppState {
 
   /* ---------------- 成绩与绩点 ---------------- */
   addGrade: (grade: Omit<GradeRecord, "id">) => string;
+  /** 批量入库成绩，支持去重跳过或覆盖已有同名记录 */
+  upsertGrades: (
+    items: Omit<GradeRecord, "id">[],
+    mode?: "append" | "skipDuplicates" | "overwriteDuplicates",
+  ) => { added: number; updated: number; skipped: number };
+  /** 按指定绩点制重算所有可由原始分数换算的成绩绩点 */
+  recalculateGradesGpa: (scale: GpaScaleId) => number;
   updateGrade: (id: string, patch: Partial<GradeRecord>) => void;
   removeGrade: (id: string) => void;
   /** 批量删除成绩（勾选删除 / 清空学期） */
@@ -238,22 +313,6 @@ interface AppState {
 export const createAppState: StateCreator<AppState> = (set, get) => ({
       schedules: [SAMPLE_SCHEDULE],
       courseTasks: [],
-      saveCourseTask: (draft, id) => {
-        const task = normalizeTaskDraft(draft);
-        if (!task) throw new Error("待办信息不完整，请核对标题和截止时间。");
-        const { courseTasks } = get();
-        const current = id ? courseTasks.find(row => row.id === id) : undefined;
-        if (id && !current) throw new Error("这条待办已删除，请重新打开列表。");
-        if (!current && courseTasks.length >= 3000) throw new Error("待办已满，请先整理已完成事项。");
-        set({ courseTasks: current
-          ? courseTasks.map(row => row.id === id ? { ...task, id: row.id, completedAt: row.completedAt } : row)
-          : [...courseTasks, { ...task, id: uid() }] });
-      },
-      toggleCourseTask: (id) => set(state => ({
-        courseTasks: state.courseTasks.map(row => row.id === id
-          ? { ...row, completedAt: row.completedAt === undefined ? Date.now() : undefined } : row),
-      })),
-      removeCourseTask: (id) => set(state => ({ courseTasks: state.courseTasks.filter(row => row.id !== id) })),
       activeScheduleId: SAMPLE_SCHEDULE.id,
       grades: [],
       gradeYears: DEFAULT_GRADE_YEARS.map((y) => ({ ...y })),
@@ -289,6 +348,78 @@ export const createAppState: StateCreator<AppState> = (set, get) => ({
             activeScheduleId: id,
           };
         }),
+
+      duplicateSchedule: (sourceId) => {
+        const state = get();
+        const src = state.schedules.find((x) => x.id === sourceId);
+        if (!src) return null;
+        const id = uid();
+        const existingNames = new Set(state.schedules.map((x) => x.name));
+        let copyName = `${src.name} 副本`;
+        let suffix = 2;
+        while (existingNames.has(copyName)) {
+          copyName = `${src.name} 副本 ${suffix++}`;
+        }
+        set((s) => ({
+          schedules: [
+            ...s.schedules,
+            {
+              ...src,
+              id,
+              name: copyName,
+              periods: src.periods.map((p) => ({ ...p })),
+              courses: src.courses.map((c) => ({
+                ...c,
+                id: uid(),
+                weeks: [...c.weeks],
+              })),
+            },
+          ],
+          activeScheduleId: id,
+        }));
+        return id;
+      },
+
+      clearActiveCourses: () =>
+        set((s) => mapActive(s, (cur) => ({ ...cur, courses: [] }))),
+
+      applyPeriodsToAllSchedules: () => {
+        const state = get();
+        const active =
+          state.schedules.find((x) => x.id === state.activeScheduleId) ??
+          state.schedules[0];
+        if (!active) return { updated: 0, skipped: [] };
+        let updated = 0;
+        const skipped: string[] = [];
+        const nextSchedules = state.schedules.map((sched) => {
+          if (sched.id === active.id) return sched;
+          const err = validatePeriods(active.periods, sched.courses);
+          if (err) {
+            skipped.push(`${sched.name}（${err}）`);
+            return sched;
+          }
+          try {
+            const candidate = {
+              ...sched,
+              periods: active.periods.map((p) => ({ ...p })),
+            };
+            const remapped = sched.courses.map((c) =>
+              c.startTime || c.endTime
+                ? { ...c, ...normalizeCoursePatch(c, {}, candidate) }
+                : c,
+            );
+            updated++;
+            return { ...candidate, courses: remapped };
+          } catch (cause) {
+            skipped.push(
+              `${sched.name}（${cause instanceof Error ? cause.message : "时间范围不兼容"}）`,
+            );
+            return sched;
+          }
+        });
+        if (updated > 0) set({ schedules: nextSchedules });
+        return { updated, skipped };
+      },
 
       removeSchedule: (id) =>
         set((s) => {
@@ -336,10 +467,10 @@ export const createAppState: StateCreator<AppState> = (set, get) => ({
         const empty: MergeReport = { added: 0, skipped: 0, conflicts: [] };
         if (!src || !dst || src.id === dst.id) return empty;
 
-        const { merged, report } = planMerge(dst, src);
+        const { merged, periods, report } = planMerge(dst, src);
         set({
           schedules: s.schedules.map((x) =>
-            x.id === dst.id ? { ...x, courses: merged } : x,
+            x.id === dst.id ? { ...x, courses: merged, periods } : x,
           ),
         });
         return report;
@@ -353,41 +484,66 @@ export const createAppState: StateCreator<AppState> = (set, get) => ({
         const empty: MergeReport = { added: 0, skipped: 0, conflicts: [] };
         if (!dst || !incoming?.courses?.length) return empty;
 
-        const { merged, report } = planMerge(dst, incoming);
+        const { merged, periods, report } = planMerge(dst, incoming);
         if (!opts?.dryRun) {
           set({
             schedules: s.schedules.map((x) =>
-              x.id === dst.id ? { ...x, courses: merged } : x,
+              x.id === dst.id ? { ...x, courses: merged, periods } : x,
             ),
           });
         }
         return report;
       },
 
-      importSchedule: (incoming) =>
+      importSchedule: (incoming, opts) =>
         set((s) =>
-          mapActive(s, (cur) => ({
-            ...cur,
-            courses: rekeyCourses(incoming.courses),
-            periods: incoming.periods.length ? incoming.periods : cur.periods,
-          })),
+          mapActive(s, (cur) => {
+            const courses = rekeyCourses(incoming.courses);
+            const basePeriods =
+              opts?.replacePeriods && incoming.periods.length
+                ? incoming.periods
+                : cur.periods;
+            const maxPeriod = courses.reduce(
+              (max, c) => Math.max(max, c.endPeriod),
+              basePeriods.length,
+            );
+            return {
+              ...cur,
+              courses,
+              periods: extendPeriodsToCount(basePeriods, maxPeriod),
+            };
+          }),
         ),
 
       addScheduleWithData: (incoming) => {
         const id = uid();
-        set((s) => ({
-          schedules: [
-            ...s.schedules,
-            {
-              ...incoming,
-              id,
-              courses: rekeyCourses(incoming.courses),
-              name:
-                incoming.name?.trim() || `导入课表 ${s.schedules.length + 1}`,
-            },
-          ],
-          activeScheduleId: id,
-        }));
+        set((s) => {
+          const cur =
+            s.schedules.find((x) => x.id === s.activeScheduleId) ??
+            s.schedules[0];
+          const courses = rekeyCourses(incoming.courses);
+          const basePeriods = incoming.periods.length
+            ? incoming.periods
+            : cur.periods;
+          const maxPeriod = courses.reduce(
+            (max, c) => Math.max(max, c.endPeriod),
+            basePeriods.length,
+          );
+          return {
+            schedules: [
+              ...s.schedules,
+              {
+                ...incoming,
+                id,
+                periods: extendPeriodsToCount(basePeriods, maxPeriod),
+                courses,
+                name:
+                  incoming.name?.trim() || `导入课表 ${s.schedules.length + 1}`,
+              },
+            ],
+            activeScheduleId: id,
+          };
+        });
         return id;
       },
 
@@ -407,7 +563,7 @@ export const createAppState: StateCreator<AppState> = (set, get) => ({
           mapActive(s, (cur) => {
             const target = cur.courses.find((c) => c.id === id);
             if (!target) throw new Error("课程已不存在，请重新打开编辑");
-            patch = normalizeCoursePatch(target, patch, cur);
+            patch = normalizeCoursePatch(target, patch, cur, true);
             if (targetWeeks) return { ...cur, courses: editCourseWeeks(cur.courses, id, patch, targetWeeks, uid()) };
             // 共享字段（名称/教师/教室/颜色/学分/备注）同步到同一门课的
             // 全部上课时间记录，保证日视图/周视图/AI 修改看到同一份数据；
@@ -417,7 +573,7 @@ export const createAppState: StateCreator<AppState> = (set, get) => ({
               ...cur,
               courses: cur.courses.map((c) => {
                 if (c.id === id) return { ...c, ...patch };
-                return sameIdentity(c, target) ? { ...c, ...shared } : c;
+                return sameCourseIdentity(c, target) ? { ...c, ...shared } : c;
               }),
             };
           }),
@@ -431,7 +587,7 @@ export const createAppState: StateCreator<AppState> = (set, get) => ({
             // 「删除课程」= 删除整门课（含其全部上课时间记录）
             return {
               ...cur,
-              courses: cur.courses.filter((c) => !sameIdentity(c, target)),
+              courses: cur.courses.filter((c) => !sameCourseIdentity(c, target)),
             };
           }),
         ),
@@ -467,18 +623,92 @@ export const createAppState: StateCreator<AppState> = (set, get) => ({
         return id;
       },
 
+      upsertGrades: (items, mode = "skipDuplicates") => {
+        let added = 0;
+        let updated = 0;
+        let skipped = 0;
+        set((s) => {
+          const next = [...s.grades];
+          const indexByKey = new Map<string, number>();
+          next.forEach((g, idx) => {
+            const key = gradeDuplicateKey(g.yearId, g.semester, g.name);
+            if (!indexByKey.has(key)) indexByKey.set(key, idx);
+          });
+          for (const item of items) {
+            const key = gradeDuplicateKey(item.yearId, item.semester, item.name);
+            const existingIdx = indexByKey.get(key);
+            if (existingIdx !== undefined && mode !== "append") {
+              if (mode === "skipDuplicates") {
+                skipped += 1;
+                continue;
+              }
+              const existing = next[existingIdx];
+              next[existingIdx] = {
+                ...existing,
+                ...item,
+                credit: item.credit ?? existing.credit,
+                gpa: item.gpa ?? existing.gpa,
+                id: existing.id,
+              };
+              updated += 1;
+              continue;
+            }
+            const created: GradeRecord = { ...item, id: uid() };
+            indexByKey.set(key, next.length);
+            next.push(created);
+            added += 1;
+          }
+          return { grades: next };
+        });
+        return { added, updated, skipped };
+      },
+
+      recalculateGradesGpa: (scale) => {
+        let changed = 0;
+        set((s) => ({
+          grades: s.grades.map((g) => {
+            if (!g.score.trim()) return g;
+            const nextGpa = deriveGpa(g.scoreType, g.score, scale);
+            if (nextGpa === null || nextGpa === g.gpa) return g;
+            changed += 1;
+            return { ...g, gpa: nextGpa };
+          }),
+        }));
+        return changed;
+      },
+
       updateGrade: (id, patch) =>
         set((s) => ({
           grades: s.grades.map((g) => (g.id === id ? { ...g, ...patch } : g)),
         })),
 
       removeGrade: (id) =>
-        set((s) => ({ grades: s.grades.filter((g) => g.id !== id) })),
+        set((s) => ({
+          grades: s.grades.filter((g) => g.id !== id),
+          gradeRules: s.gradeRules.map((r) =>
+            r.excludedCourseIds.includes(id)
+              ? {
+                  ...r,
+                  excludedCourseIds: r.excludedCourseIds.filter(
+                    (cid) => cid !== id,
+                  ),
+                }
+              : r,
+          ),
+        })),
 
       removeGrades: (ids) =>
         set((s) => {
           const drop = new Set(ids);
-          return { grades: s.grades.filter((g) => !drop.has(g.id)) };
+          return {
+            grades: s.grades.filter((g) => !drop.has(g.id)),
+            gradeRules: s.gradeRules.map((r) => ({
+              ...r,
+              excludedCourseIds: r.excludedCourseIds.filter(
+                (cid) => !drop.has(cid),
+              ),
+            })),
+          };
         }),
 
       addGradeYear: (name) => {

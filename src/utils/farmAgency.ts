@@ -1,4 +1,6 @@
 import { FARM_TOPICS, RESIDENTS, isResidentId, type FarmTopicId, type ResidentConversation, type ResidentId } from './farmLife';
+import type { ResidentMemory } from './farmMemory';
+import { formatPersonaMemoryBlock } from './farmPersonaMemory';
 
 export const RESIDENT_PROJECTS = {
   door: { goal: '做一个家人都能上手的小工具', tension: '想把问题想透，却容易让家人等得太久。', location: 'bench', activity: '在长椅上把工具的第一步想清楚', result: '坐下来后，我想通了：先把最常用的一步做简单。' },
@@ -45,4 +47,23 @@ export function residentReflections(history: readonly ResidentConversation[], ac
     }
   }
   return [...notes];
+}
+
+/** 融合人格记忆流、同伴印象与近期日常经历，供对话与群聊使用。 */
+export function residentRichContext(
+  actor: ResidentId,
+  memory: ResidentMemory | undefined,
+  history: readonly ResidentConversation[],
+  options: { query: string; peers: readonly string[]; at: number; includePrivate: boolean; includePlayerTurns?: boolean; maxEpisodes?: number },
+): string {
+  const parts: string[] = [];
+  if (memory) {
+    const block = formatPersonaMemoryBlock(actor, memory, options);
+    if (block) parts.push(block);
+  }
+  const reflections = residentReflections(history, actor);
+  if (reflections.length && !parts.some(p => p.includes('相关记忆片段'))) {
+    parts.push('近期日常：' + reflections.join(''));
+  }
+  return parts.join('\n');
 }

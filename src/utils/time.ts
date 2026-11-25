@@ -1,4 +1,4 @@
-import type { Course, Period, SemesterKind } from "@/types";
+import type { Course, Period, Schedule, SemesterKind } from "@/types";
 
 /** 三种学期的默认配置：上学期（秋季）/ 下学期（春季）/ 短学期（小学期） */
 export const SEMESTER_DEFS: Record<
@@ -74,10 +74,13 @@ export function mondayOf(date: Date): Date {
   return addDays(d, -offset);
 }
 
-/** 由开学/放假日期推导总周数（放假日所在周算最后一周） */
+/** 由开学/放假日期推导总周数（放假日所在周算最后一周，UTC 午夜计算避免夏令时偏差） */
 export function weeksFromDates(startDate: string, endDate: string): number {
+  const s = parseIsoDate(startDate);
+  const e = parseIsoDate(endDate);
   const diffDays = Math.floor(
-    (parseIsoDate(endDate).getTime() - parseIsoDate(startDate).getTime()) /
+    (Date.UTC(e.getFullYear(), e.getMonth(), e.getDate()) -
+      Date.UTC(s.getFullYear(), s.getMonth(), s.getDate())) /
       86400000,
   );
   return Math.max(1, Math.floor(diffDays / 7) + 1);
@@ -146,6 +149,16 @@ export interface CourseTime {
   durationMinutes: number;
 }
 
+const CLOCK_RE = /^\d{1,2}:\d{2}$/;
+
+/** 把用户输入的时间规整为两位小时 HH:mm（支持全角冒号与单位小时如 "8:30"） */
+export function normalizeClockInput(raw: string): string {
+  const cleaned = raw.trim().replace("：", ":");
+  const match = /^(\d{1,2}):(\d{2})$/.exec(cleaned);
+  if (!match) return cleaned;
+  return `${match[1].padStart(2, "0")}:${match[2]}`;
+}
+
 /** 根据节次区间计算课程的起止时间 */
 export function getCourseTime(
   periods: Period[],
@@ -158,16 +171,119 @@ export function getCourseTime(
     periods.find((p) => p.index === endPeriod) ?? periods[periods.length - 1];
   const startTime = overrides?.startTime ?? start?.startTime ?? "--:--";
   const endTime = overrides?.endTime ?? end?.endTime ?? "--:--";
+  const hasStart = CLOCK_RE.test(startTime);
+  const hasEnd = CLOCK_RE.test(endTime);
+  const startMinutes = hasStart ? timeToMinutes(startTime) : 0;
+  const endMinutes = hasEnd ? timeToMinutes(endTime) : 0;
   return {
     startTime,
     endTime,
-    startMinutes: start ? timeToMinutes(startTime) : 0,
-    endMinutes: end ? timeToMinutes(endTime) : 0,
-    durationMinutes: Math.max(
-      0,
-      timeToMinutes(endTime) - timeToMinutes(startTime),
-    ),
+    startMinutes,
+    endMinutes,
+    durationMinutes: hasStart && hasEnd ? Math.max(0, endMinutes - startMinutes) : 0,
   };
+}
+
+export type SemesterPhase = "before" | "active" | "after";
+
+export interface SemesterStatus {
+  phase: SemesterPhase;
+  /** 未钳位的真实教学周（未开学可 <= 0，放假后可 > totalWeeks） */
+  rawWeek: number;
+  /** 钳位到 [1, totalWeeks] 供页面浏览 */
+  clampedWeek: number;
+  /** 未开学时距开学日的剩余天数，其余情况为 0 */
+  daysUntilStart: number;
+  totalWeeks: number;
+  todayIso: string;
+}
+
+/** 统一判定当前日期处于学期前 / 学期中 / 放假后，避免各页面周次与今日课程口径打架 */
+export function getSemesterStatus(
+  schedule: Pick<Schedule, "startDate" | "endDate" | "totalWeeks">,
+  now: Date = new Date(),
+): SemesterStatus {
+  const totalWeeks = Math.max(1, schedule.totalWeeks ?? 18);
+  const info = getDateInfo(schedule.startDate, now);
+  const todayIso = toIsoDate(now);
+  const startIso = schedule.startDate;
+  const endIso = schedule.endDate;
+  let phase: SemesterPhase = "active";
+  let daysUntilStart = 0;
+  if (todayIso < startIso || info.weekIndex < 1) {
+    phase = "before";
+    const start = parseIsoDate(startIso);
+    const diff = Math.round(
+      (Date.UTC(start.getFullYear(), start.getMonth(), start.getDate()) -
+        Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())) /
+        86400000,
+    );
+    daysUntilStart = Math.max(0, diff);
+  } else if ((endIso && todayIso > endIso) || info.weekIndex > totalWeeks) {
+    phase = "after";
+  }
+  return {
+    phase,
+    rawWeek: info.weekIndex,
+    clampedWeek: Math.min(totalWeeks, Math.max(1, info.weekIndex)),
+    daysUntilStart,
+    totalWeeks,
+    todayIso,
+  };
+}
+
+/** 去重统计课程门数（按课程名 + 教师，避免一周多时段或单周拆分重复计数） */
+export function countDistinctCourses(courses: readonly Pick<Course, "name" | "teacher">[]): number {
+  const seen = new Set<string>();
+  for (const c of courses) {
+    const key = `${c.name.trim()}|${c.teacher.trim()}`;
+    if (c.name.trim()) seen.add(key);
+  }
+  return seen.size;
+}
+
+/** 统计一组上课记录占用的总节数 */
+export function countPeriodSlots(courses: readonly Pick<Course, "startPeriod" | "endPeriod">[]): number {
+  let total = 0;
+  for (const c of courses) {
+    total += Math.max(1, c.endPeriod - c.startPeriod + 1);
+  }
+  return total;
+}
+
+/** 把周次数组压缩为简洁易读标签，如 "1–16周"、"1–15单周"、"2–16双周"、"1–4, 6–8周" */
+export function formatWeeksCompact(weeks: readonly number[]): string {
+  const sorted = [...new Set(weeks)].filter((w) => Number.isInteger(w) && w > 0).sort((a, b) => a - b);
+  if (!sorted.length) return "";
+  if (sorted.length === 1) return `第${sorted[0]}周`;
+  // 识别纯单周 / 纯双周等差数列
+  const allOdd = sorted.every((w) => w % 2 === 1);
+  const allEven = sorted.every((w) => w % 2 === 0);
+  if ((allOdd || allEven) && sorted.length >= 2) {
+    let isStep2 = true;
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i] - sorted[i - 1] !== 2) {
+        isStep2 = false;
+        break;
+      }
+    }
+    if (isStep2) {
+      return `${sorted[0]}–${sorted[sorted.length - 1]}${allOdd ? "单" : "双"}周`;
+    }
+  }
+  const ranges: string[] = [];
+  let start = sorted[0];
+  let prev = sorted[0];
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i] === prev + 1) {
+      prev = sorted[i];
+    } else {
+      ranges.push(start === prev ? `${start}` : `${start}–${prev}`);
+      start = prev = sorted[i];
+    }
+  }
+  ranges.push(start === prev ? `${start}` : `${start}–${prev}`);
+  return `${ranges.join(", ")}周`;
 }
 
 export interface DateInfo {

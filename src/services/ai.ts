@@ -10,6 +10,8 @@ import { DEFAULT_PERIODS } from "@/constants/sample";
 import {
   resolveSemester,
   addDays,
+  getCourseTime,
+  normalizeClockInput,
   parseIsoDate,
   toIsoDate,
 } from "@/utils/time";
@@ -17,7 +19,9 @@ import type {
   AssistantAction,
   Course,
   CourseColor,
+  GpaScaleId,
   GradeDraft,
+  GradeType,
   Period,
   PetActionKind,
   Schedule,
@@ -26,13 +30,17 @@ import type {
 import { normalizeGradeInput, normalizeSemester } from "@/utils/grades";
 import {
   recognizeGradesOffline,
+  recognizePeriodsOffline,
   recognizeScheduleOffline,
 } from "@/services/offlineImport";
-import { createWhaleContext } from "@/services/whaleContext";
+import { readImageBase64 } from "@/utils/readImageBase64";
+import { cleanHtmlToText } from "@/utils/documentParser";
+import { createWhaleContext, formatTimeContext, type WhaleLiveStudySnapshot } from "@/services/whaleContext";
+import { maybeScheduleWhaleReflection } from "@/services/whaleReflection";
 import { recentWhaleHistory, type WhaleHistoryMessage } from "@/utils/whaleMemory";
 import { buildWhalePersonaPrompt, renderPersonaText } from "@/utils/whalePersona";
 import { useWhalePersona } from "@/store/useWhalePersona";
-import { validClock } from "@/utils/courseEditing";
+import { normalizeParsedPeriods, validClock } from "@/utils/courseEditing";
 import { resolveWhaleSticker, WHALE_EXPRESSION_INSTRUCTIONS, type WhaleStickerId } from "@/utils/whaleExpression";
 
 const COLOR_VALUES: CourseColor[] = [
@@ -44,7 +52,7 @@ const COLOR_VALUES: CourseColor[] = [
   "cyan",
 ];
 
-/** 导入上下文：课表开学日期 / 总周数，用于把图片里的具体日期换算成周次 */
+/** 导入上下文：课表开学日期 / 总周数 / 当前作息表，用于日期换算周次与时刻对齐节次 */
 export interface ScheduleImportContext {
   /** 目标课表第一周的周一（yyyy-MM-dd） */
   startDate?: string;
@@ -52,6 +60,8 @@ export interface ScheduleImportContext {
   totalWeeks?: number;
   /** 今天（yyyy-MM-dd） */
   today?: string;
+  /** 当前课表的作息节次参考（若提供则沿用，不被默认作息覆盖） */
+  periods?: Period[];
 }
 
 const scheduleSchemaHint = (ctx?: ScheduleImportContext) => {
@@ -62,6 +72,11 @@ const scheduleSchemaHint = (ctx?: ScheduleImportContext) => {
           ctx.today ? `，今天是 ${ctx.today}` : ""
         }。`
       : `学期信息：本学期共 ${totalWeeks} 周。`;
+  const periodsHint = ctx?.periods?.length
+    ? `\n当前作息节次参考（若原图只标了上课时刻未标节次号，请对照此表换算 startPeriod/endPeriod；全天共 ${ctx.periods.length} 节）：\n${ctx.periods
+        .map((p) => `${p.index}. ${p.startTime}-${p.endTime}`)
+        .join(" / ")}`
+    : "";
   return `请把识别到的课表输出为严格的 JSON（不要多余文字），结构如下：
 {
   "name": "学期名称",
@@ -81,7 +96,7 @@ const scheduleSchemaHint = (ctx?: ScheduleImportContext) => {
     }
   ]
 }
-${semester}
+${semester}${periodsHint}
 要求：
 - 课程名必须完整，禁止使用省略号或任何形式的截断
 - 若无法确定 startDate，使用 null
@@ -212,6 +227,7 @@ export async function recognizeScheduleFromImage(
   apiKey: string,
   mimeType = "image/jpeg",
   ctx?: ScheduleImportContext,
+  signal?: AbortSignal,
 ): Promise<Schedule> {
   const messages: ChatContent[] = [
     {
@@ -234,13 +250,14 @@ export async function recognizeScheduleFromImage(
   const parsed = await chatJson<any>(messages, apiKey, {
     model: VISION_MODEL,
     temperature: 0.1,
+    signal,
   });
   ensureTarget(parsed, "这张图片不是课程表，请更换正确的图片后重试");
 
   return buildSchedule(parsed, ctx);
 }
 
-/** 把模型解析结果组装成 Schedule（含学期类型与总周数） */
+/** 把模型解析结果组装成 Schedule（含学期类型与总周数，默认沿用当前作息） */
 function buildSchedule(parsed: any, ctx?: ScheduleImportContext): Schedule {
   const parsedStart =
     typeof parsed?.startDate === "string" &&
@@ -271,17 +288,21 @@ function buildSchedule(parsed: any, ctx?: ScheduleImportContext): Schedule {
     startDate,
     endDate: toIsoDate(addDays(parseIsoDate(startDate), totalWeeks * 7 - 1)),
     totalWeeks,
-    periods: DEFAULT_PERIODS,
+    periods: ctx?.periods?.length ? ctx.periods : DEFAULT_PERIODS,
     courses,
   };
 }
 
 /** 从文本/表格内容识别课程 */
 export async function recognizeScheduleFromText(
-  text: string,
+  rawText: string,
   apiKey: string,
   ctx?: ScheduleImportContext,
+  signal?: AbortSignal,
 ): Promise<Schedule> {
+  const text = /<(?:html|table|tr|td)\b/i.test(rawText)
+    ? cleanHtmlToText(rawText)
+    : rawText;
   const messages: ChatContent[] = [
     { role: "system", content: "你是一个精准的中文课程表解析助手。" },
     {
@@ -292,6 +313,7 @@ export async function recognizeScheduleFromText(
   const parsed = await chatJson<any>(messages, apiKey, {
     model: TEXT_MODEL,
     temperature: 0.1,
+    signal,
   });
   ensureTarget(parsed, "该文档不是课程表，请更换正确的文件后重试");
   return buildSchedule(parsed, ctx);
@@ -299,15 +321,21 @@ export async function recognizeScheduleFromText(
 
 /** 从作息表图片/文本识别节次时间 */
 export async function recognizePeriods(
-  source: { imageBase64?: string; text?: string },
+  source: { imageBase64?: string; mimeType?: string; text?: string },
   apiKey: string,
+  signal?: AbortSignal,
 ): Promise<Period[]> {
   const parts: ChatContent["content"] = [];
-  const text = `请识别作息表中的节次与起止时间。先判断输入是否确实是作息表（上下课时间表）；若不是，输出 {"error":"NOT_TARGET"}，绝不要凭空编造时间。输出严格 JSON：{"periods":[{"index":1,"label":"第1节","startTime":"08:00","endTime":"08:45"}]}，时间用 24 小时制 HH:mm。${
-    source.text ? `\n作息内容：\n${source.text.slice(0, 8000)}` : ""
+  const cleanedText = source.text
+    ? /<(?:html|table|tr|td)\b/i.test(source.text)
+      ? cleanHtmlToText(source.text)
+      : source.text
+    : undefined;
+  const text = `请识别作息表中的上课节次与起止时间（跳过午休、晚饭、早读、眼保健操等非上课节次）。先判断输入是否确实是作息表（上下课时间表）；若不是，输出 {"error":"NOT_TARGET"}，绝不要凭空编造时间。输出严格 JSON：{"periods":[{"index":1,"label":"第1节","startTime":"08:00","endTime":"08:45"}]}，时间用 24 小时制 HH:mm。${
+    cleanedText ? `\n作息内容：\n${cleanedText.slice(0, 8000)}` : ""
   }`;
   if (source.imageBase64) {
-    parts.push({ type: "text", text }, imagePart(source.imageBase64));
+    parts.push({ type: "text", text }, imagePart(source.imageBase64, source.mimeType));
   } else {
     parts.push({ type: "text", text });
   }
@@ -315,7 +343,11 @@ export async function recognizePeriods(
   const parsed = await chatJson<any>(
     [{ role: "user", content: parts }],
     apiKey,
-    { model: source.imageBase64 ? VISION_MODEL : TEXT_MODEL, temperature: 0.1 },
+    {
+      model: source.imageBase64 ? VISION_MODEL : TEXT_MODEL,
+      temperature: 0.1,
+      signal,
+    },
   );
   ensureTarget(
     parsed,
@@ -324,25 +356,21 @@ export async function recognizePeriods(
       : "该文档不是作息表，请更换正确的作息表（上下课时间表）后重试",
   );
 
-  const periods = Array.isArray(parsed?.periods)
-    ? parsed.periods
-        .map(
-          (p: any, i: number): Period => ({
-            index: Number(p?.index) || i + 1,
-            label: String(p?.label ?? `第${Number(p?.index) || i + 1}节`),
-            startTime: String(p?.startTime ?? "").padStart(5, "0"),
-            endTime: String(p?.endTime ?? "").padStart(5, "0"),
-          }),
-        )
-        .filter(
-          (p: Period) =>
-            validClock(p.startTime) && validClock(p.endTime) &&
-            p.endTime > p.startTime,
-        )
-        .map((p: Period, i: number) => ({ ...p, index: i + 1 }))
-    : [];
-  // 不兜底默认作息：识别不出就明确失败，绝不凭空编造时间
-  return periods;
+  const rawList = Array.isArray(parsed?.periods) ? parsed.periods : [];
+  const normalized = rawList
+    .map((p: any, i: number) => ({
+      label: String(p?.label ?? `第${Number(p?.index) || i + 1}节`).trim(),
+      startTime: normalizeClockInput(String(p?.startTime ?? "")),
+      endTime: normalizeClockInput(String(p?.endTime ?? "")),
+    }))
+    .filter(
+      (p: { startTime: string; endTime: string }) =>
+        validClock(p.startTime) &&
+        validClock(p.endTime) &&
+        p.endTime > p.startTime,
+    );
+  // 排序、去重、过滤时间重叠段并重新从 1 连续编号；识别不出直接返回空数组不编造
+  return normalizeParsedPeriods(normalized);
 }
 
 /** 从成绩单（图片/文本）解析成绩记录：分数、绩点、课程类型与学期 */
@@ -350,7 +378,20 @@ export async function recognizeGrades(
   source: { imageBase64?: string; text?: string; mimeType?: string },
   apiKey: string,
   fallbackSemester: SemesterKind = "fall",
+  opts?: {
+    scale?: GpaScaleId;
+    types?: readonly GradeType[];
+    signal?: AbortSignal;
+  },
 ): Promise<GradeDraft[]> {
+  const cleanedText = source.text
+    ? /<(?:html|table|tr|td)\b/i.test(source.text)
+      ? cleanHtmlToText(source.text)
+      : source.text
+    : undefined;
+  const typeHint = opts?.types?.length
+    ? opts.types.map((t) => `${t.id}=${t.name}`).join(" / ")
+    : "required=必修 / elective=选修 / general=通识选修";
   const instruction = `请识别成绩单/成绩查询截图中的全部课程成绩。只要出现「课程名 + 分数/等级」的列表（即使没有学分、没有绩点列，甚至只是手机截图），都算成绩单；只有确实与成绩无关时才输出 {"error":"NOT_TARGET"}，绝不要凭空编造成绩。输出严格 JSON：
 {
   "grades": [
@@ -360,7 +401,7 @@ export async function recognizeGrades(
       "scoreType": "numeric", // numeric=百分制数字 / letter=字母等级 / text=文字等级
       "score": "87",          // 按成绩单原样输出：87 / A / B+ / 优秀 / 良好 / 中等 / 及格
       "gpa": 3.7,             // 成绩单上已有的绩点，没有就 null，不要猜测
-      "type": "required",     // required=必修 / elective=选修 / general=通识选修
+      "type": "required",     // 优先从以下课程类型中选择：${typeHint}
       "semester": "fall"      // fall=上学期(秋) / spring=下学期(春) / summer=短学期，无法判断用 null
     }
   ]
@@ -372,7 +413,7 @@ export async function recognizeGrades(
 - 每门课一条记录；姓名、学号、总绩点、平均分、学分总计等非课程行不要输出
 - score 必须保留成绩单上的原始写法（数字 / 字母 / 文字），不要擅自换算成百分制
 - gpa 只填成绩单上明确标注的数值（0-5），没有则填 null${
-    source.text ? `\n成绩单内容：\n${source.text.slice(0, 10000)}` : ""
+    cleanedText ? `\n成绩单内容：\n${cleanedText.slice(0, 10000)}` : ""
   }`;
 
   const parts: ChatContent["content"] = [];
@@ -394,6 +435,7 @@ export async function recognizeGrades(
       // 成绩识别是用户主动等待的交互任务：单次限时，失败立即回退本地离线识别
       timeoutMs: 40_000,
       attempts: 1,
+      signal: opts?.signal,
     },
   );
   ensureTarget(
@@ -412,7 +454,10 @@ export async function recognizeGrades(
   return raw
     .map((g: any): GradeDraft | null => {
       const semester = normalizeSemester(g?.semester) ?? fallbackSemester;
-      return normalizeGradeInput({ ...g, semester });
+      return normalizeGradeInput(
+        { ...g, semester },
+        { scale: opts?.scale, types: opts?.types },
+      );
     })
     .filter((g): g is GradeDraft => g !== null);
 }
@@ -453,6 +498,38 @@ export interface AssistantResult {
   intent?: "summon" | "dismiss";
 }
 
+/** 从课表上下文提取今日课程与近期下节课摘要（零额外依赖，测试环境安全） */
+function buildLiveSnapshotFromCtx(ctx?: AssistantContext): WhaleLiveStudySnapshot {
+  const now = new Date();
+  const snapshot: WhaleLiveStudySnapshot = { nowLabel: formatTimeContext(now.getTime()) };
+  if (!ctx?.schedule?.courses?.length) return snapshot;
+  const weekday = now.getDay() === 0 ? 7 : now.getDay();
+  const todayList = ctx.schedule.courses
+    .filter((c) => c.weekday === weekday && c.weeks.includes(ctx.weekIndex))
+    .map((c) => ({
+      course: c,
+      time: getCourseTime(ctx.schedule.periods ?? [], c.startPeriod, c.endPeriod, c),
+    }))
+    .sort((a, b) => a.time.startMinutes - b.time.startMinutes);
+  if (!todayList.length) {
+    snapshot.todayCourses = "今天没有排课";
+    return snapshot;
+  }
+  snapshot.todayCourses = todayList
+    .slice(0, 6)
+    .map(({ course, time }) => `${course.name}(${time.startTime}${course.classroom ? `@${course.classroom}` : ""})`)
+    .join("、");
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const upcoming = todayList.find(({ time }) => time.startMinutes > nowMin);
+  if (upcoming) {
+    const diff = upcoming.time.startMinutes - nowMin;
+    if (diff <= 90) {
+      snapshot.nextCourseHint = `${diff} 分钟后是「${upcoming.course.name}」${upcoming.course.classroom ? `（${upcoming.course.classroom}）` : ""}`;
+    }
+  }
+  return snapshot;
+}
+
 /** 自然语言改课表：模型返回对话文本 + 可一键应用的操作（支持批量） */
 export async function askAssistant(
   history: WhaleHistoryMessage[],
@@ -460,7 +537,8 @@ export async function askAssistant(
   apiKey: string,
   signal?: AbortSignal,
 ): Promise<AssistantResult> {
-  const whaleContext = ctx.persona === "whale" ? createWhaleContext(history) : undefined;
+  const whaleContext =
+    ctx.persona === "whale" ? createWhaleContext(history, true, buildLiveSnapshotFromCtx(ctx)) : undefined;
   const coursesBrief = ctx.schedule.courses
     .map(
       (c) =>
@@ -517,7 +595,7 @@ ${ctx.schedule.periods.map((p) => `${p.index}. ${p.startTime}-${p.endTime}`).joi
 
 你需要回复一个严格 JSON（不要带注释或多余文本）：
 {
-  "reply": "给用户的自然语言回复",
+  ${ctx.persona === "whale" ? `"thought": "40-90字隐藏内心思考（先共情与联想记忆，再规划自然回应；绝不展示给用户）",\n  ` : ""}"reply": "给用户的自然语言回复",
   "intent": null,
   "actions": []
 }
@@ -558,7 +636,15 @@ actions 是操作数组，一次可以放多个（用户一句话提出多件事
     // 大肥鱼人格需要更高的发散度，课表操作仍由 actions 的结构约束保证准确
     temperature: ctx.persona === "whale" ? 0.95 : 0.6,
   });
-  whaleContext?.remember(parsed?.memoryUpdates);
+  if (whaleContext) {
+    whaleContext.remember({
+      memoryUpdates: parsed?.memoryUpdates,
+      episode: parsed?.episode,
+      openLoop: parsed?.openLoop,
+      moodShift: parsed?.moodShift,
+    });
+    maybeScheduleWhaleReflection(apiKey);
+  }
 
   // 兼容 action（单个）与 actions（数组）两种返回
   const raw = parsed?.actions ?? parsed?.action;
@@ -624,7 +710,7 @@ export async function quickEdit(
 /* -------------------------------------------------------------------------- */
 
 export interface BatchImage {
-  imageBase64: string;
+  imageBase64?: string;
   mimeType: string;
   uri: string;
 }
@@ -632,10 +718,43 @@ export interface BatchImage {
 interface BatchOptions<Row> {
   /** 联网且有 Key 时走云端视觉模型，否则走设备端离线识别 */
   useAI: boolean;
+  signal?: AbortSignal;
+  scale?: GpaScaleId;
+  types?: readonly GradeType[];
   /** 开始处理第 current 张（从 1 开始），total 为总张数 */
   onProgress?: (current: number, total: number) => void;
   onPageFailure?: (index: number) => void;
   onPageRows?: (index: number, rows: readonly Row[]) => void;
+  onFallbackOffline?: () => void;
+}
+
+function isAbortError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.name === "AbortError" || err.message === "请求已取消")
+  );
+}
+
+/** 受控并发遍历（默认 2 路并发，按原索引有序回传） */
+async function runWithConcurrency<T>(
+  count: number,
+  concurrency: number,
+  signal: AbortSignal | undefined,
+  worker: (index: number) => Promise<T>,
+): Promise<(T | undefined)[]> {
+  const results = new Array<T | undefined>(count);
+  let cursor = 0;
+  const lanes = Math.max(1, Math.min(concurrency, count));
+  await Promise.all(
+    Array.from({ length: lanes }, async () => {
+      while (cursor < count) {
+        if (signal?.aborted) break;
+        const idx = cursor++;
+        results[idx] = await worker(idx);
+      }
+    }),
+  );
+  return results;
 }
 
 /** 多张课表合并：同一门课（名称 + 星期 + 节次 + 教室相同）自动合并周次，避免重复 */
@@ -693,39 +812,76 @@ export function dedupeGrades(grades: GradeDraft[]): GradeDraft[] {
   return [...merged.values()];
 }
 
-/** 批量识别课表：逐张识别后合并课程，个别图片失败不影响整体 */
+/** 批量识别课表：双路受控并发 + 按需读取 base64 + 单张 AI 失败自动回退离线 OCR */
 export async function recognizeSchedulesBatch(
   images: BatchImage[],
   apiKey: string,
   ctx: ScheduleImportContext,
   opts: BatchOptions<Course>,
-): Promise<{ schedule: Schedule; skipped: number }> {
-  const list: Schedule[] = [];
+): Promise<{ schedule: Schedule; skipped: number; usedOfflineFallback: boolean }> {
   let skipped = 0;
   let firstError: unknown = null;
+  let usedOfflineFallback = false;
+  let started = 0;
 
-  for (let i = 0; i < images.length; i++) {
-    const img = images[i];
-    opts.onProgress?.(i + 1, images.length);
-    try {
-      const found = opts.useAI
-          ? await recognizeScheduleFromImage(
-              img.imageBase64,
+  const pageResults = await runWithConcurrency(
+    images.length,
+    opts.useAI ? 2 : 1,
+    opts.signal,
+    async (i) => {
+      if (opts.signal?.aborted) return undefined;
+      const img = images[i];
+      started += 1;
+      opts.onProgress?.(started, images.length);
+      try {
+        let found: Schedule;
+        if (opts.useAI) {
+          try {
+            const base64 = await readImageBase64(img.uri, img.imageBase64);
+            found = await recognizeScheduleFromImage(
+              base64,
               apiKey,
               img.mimeType,
               ctx,
-            )
-          : await recognizeScheduleOffline(img.uri);
-      if (!found.courses.length) throw new Error("这张图片没有识别到课程");
-      list.push(found);
-      opts.onPageRows?.(i, found.courses);
-    } catch (e) {
-      skipped += 1;
-      opts.onPageFailure?.(i);
-      if (!firstError) firstError = e;
-    }
+              opts.signal,
+            );
+          } catch (aiError) {
+            if (isAbortError(aiError) || opts.signal?.aborted) throw aiError;
+            if (!firstError) firstError = aiError;
+            // 云端失败且非明确「不是课表」时，自动回退本地离线 OCR
+            if (
+              aiError instanceof Error &&
+              aiError.message.includes("不是课程表")
+            ) {
+              throw aiError;
+            }
+            found = await recognizeScheduleOffline(img.uri, ctx);
+            usedOfflineFallback = true;
+            opts.onFallbackOffline?.();
+          }
+        } else {
+          found = await recognizeScheduleOffline(img.uri, ctx);
+        }
+        if (!found.courses.length) throw new Error("这张图片没有识别到课程");
+        opts.onPageRows?.(i, found.courses);
+        return found;
+      } catch (e) {
+        if (isAbortError(e) || opts.signal?.aborted) throw e;
+        skipped += 1;
+        opts.onPageFailure?.(i);
+        if (!firstError) firstError = e;
+        return undefined;
+      }
+    },
+  );
+
+  if (opts.signal?.aborted) {
+    const err = new Error("请求已取消");
+    err.name = "AbortError";
+    throw err;
   }
 
+  const list = pageResults.filter((s): s is Schedule => Boolean(s));
   if (!list.length) {
     throw firstError instanceof Error
       ? firstError
@@ -738,51 +894,167 @@ export async function recognizeSchedulesBatch(
       courses: mergeDuplicateCourses(list.flatMap((s) => s.courses)),
     },
     skipped,
+    usedOfflineFallback,
   };
 }
 
-/** 批量识别成绩单：单张云端失败时只回退这一张的离线识别，不影响整批 */
+/** 批量识别作息表图片：支持单张或多张合并、按需 base64、AI 失败回退离线 OCR */
+export async function recognizePeriodsBatch(
+  images: BatchImage[],
+  apiKey: string,
+  opts: BatchOptions<Period>,
+): Promise<{ periods: Period[]; skipped: number; usedOfflineFallback: boolean }> {
+  let skipped = 0;
+  let firstError: unknown = null;
+  let usedOfflineFallback = false;
+  let started = 0;
+
+  const pageResults = await runWithConcurrency(
+    images.length,
+    opts.useAI ? 2 : 1,
+    opts.signal,
+    async (i) => {
+      if (opts.signal?.aborted) return undefined;
+      const img = images[i];
+      started += 1;
+      opts.onProgress?.(started, images.length);
+      try {
+        let found: Period[];
+        if (opts.useAI) {
+          try {
+            const base64 = await readImageBase64(img.uri, img.imageBase64);
+            found = await recognizePeriods(
+              { imageBase64: base64, mimeType: img.mimeType },
+              apiKey,
+              opts.signal,
+            );
+          } catch (aiError) {
+            if (isAbortError(aiError) || opts.signal?.aborted) throw aiError;
+            if (!firstError) firstError = aiError;
+            if (
+              aiError instanceof Error &&
+              aiError.message.includes("不是作息表")
+            ) {
+              throw aiError;
+            }
+            found = await recognizePeriodsOffline(img.uri);
+            usedOfflineFallback = true;
+            opts.onFallbackOffline?.();
+          }
+        } else {
+          found = await recognizePeriodsOffline(img.uri);
+        }
+        if (!found.length) throw new Error("这张图片没有识别到作息节次");
+        opts.onPageRows?.(i, found);
+        return found;
+      } catch (e) {
+        if (isAbortError(e) || opts.signal?.aborted) throw e;
+        skipped += 1;
+        opts.onPageFailure?.(i);
+        if (!firstError) firstError = e;
+        return undefined;
+      }
+    },
+  );
+
+  if (opts.signal?.aborted) {
+    const err = new Error("请求已取消");
+    err.name = "AbortError";
+    throw err;
+  }
+
+  const merged = normalizeParsedPeriods(
+    pageResults.filter((x): x is Period[] => Boolean(x)).flat(),
+  );
+  if (!merged.length) {
+    throw firstError instanceof Error
+      ? firstError
+      : new Error("未识别到有效作息节次，请更换图片后重试");
+  }
+  return { periods: merged, skipped, usedOfflineFallback };
+}
+
+/** 批量识别成绩单：双路受控并发 + 按需读取 base64 + 单张云端失败自动回退离线 OCR */
 export async function recognizeGradesBatch(
   images: BatchImage[],
   apiKey: string,
   semester: SemesterKind,
   opts: BatchOptions<GradeDraft>,
-): Promise<{ grades: GradeDraft[]; skipped: number }> {
-  const all: GradeDraft[] = [];
+): Promise<{ grades: GradeDraft[]; skipped: number; usedOfflineFallback: boolean }> {
   let skipped = 0;
   let firstError: unknown = null;
+  let usedOfflineFallback = false;
+  let started = 0;
 
-  for (let i = 0; i < images.length; i++) {
-    const img = images[i];
-    opts.onProgress?.(i + 1, images.length);
-    try {
-      const previousCount = all.length;
-      if (opts.useAI) {
-        try {
-          all.push(...(await recognizeGrades(img, apiKey, semester)));
-        } catch (aiError) {
-          if (!firstError) firstError = aiError;
-          all.push(...(await recognizeGradesOffline(img.uri, semester)));
+  const pageResults = await runWithConcurrency(
+    images.length,
+    opts.useAI ? 2 : 1,
+    opts.signal,
+    async (i) => {
+      if (opts.signal?.aborted) return undefined;
+      const img = images[i];
+      started += 1;
+      opts.onProgress?.(started, images.length);
+      try {
+        let rows: GradeDraft[];
+        if (opts.useAI) {
+          try {
+            const base64 = await readImageBase64(img.uri, img.imageBase64);
+            rows = await recognizeGrades(
+              { imageBase64: base64, mimeType: img.mimeType },
+              apiKey,
+              semester,
+              { scale: opts.scale, types: opts.types, signal: opts.signal },
+            );
+          } catch (aiError) {
+            if (isAbortError(aiError) || opts.signal?.aborted) throw aiError;
+            if (!firstError) firstError = aiError;
+            if (
+              aiError instanceof Error &&
+              aiError.message.includes("不是成绩单")
+            ) {
+              throw aiError;
+            }
+            rows = await recognizeGradesOffline(img.uri, semester, {
+              scale: opts.scale,
+              types: opts.types,
+            });
+            usedOfflineFallback = true;
+            opts.onFallbackOffline?.();
+          }
+        } else {
+          rows = await recognizeGradesOffline(img.uri, semester, {
+            scale: opts.scale,
+            types: opts.types,
+          });
         }
-      } else {
-        all.push(...(await recognizeGradesOffline(img.uri, semester)));
+        if (!rows.length) throw new Error("这张图片没有识别到成绩");
+        opts.onPageRows?.(i, rows);
+        return rows;
+      } catch (e) {
+        if (isAbortError(e) || opts.signal?.aborted) throw e;
+        skipped += 1;
+        opts.onPageFailure?.(i);
+        if (!firstError) firstError = e;
+        return undefined;
       }
-      if (all.length === previousCount) throw new Error("这张图片没有识别到成绩");
-      opts.onPageRows?.(i, all.slice(previousCount));
-    } catch (e) {
-      skipped += 1;
-      opts.onPageFailure?.(i);
-      if (!firstError) firstError = e;
-    }
+    },
+  );
+
+  if (opts.signal?.aborted) {
+    const err = new Error("请求已取消");
+    err.name = "AbortError";
+    throw err;
   }
 
+  const all = pageResults.filter((x): x is GradeDraft[] => Boolean(x)).flat();
   const grades = dedupeGrades(all);
   if (!grades.length) {
     throw firstError instanceof Error
       ? firstError
       : new Error("未识别到有效成绩，请更换图片后重试");
   }
-  return { grades, skipped };
+  return { grades, skipped, usedOfflineFallback };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -797,6 +1069,7 @@ const PET_ACTIONS: PetActionKind[] = [
   "sleep",
   "jump",
   "wave",
+  "cuddle",
 ];
 
 export interface PetChatResult {
@@ -816,7 +1089,7 @@ export async function askWhalePet(
   apiKey: string,
   opts?: { status?: string; ctx?: AssistantContext; signal?: AbortSignal },
 ): Promise<PetChatResult> {
-  const whaleContext = createWhaleContext(history);
+  const whaleContext = createWhaleContext(history, true, buildLiveSnapshotFromCtx(opts?.ctx));
   const ctx = opts?.ctx;
   const coursesBrief = ctx
     ? ctx.schedule.courses
@@ -848,7 +1121,7 @@ ${ctx.schedule.periods.map((p) => `${p.index}. ${p.startTime}-${p.endTime}`).joi
 - 下面会给你她当前的养护状态：饿或委屈时要自然流露情绪，可以撒娇要吃的，但不要生硬报数值
 ${scheduleBlock}
 输出严格 JSON（不要多余文字）：
-{"reply":"给用户的回复","action":"动作或 null","actions":[]}
+{"thought":"简短隐藏内心思考（结合情绪与记忆规划回应，绝不展示）","reply":"给用户的回复","action":"动作或 null","actions":[]}
 action 只能取：
 - "dance" 跳舞扭一扭
 - "spin" 原地转圈
@@ -857,6 +1130,7 @@ action 只能取：
 - "sleep" 睡觉打盹
 - "jump" 蹦一下
 - "wave" 打招呼
+- "cuddle" 害羞蹭蹭 / 贴贴撒娇
 - null 只是聊天
 actions 是操作数组，一次可以放多个；不需要执行任何操作时返回空数组。可用操作：
   添加课程：{"type":"add","course":{"name":"","teacher":"","classroom":"","weekday":1,"startPeriod":1,"endPeriod":2,"weeks":[1,2,3],"color":"sky","credits":3,"note":""}}
@@ -896,7 +1170,13 @@ ${opts?.status ? `当前状态：${opts.status}。` : ""}`;
     signal: opts?.signal,
   });
   if (opts?.signal?.aborted) throw new Error('请求已取消');
-  whaleContext.remember(parsed?.memoryUpdates);
+  whaleContext.remember({
+    memoryUpdates: parsed?.memoryUpdates,
+    episode: parsed?.episode,
+    openLoop: parsed?.openLoop,
+    moodShift: parsed?.moodShift,
+  });
+  maybeScheduleWhaleReflection(apiKey);
 
   const action = PET_ACTIONS.includes(parsed?.action)
     ? (parsed.action as PetActionKind)

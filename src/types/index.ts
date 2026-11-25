@@ -61,6 +61,14 @@ export interface Schedule {
 /** 分数录入方式：百分制数字 / 字母等级 / 文字等级 */
 export type GradeScoreType = "numeric" | "letter" | "text";
 
+/** 绩点换算制式 */
+export type GpaScaleId =
+  | "five"
+  | "four_std"
+  | "four_pku"
+  | "four_three"
+  | "four_linear";
+
 /** 学年分组（可自由命名，如「大一」「2024-2025学年」），内部再分上 / 下 / 短学期 */
 export interface GradeYear {
   id: string;
@@ -141,7 +149,8 @@ export type PetActionKind =
   | "study"
   | "sleep"
   | "jump"
-  | "wave";
+  | "wave"
+  | "cuddle";
 
 /** 助手消息 */
 export interface ChatMessage {

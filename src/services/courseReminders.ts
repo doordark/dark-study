@@ -1,13 +1,11 @@
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import type { Schedule } from "@/types";
-import { TASK_TYPES, type CourseTask } from "@/utils/courseTasks";
 import { addDays, mondayOf, parseIsoDate, toIsoDate } from "@/utils/time";
 
 const CHANNEL = "course-reminders";
 const MARKER = "dark-study-course-reminder";
-const TASK_CHANNEL = "course-task-reminders";
-const TASK_MARKER = "dark-study-course-task";
+const LEGACY_TASK_MARKER = "dark-study-course-task";
 
 if (Platform.OS !== "web") {
   Notifications.setNotificationHandler({ handleNotification: async () => ({
@@ -21,33 +19,6 @@ export async function prepareReminderChannel() {
     // eslint-disable-next-line import/namespace
     name: "上课提醒", importance: Notifications.AndroidImportance.HIGH,
     sound: "default", vibrationPattern: [0, 250, 150, 250],
-  });
-}
-
-async function prepareTaskChannel() {
-  if (Platform.OS === "android") await Notifications.setNotificationChannelAsync(TASK_CHANNEL, {
-    // eslint-disable-next-line import/namespace
-    name: "课程待办提醒", importance: Notifications.AndroidImportance.HIGH,
-    sound: "default",
-  });
-}
-
-export async function requestCourseTaskPermission(): Promise<boolean> {
-  if (Platform.OS === "web") return false;
-  await prepareTaskChannel();
-  const permission = await Notifications.getPermissionsAsync();
-  return permission.granted || (permission.canAskAgain && (await Notifications.requestPermissionsAsync()).granted);
-}
-
-export function buildTaskReminders(tasks: readonly CourseTask[], now = new Date()) {
-  return tasks.flatMap(task => {
-    const at = task.dueAt - task.reminder * 60000;
-    if (task.completedAt !== undefined || !task.reminder || at <= now.getTime()) return [];
-    return [{
-      date: new Date(at),
-      title: `${TASK_TYPES[task.type]} · ${task.title}`,
-      body: `${task.course ? task.course.courseName + " · " : ""}还有 ${task.reminder === 1440 ? "1 天" : `${task.reminder} 分钟`}到期`,
-    }];
   });
 }
 
@@ -78,39 +49,99 @@ export function buildCourseReminders(schedule: Schedule, minutes: number, count:
   return result.sort((a, b) => a.date.getTime() - b.date.getTime());
 }
 
+export interface CourseReminderSummary {
+  scheduledCount: number;
+  totalPlanned: number;
+  lastDate: Date | null;
+  capped: boolean;
+}
+
+/** 汇总当前已排程的上课提醒数量与覆盖截止日期 */
+export async function getCourseReminderSummary(
+  schedule: Schedule | undefined,
+  minutes: number,
+  count: number,
+): Promise<CourseReminderSummary> {
+  const totalPlanned = schedule ? buildCourseReminders(schedule, minutes, count).length : 0;
+  if (Platform.OS === "web") {
+    return { scheduledCount: 0, totalPlanned, lastDate: null, capped: false };
+  }
+  const existing = await Notifications.getAllScheduledNotificationsAsync();
+  const mine = existing.filter((item) => item.content.data?.kind === MARKER);
+  let lastMs = 0;
+  for (const item of mine) {
+    const trigger = item.trigger as { value?: number; date?: number } | null;
+    const rawKey = typeof item.content.data?.key === "string" ? item.content.data.key : null;
+    let ms = typeof trigger?.value === "number" ? trigger.value : typeof trigger?.date === "number" ? trigger.date : 0;
+    if (!ms && rawKey) {
+      try {
+        const parsed = JSON.parse(rawKey);
+        if (Array.isArray(parsed) && typeof parsed[1] === "number") ms = parsed[1];
+      } catch {
+        // ignore
+      }
+    }
+    if (ms > lastMs) lastMs = ms;
+  }
+  const limit = Platform.OS === "ios" ? 60 : 450;
+  return {
+    scheduledCount: mine.length,
+    totalPlanned,
+    lastDate: lastMs > 0 ? new Date(lastMs) : null,
+    capped: totalPlanned > limit,
+  };
+}
+
+/** 发送一条 2 秒后触发的测试通知，帮助用户确认横幅、提示音与振动正常 */
+export async function sendTestCourseReminder(minutes: number): Promise<void> {
+  if (Platform.OS === "web") throw new Error("网页端不支持系统本地通知");
+  await prepareReminderChannel();
+  let perm = await Notifications.getPermissionsAsync();
+  if (!perm.granted && perm.canAskAgain) perm = await Notifications.requestPermissionsAsync();
+  if (!perm.granted) throw new Error("通知权限未开启，请先在系统设置中允许通知");
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: "Dark Study 测试提醒",
+      body: `上课提醒工作正常 · 当前设为提前 ${minutes} 分钟通知`,
+      sound: "default",
+      data: { kind: "dark-study-course-reminder-test" },
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DATE,
+      date: new Date(Date.now() + 1500),
+      channelId: CHANNEL,
+    },
+  });
+}
+
 let queue = Promise.resolve();
 let generation = 0;
-export function syncCourseReminders(schedule: Schedule | undefined, enabled: boolean, minutes: number, count: number, tasks: readonly CourseTask[] = []) {
+export function syncCourseReminders(schedule: Schedule | undefined, enabled: boolean, minutes: number, count: number) {
   if (Platform.OS === "web") return;
   const current = ++generation;
   queue = queue.catch(() => {}).then(async () => {
     if (current !== generation) return;
     const existing = await Notifications.getAllScheduledNotificationsAsync();
     const allowed = (await Notifications.getPermissionsAsync()).granted;
-    const course = allowed && enabled && schedule ? buildCourseReminders(schedule, minutes, count) : [];
-    const task = allowed ? buildTaskReminders(tasks) : [];
-    const reminders = [...course.map(item => ({ ...item, kind: MARKER, channelId: CHANNEL })),
-      ...task.map(item => ({ ...item, kind: TASK_MARKER, channelId: TASK_CHANNEL }))]
-      .sort((a, b) => a.date.getTime() - b.date.getTime());
+    const reminders = allowed && enabled && schedule ? buildCourseReminders(schedule, minutes, count) : [];
     const desired = new Map<string, typeof reminders[number]>();
     for (const item of reminders) {
       if (desired.size >= (Platform.OS === "ios" ? 60 : 450)) break;
-      desired.set(JSON.stringify([item.kind, item.date.getTime(), item.title, item.body]), item);
+      desired.set(JSON.stringify([MARKER, item.date.getTime(), item.title, item.body]), item);
     }
     if (current !== generation) return;
     for (const scheduled of existing) {
       const data = scheduled.content.data;
-      if (data?.kind !== MARKER && data?.kind !== TASK_MARKER) continue;
-      if (typeof data.key === "string" && desired.delete(data.key)) continue;
+      if (data?.kind !== MARKER && data?.kind !== LEGACY_TASK_MARKER) continue;
+      if (data.kind === MARKER && typeof data.key === "string" && desired.delete(data.key)) continue;
       await Notifications.cancelScheduledNotificationAsync(scheduled.identifier);
     }
-    if (course.length && desired.size) await prepareReminderChannel();
-    if (task.length && desired.size) await prepareTaskChannel();
+    if (desired.size) await prepareReminderChannel();
     for (const [key, item] of desired) {
       if (current !== generation) return;
       await Notifications.scheduleNotificationAsync({
-        content: { title: item.title, body: item.body, sound: "default", data: { kind: item.kind, key } },
-        trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: item.date, channelId: item.channelId },
+        content: { title: item.title, body: item.body, sound: "default", data: { kind: MARKER, key } },
+        trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: item.date, channelId: CHANNEL },
       });
     }
   }).catch((error) => { console.warn("课程提醒安排失败", error); });

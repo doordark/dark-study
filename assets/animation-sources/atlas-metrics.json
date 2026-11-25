@@ -61,5 +61,14 @@
     "rows": 5,
     "bytes": 2660004,
     "rgbaMiB": 7.5
+  },
+  {
+    "path": "assets/whale/pet-lively-v1.png",
+    "width": 1536,
+    "height": 1024,
+    "columns": 8,
+    "rows": 4,
+    "bytes": 1870041,
+    "rgbaMiB": 6.0
   }
 ]

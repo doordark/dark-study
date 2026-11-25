@@ -1,4 +1,5 @@
 import { RESIDENTS, type ResidentId, type ResidentLine } from './farmLife';
+import type { RelayIntent } from './farmAssignment';
 
 export interface RequestReport {
   summary: string;
@@ -26,23 +27,27 @@ export function readRequestReport(raw: unknown, lines: readonly Pick<ResidentLin
 }
 
 const LOCAL_VIEWS: Record<ResidentId, readonly [pending: string, answered: string]> = {
-  door: ['我觉得先把能确认的细节理清，下次就知道该追问哪一步。', '我会先按这次问到的条件理解，条件一变就值得再确认。'],
-  gu: ['我想先听听你最在意的那一点，下回聊时别把它漏了。', '我会留一点商量的余地，看看这个答复对你是不是合适。'],
-  xiaoba: ['我想先挑最卡住的那个细节问清，整件事可能就好聊多了。', '这让我想到可以先试一小步，再看看答复能不能用上。'],
-  yujie: ['我还是想听一个具体例子，那比绕着这件事猜来猜去有用。', '我想拿你遇到的情况对一下，看看这个说法能不能说得通。'],
-  weigang: ['我想先把双方说的是不是同一件事弄清，再比较两边的说法。', '我会把对方提到的条件一起记下来，省得只记得结论。'],
-  chicken: ['咕，我想从你记得最清楚的那一小段接着问。', '咕，我想先记住最有用的那一点，有疑问再跑一趟。'],
+  door: ['先把关键细节理顺，下次再去问就更有谱了。', '我就先按这次听到的记着，有变动再帮你跟进。'],
+  gu: ['我想先把你最在意的那点记清楚，下回别漏了。', '听着氛围挺缓和的，回头你也可以亲自和他聊聊。'],
+  xiaoba: ['先挑最卡住的那一点问明白，整件事就好办多了。', '答复挺实在的，回头真要干的时候随时喊我。'],
+  yujie: ['还是得拿个具体例子去对，光猜来猜去太绕了。', '话我都带明白也问清楚了，这波算没白跑一趟。'],
+  weigang: ['嗯……先把两边说的对上号，省得越传越偏。', '我把对方提到的条件都记下来了，免得回头忘掉。'],
+  chicken: ['咕，等你想起最清楚的那一小段，坤坤再帮你跑一趟。', '咕，坤坤把话带到啦，感觉对方挺开心的！'],
 };
 
 const endSentence = (text: string) => /[。！？!?]$/.test(text) ? text : text + '。';
 
 export function formatRequestReport(
-  actor: ResidentId, target: ResidentId, question: string,
+  actor: ResidentId,
+  target: ResidentId,
+  question: string,
   lines: readonly Pick<ResidentLine, 'speaker' | 'text'>[],
-  online: boolean, report?: RequestReport,
+  online: boolean,
+  report?: RequestReport,
+  intent?: RelayIntent,
 ) {
   const name = RESIDENTS[target].name;
-  const prefix = `我和${name}聊过了。`;
+  const prefix = actor === 'chicken' ? `咕，我刚去找${name}回来啦。` : `我刚和${name}聊完回来。`;
   if (report) {
     return {
       text: prefix + endSentence(report.summary) + endSentence(report.impression),
@@ -51,21 +56,34 @@ export function formatRequestReport(
   }
   const replies = [...new Set(lines.filter(line => line.speaker === target).flatMap(line => clauses(line.text)))];
   const response = replies.join('。');
+
+  // Convey / invite relays succeed once delivered and acknowledged.
+  if (intent === 'convey' || intent === 'invite') {
+    const delivered = replies.length > 0;
+    return delivered
+      ? {
+          text: prefix + endSentence(`我已经把你的话转告给${name}了，对方听完回应说心里有数，也让你别惦记`) + LOCAL_VIEWS[actor][1],
+          needsDetails: false,
+        }
+      : {
+          text: prefix + '刚才没来得及把话说完整，稍后可以再去转告一次。' + LOCAL_VIEWS[actor][0],
+          needsDetails: true,
+        };
+  }
+
   const asksForWording = /原话|那句话|哪一句|当时的情境/.test(response);
   const hasNoAnswer = /还没定|没有定|没弄清|不确定|无法确认|不知道|还要核实|需要核实/.test(response);
   if (!online || asksForWording || hasNoAnswer) {
     const missing = asksForWording
-      ? '这次还没得到结论。对方想先听听你记得的原话和当时发生了什么，才好继续核实。'
+      ? '这次还没得到结论，对方想先听听你记得的原话和当时发生了什么，才好当面说清。'
       : hasNoAnswer && /几点|什么时候|何时/.test(question)
-        ? '目前还没有明确时间，可以等安排定下来再问。'
-        : '这次还没得到明确答复。下次可以把具体情况和想弄清的那一点一起带过去。';
+        ? '目前还没定下具体时间，可以等安排妥当再问。'
+        : '这次还没得到明确答复，下次可以把具体情况和最想问的那一点一起带过去。';
     return { text: prefix + missing + LOCAL_VIEWS[actor][0], needsDetails: true };
   }
-  // Older model replies may omit the report. Keep the first substantive detail,
-  // rather than treating the target's closing pleasantry as their answer.
   const detail = replies.map(part => part.replace(/^(?:我觉得|我想|我认为|我建议|我的意思是)[，、：:\s]*/, ''))
     .find(part => part.length >= 5 && !/^(?:好[的吧]?|嗯|行|知道了|我明白|麻烦你|帮我|请转告|请如实|谢谢|就这样)/.test(part));
   return detail
-    ? { text: prefix + endSentence('我记下的重点是' + detail.slice(0, 65).replace(/^我/, name)) + LOCAL_VIEWS[actor][1], needsDetails: false }
+    ? { text: prefix + endSentence('记下的重点是' + detail.slice(0, 65).replace(/^我/, name)) + LOCAL_VIEWS[actor][1], needsDetails: false }
     : { text: prefix + '这次还没得到明确答复。' + LOCAL_VIEWS[actor][0], needsDetails: true };
 }

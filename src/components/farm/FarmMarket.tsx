@@ -5,6 +5,7 @@ import { AtlasSprite } from '@/components/AtlasSprite';
 import { AnimatedAtlas } from '@/components/AnimatedAtlas';
 import { vendorChat } from '@/services/farmVendorChat';
 import { recordFarmChatTurn, type ResidentMemory } from '@/utils/farmMemory';
+import { applyPlayerMemoryUpdates } from '@/utils/farmPersonaMemory';
 import { EXTRA_NAMES, QUALITY, qualityOf, vendorAvailable, VENDOR_NAMES, VENDORS, type BagStack, type Vendor, type VendorPriceDeal } from '@/utils/farmMarket';
 import { FarmButton, FarmText } from './FarmSkin';
 import { CropSprite } from './CropSprite';
@@ -13,7 +14,8 @@ import Animated, { cancelAnimation, Easing, useAnimatedStyle, useAnimatedReactio
 import { MARKET_SCENES } from './sceneTextures';
 import { FarmRain } from './FarmRain';
 import { farmPressPoint } from '@/utils/farmPressPoint';
-import { farmTime } from '@/utils/farmTime';
+import { farmTime, type FarmPeriod } from '@/utils/farmTime';
+import type { FarmWeather } from '@/utils/farmTown';
 import { FarmChatConversation } from './FarmChatConversation';
 import { vendorCanTrade } from '@/utils/farmMarket';
 import { FarmNPCSheet } from './FarmNPCSheet';
@@ -87,13 +89,16 @@ export function FarmBag({ visible, close, title, detail, capacity, stacks, selec
   </Modal>;
 }
 
-export function FarmMarket({ visible, onClose, at, paused = false, initialOrders = false, vendorMemories, onMemory, apiKey, webSearch, renderShop, priceDeals, onDiscount }: {
+export function FarmMarket({ visible, onClose, at, paused = false, initialOrders = false, vendorMemories, onMemory, apiKey, webSearch, renderShop, priceDeals, onDiscount, weather, rainbow, period }: {
   visible: boolean; onClose: () => void; coins: number; vendorMemories: Record<Vendor, ResidentMemory>;
   at: number; paused?: boolean; initialOrders?: boolean;
   onMemory: (vendor: Vendor, memory: ResidentMemory) => void; apiKey: string; webSearch: boolean;
   priceDeals: Partial<Record<Vendor, VendorPriceDeal>>;
   onDiscount: (vendor: Vendor, percent: number) => string;
   renderShop: (vendor: Vendor, section: "trade" | "requests" | "sell" | "guide" | "craft") => ReactNode;
+  weather?: FarmWeather;
+  rainbow?: boolean;
+  period?: FarmPeriod;
 }) {
   const quality = useSettings(s => s.renderQuality);
   const [section, setSection] = useState<'chat' | 'trade' | 'requests' | 'sell' | 'guide' | 'craft'>(initialOrders ? 'requests' : 'trade');
@@ -147,6 +152,9 @@ export function FarmMarket({ visible, onClose, at, paused = false, initialOrders
     }
   }, [paused, x, y]);
   const lighting = farmTime(at, 0, at);
+  const liveWeather: FarmWeather = weather ?? lighting.weather;
+  const livePeriod: FarmPeriod = period ?? lighting.period;
+  const liveRainbow = rainbow ?? lighting.rainbow;
   // Reset selection when an hourly stock change removes the traveling shop.
   // Adjust local state during render so no extra effect-driven render is needed.
   if ((!visible || vendor !== null && !vendorAvailable(vendor, at)) && (vendor !== null || busy || draft !== '')) {
@@ -181,13 +189,30 @@ export function FarmMarket({ visible, onClose, at, paused = false, initialOrders
     setDraft(''); setBusy(true); setPendingMessage({ id: String(eventTime()), text });
     let result;
     try {
-      result = await vendorChat({ vendor, text, memory, apiKey, webSearch, signal: controller.signal, deal: priceDeals[vendor], at: eventTime() });
+      result = await vendorChat({
+        vendor,
+        text,
+        memory,
+        apiKey,
+        webSearch,
+        signal: controller.signal,
+        deal: priceDeals[vendor],
+        at: eventTime(),
+        weather: liveWeather,
+        rainbow: liveRainbow,
+        period: livePeriod,
+      });
     } catch { return; }
     if (request.current !== controller) return;
     request.current = null; setBusy(false); setPendingMessage(null);
     if (!controller.signal.aborted) {
+      const nowAt = eventTime();
       const reply = result.discountPercent !== undefined ? result.reaction === 'insult' || result.reaction === 'teasing' ? '这句话让我不舒服，我现在不给优惠。' : onDiscount(vendor, result.discountPercent) : result.reply;
-      onMemory(vendor, recordFarmChatTurn(memory, { id: String(eventTime()), player: text, reply, ...(result.unavailable ? { unavailable: true as const } : {}) }, result.reaction, vendor));
+      let nextMem = recordFarmChatTurn(memory, { id: String(nowAt), player: text, reply, ...(result.unavailable ? { unavailable: true as const } : {}) }, result.reaction, vendor);
+      if (!result.unavailable) {
+        nextMem = applyPlayerMemoryUpdates(nextMem, result.memoryUpdates, text, nowAt, result.episode);
+      }
+      onMemory(vendor, nextMem);
     }
   };
   const memory = vendor ? vendorMemories[vendor] : null;
@@ -204,7 +229,7 @@ export function FarmMarket({ visible, onClose, at, paused = false, initialOrders
         </Pressable> : null) : null}
         {castReady ? <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 0, top: 0 }, playerStyle]}><Animated.View style={facingStyle}><FarmPersonSprite who="hero" size={20 * scale} activity={walking ? 'walk' : 'idle'} active={animationReady && visible && !vendor && !paused} /></Animated.View></Animated.View> : null}
         <Pressable accessibilityRole="button" accessibilityLabel="走出集市返回农场" onPress={() => travel({ x: 100, y: 316 }, onClose)} style={{ position: 'absolute', bottom: 0, left: 0, width: mapWidth, height: 25 * scale }} />
-        <FarmRain width={mapWidth} height={330 * scale} active={animationReady && visible && !vendor && !paused && lighting.weather === 'rain'} />
+        <FarmRain width={mapWidth} height={330 * scale} active={animationReady && visible && !vendor && !paused && liveWeather === 'rain'} />
       </View>
     </ScrollView>
     <FarmNPCSheet visible={Boolean(vendor && memory)} onClose={back}>
@@ -213,6 +238,15 @@ export function FarmMarket({ visible, onClose, at, paused = false, initialOrders
         <View style={{ flex: 1 }}><View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 5 }}>
           <FarmText variant="title" style={{ fontSize: 14 }}>{vendor ? VENDOR_NAMES[vendor] : ''}</FarmText>
           <FarmText style={{ fontSize: 10, color: '#8A785E' }}>{memory?.mood ?? '平静'} · 好感 {memory?.affinity ?? 0}/100</FarmText>
+          {liveWeather === 'rain' ? (
+            <View style={{ paddingHorizontal: 6, paddingVertical: 1.5, borderRadius: 99, backgroundColor: '#E1EEF9' }}>
+              <FarmText style={{ fontSize: 9, color: '#2F638C', fontWeight: '700' }}>雨中守摊</FarmText>
+            </View>
+          ) : liveRainbow ? (
+            <View style={{ paddingHorizontal: 6, paddingVertical: 1.5, borderRadius: 99, backgroundColor: '#FDF0D1' }}>
+              <FarmText style={{ fontSize: 9, color: '#9C6219', fontWeight: '700' }}>摊前看彩虹</FarmText>
+            </View>
+          ) : null}
         </View></View>
         <Pressable accessibilityLabel="关闭人物面板" onPress={back} hitSlop={8} style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F5ECD8' }}><FarmText style={{ fontSize: 20 }}>×</FarmText></Pressable>
       </View>

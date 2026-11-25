@@ -14,6 +14,7 @@ const calendar = {
     const id = String(events.length); events.push({ ...details, id }); return id;
   },
   updateEventAsync: async (id, details) => Object.assign(events.find(e => e.id === id), details),
+  deleteEventAsync: async id => { const i = events.findIndex(e => e.id === id); if (i >= 0) events.splice(i, 1); },
 };
 const source = fs.readFileSync('src/services/systemCourseReminders.ts', 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -65,6 +66,18 @@ async function run() {
   assert.equal(events[0].alarms[0].relativeOffset, -30);
   await api.importCourseCalendar([course], 15, 'other-term');
   assert.equal(events.length, 4, 'same record ID in another schedule remains independent');
+  // Same-day rescheduled lesson (different hours, same occurrence id) updates in place without duplicating.
+  const sameDayStart = new Date(course.start);
+  sameDayStart.setHours(Math.min(22, sameDayStart.getHours() + 2));
+  const shifted = { ...course, start: sameDayStart.getTime(), end: sameDayStart.getTime() + 3600000 };
+  result = await api.importCourseCalendar([shifted], 15, 'term');
+  assert.equal(result.completed, 1);
+  assert.equal(events.length, 4, 'same-day time shift updates existing event instead of duplicating');
+  assert.equal(+events[0].startDate, shifted.start);
+  // Clearing calendar removes only the targeted schedule's events.
+  const removed = await api.clearCourseCalendar('term');
+  assert.equal(removed, 3);
+  assert.equal(events.length, 1, 'other-term calendar event remains intact');
   result = await api.importCourseCalendar([{ ...course, start: now - 1 }], 15, 'term');
   assert.equal(result.skipped, 1);
   const config = JSON.parse(fs.readFileSync('app.json', 'utf8')).expo;

@@ -1,10 +1,11 @@
 const DAY = 86_400_000;
+export type FarmPeriod = 'morning' | 'noon' | 'evening' | 'night';
 
 /** Scene lighting follows the device clock; saved bonuses only advance growth/calendar. */
 export function farmTime(realNow: number, timeShift: number, epoch: number) {
   const local = new Date(realNow);
   const hour = local.getHours();
-  const period: 'morning' | 'noon' | 'evening' | 'night' = hour >= 6 && hour < 11 ? 'morning' : hour >= 11 && hour < 17 ? 'noon' : hour >= 17 && hour < 19 ? 'evening' : 'night';
+  const period: FarmPeriod = hour >= 6 && hour < 11 ? 'morning' : hour >= 11 && hour < 17 ? 'noon' : hour >= 17 && hour < 19 ? 'evening' : 'night';
   const growthNow = realNow + timeShift;
   const day = Math.max(1, Math.floor((growthNow - epoch) / DAY) + 1);
   // Keep the weather steady for each three-hour window, including after reopening.

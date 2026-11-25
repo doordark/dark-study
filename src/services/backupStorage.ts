@@ -5,7 +5,8 @@ import { useWhaleMemory } from '@/store/useWhaleMemory';
 import { useWhalePersona } from '@/store/useWhalePersona';
 import { useWhalePet } from '@/store/useWhalePet';
 import { useWidgetSettings } from '@/store/useWidgetSettings';
-import { useWhaleVoice } from '@/store/useWhaleVoice';
+import { normalizeWhaleVoiceConfig, useWhaleVoice, VOICE_CONFIG_KEY, VOICE_KEY } from '@/store/useWhaleVoice';
+import { SOUND_EFFECTS_KEY, useSoundEffects } from '@/store/useSoundEffects';
 import { useDataSession } from '@/store/useDataSession';
 import { useImportTask } from '@/store/useImportTask';
 import { BACKUP_KEYS, buildRestorePlan, createBackup, parseBackup, type Backup } from '@/utils/backup';
@@ -17,8 +18,17 @@ export async function hydrateBackupStores() {
   const stores = [useStore, useSettings, useWhaleMemory, useWhalePersona, useWhalePet, useWidgetSettings];
   await Promise.all(stores.map(store => store.persist.rehydrate()));
   if (stores.some(store => !store.persist.hasHydrated())) throw new Error('部分数据无法重新加载，正在恢复原数据');
-  const voice = await AsyncStorage.getItem('dark-study-whale-voice');
-  useWhaleVoice.setState({ on: voice !== '0', loaded: true });
+  const [voice, voiceConfigRaw, sfx] = await Promise.all([
+    AsyncStorage.getItem(VOICE_KEY),
+    AsyncStorage.getItem(VOICE_CONFIG_KEY),
+    AsyncStorage.getItem(SOUND_EFFECTS_KEY),
+  ]);
+  let parsedVoiceConfig: unknown = null;
+  if (voiceConfigRaw) {
+    try { parsedVoiceConfig = JSON.parse(voiceConfigRaw); } catch { parsedVoiceConfig = null; }
+  }
+  useWhaleVoice.setState({ on: voice !== '0', config: normalizeWhaleVoiceConfig(parsedVoiceConfig), loaded: true });
+  useSoundEffects.setState({ on: sfx !== '0', loaded: true });
 }
 export async function collectBackup() {
   await flushPendingWrites();
@@ -33,8 +43,10 @@ export async function collectBackup() {
   records.set('dark-study-whale-persona', JSON.stringify({ state: useWhalePersona.getState(), version: 0 }));
   records.set('dark-study-whale-pet', JSON.stringify({ state: useWhalePet.getState(), version: 0 }));
   records.set('dark-study-widget-settings', JSON.stringify({ state: useWidgetSettings.getState(), version: 0 }));
-  await useWhaleVoice.getState().hydrate();
-  records.set('dark-study-whale-voice', useWhaleVoice.getState().on ? '1' : '0');
+  await Promise.all([useWhaleVoice.getState().hydrate(), useSoundEffects.getState().hydrate()]);
+  records.set(VOICE_KEY, useWhaleVoice.getState().on ? '1' : '0');
+  records.set(VOICE_CONFIG_KEY, JSON.stringify(useWhaleVoice.getState().config));
+  records.set(SOUND_EFFECTS_KEY, useSoundEffects.getState().on ? '1' : '0');
   return createBackup([...records]);
 }
 export async function restoreBackup(backup: Backup, mode: 'replace' | 'merge') {

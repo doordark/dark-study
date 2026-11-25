@@ -3,6 +3,7 @@ import { normalizeCourseTasks } from './courseTasks';
 export const BACKUP_KEYS = [
   'dark-study-storage', 'dark-study-settings', 'dark-study-whale-memory', 'dark-study-whale-persona',
   'dark-study-whale-pet', 'dark-study-widget-settings', 'dark-study-whale-voice',
+  'dark-study-whale-voice-config', 'dark-study-sound-effects',
   'dark-study-farm', 'dark-study-farm-life-settings', 'dark-study-farm-life-log',
 ] as const;
 export type BackupKey = typeof BACKUP_KEYS[number];
@@ -11,8 +12,11 @@ type Obj = Record<string, any>;
 const object = (value: unknown): value is Obj => !!value && typeof value === 'object' && !Array.isArray(value);
 const fields: Partial<Record<BackupKey, string[]>> = {
   'dark-study-storage': ['schedules', 'activeScheduleId', 'grades', 'gradeYears', 'activeGradeYearId', 'gradeTypes', 'gradeRules', 'activeGradeRuleId', 'activeGradeSemester', 'courseTasks'],
-  'dark-study-settings': ['farmWebSearch', 'reminderEnabled', 'reminderMinutes', 'reminderCount', 'appearance', 'material', 'backgroundTint', 'backgroundEffect', 'whalePhrase', 'renderQuality'],
-  'dark-study-whale-memory': ['active', 'messages', 'memory', 'petMessages', 'facts', 'autoMemory'],
+  'dark-study-settings': ['farmWebSearch', 'reminderEnabled', 'reminderMinutes', 'reminderCount', 'appearance', 'material', 'backgroundDim', 'backgroundTint', 'backgroundEffect', 'defaultScheduleView', 'showWeekend', 'showOtherWeeks', 'compactWeekGrid', 'whalePhrase', 'renderQuality', 'gpaScale'],
+  'dark-study-whale-memory': [
+    'active', 'messages', 'memory', 'petMessages', 'facts', 'episodes', 'openLoops', 'reflections',
+    'emotion', 'bond', 'autoMemory', 'autoReflect', 'turnsSinceReflect', 'lastReflectedAt', 'lastInteractionAt',
+  ],
   'dark-study-whale-persona': ['persona'], 'dark-study-whale-pet': ['care'],
   'dark-study-widget-settings': ['shape', 'theme', 'accent', 'count'],
 };
@@ -28,6 +32,18 @@ function safeTree(value: unknown, depth = 0) {
 function check(ok: unknown, message: string): asserts ok { if (!ok) throw new Error(message); }
 function cleanModule(key: BackupKey, value: unknown): unknown {
   if (key === 'dark-study-whale-voice') { check(value === '0' || value === '1', '语音设置无效'); return value; }
+  if (key === 'dark-study-sound-effects') { check(value === '0' || value === '1', '音效设置无效'); return value; }
+  if (key === 'dark-study-whale-voice-config') {
+    check(object(value), '语音配置无效');
+    const clean: Obj = {};
+    if (typeof value.engine === 'string' && ['auto', 'breezeblue', 'siliconflow', 'edge', 'cute_sfx', 'system'].includes(value.engine)) clean.engine = value.engine;
+    if (typeof value.breezeVoiceId === 'string') clean.breezeVoiceId = value.breezeVoiceId.slice(0, 128);
+    if (typeof value.breezeVoiceName === 'string') clean.breezeVoiceName = value.breezeVoiceName.slice(0, 64);
+    if (typeof value.siliconVoice === 'string') clean.siliconVoice = value.siliconVoice.slice(0, 180);
+    if (typeof value.edgeVoice === 'string' && ['zh-CN-XiaoyiNeural', 'zh-CN-XiaoshuangNeural'].includes(value.edgeVoice)) clean.edgeVoice = value.edgeVoice;
+    if (typeof value.fallbackToSystem === 'boolean') clean.fallbackToSystem = value.fallbackToSystem;
+    return clean;
+  }
   if (key === 'dark-study-farm-life-log') { check(Array.isArray(value), '居民记录无效'); return value.slice(-40); }
   check(object(value), `${key} 数据无效`);
   const allowed = fields[key];
@@ -69,20 +85,45 @@ function cleanModule(key: BackupKey, value: unknown): unknown {
     });
   }
   if (key === 'dark-study-whale-memory') {
-    for (const field of ['active', 'autoMemory']) if (field in state) check(typeof state[field] === 'boolean', '记忆开关无效');
+    for (const field of ['active', 'autoMemory', 'autoReflect']) if (field in state) check(typeof state[field] === 'boolean', '记忆开关无效');
     check(Array.isArray(state.facts), '长期记忆无效');
     for (const fact of state.facts) check(object(fact) && typeof fact.id === 'string' && typeof fact.key === 'string' && typeof fact.text === 'string', '长期记忆条目无效');
-    state.facts = state.facts.slice(-60);
+    state.facts = state.facts.slice(-100);
+    if ('episodes' in state) {
+      check(Array.isArray(state.episodes), '情景回忆无效');
+      for (const ep of state.episodes) check(object(ep) && typeof ep.id === 'string' && typeof ep.summary === 'string', '情景回忆条目无效');
+      state.episodes = state.episodes.slice(-50);
+    }
+    if ('openLoops' in state) {
+      check(Array.isArray(state.openLoops), '近期牵挂无效');
+      for (const loop of state.openLoops) check(object(loop) && typeof loop.id === 'string' && typeof loop.topic === 'string', '牵挂条目无效');
+      state.openLoops = state.openLoops.slice(-20);
+    }
+    if ('reflections' in state) {
+      check(Array.isArray(state.reflections), '反思手账无效');
+      for (const ref of state.reflections) check(object(ref) && typeof ref.id === 'string' && typeof ref.text === 'string', '反思条目无效');
+      state.reflections = state.reflections.slice(-24);
+    }
+    if ('emotion' in state) check(object(state.emotion), '情绪状态无效');
+    if ('bond' in state) check(object(state.bond), '羁绊数据无效');
   }
   if (key === 'dark-study-whale-persona') check(object(state.persona), '人设数据无效');
   if (key === 'dark-study-whale-pet') check(object(state.care), '桌宠数据无效');
   if (key === 'dark-study-settings') {
-    for (const name of ['farmWebSearch', 'reminderEnabled']) if (name in state) check(typeof state[name] === 'boolean', '偏好设置无效');
+    for (const name of ['farmWebSearch', 'reminderEnabled', 'showWeekend', 'showOtherWeeks', 'compactWeekGrid']) if (name in state) check(typeof state[name] === 'boolean', '偏好设置无效');
     for (const name of ['reminderMinutes', 'reminderCount']) if (name in state) check(Number.isFinite(state[name]), '提醒设置无效');
+    if ('backgroundDim' in state) check(typeof state.backgroundDim === 'number' && Number.isFinite(state.backgroundDim) && state.backgroundDim >= 0 && state.backgroundDim <= 0.7, '背景遮罩设置无效');
+    if ('defaultScheduleView' in state) check(['day', 'week'].includes(state.defaultScheduleView), '默认课表视图设置无效');
     if ('appearance' in state) check(['system', 'light', 'dark'].includes(state.appearance), '主题设置无效');
     if ('material' in state) check(['flat', 'glass'].includes(state.material), '材质设置无效');
     if ('whalePhrase' in state) check(typeof state.whalePhrase === 'string' && state.whalePhrase.length >= 2 && state.whalePhrase.length <= 12, '召唤口令无效');
     if ('renderQuality' in state) check(['smooth', 'standard', 'beautiful'].includes(state.renderQuality), '画质设置无效');
+    if ('gpaScale' in state) check(['five', 'four_std', 'four_pku', 'four_three', 'four_linear'].includes(state.gpaScale), '绩点制设置无效');
+  }
+  if (key === 'dark-study-widget-settings') {
+    if ('shape' in state) check(['square', 'rectangle', 'large'].includes(state.shape), '小组件形状无效');
+    if ('theme' in state) check(['system', 'dark', 'light'].includes(state.theme), '小组件主题无效');
+    if ('count' in state) check(Number.isFinite(state.count) && state.count >= 1 && state.count <= 5, '小组件数量无效');
   }
   return { state, version: value.version ?? 0 };
 }
@@ -101,9 +142,10 @@ export function parseBackup(text: string): Backup {
   check(Object.keys(data).length, '备份中没有可恢复的数据');
   return { format: 'dark-study-backup', version: 1, createdAt: value.createdAt, data };
 }
+const RAW_STRING_KEYS = new Set<BackupKey>(['dark-study-whale-voice', 'dark-study-sound-effects']);
 export function createBackup(records: readonly (readonly [string, string | null])[], at = new Date()): Backup {
   const data: Backup['data'] = {};
-  for (const [key, raw] of records) if (raw !== null && BACKUP_KEYS.includes(key as BackupKey)) data[key as BackupKey] = key === 'dark-study-whale-voice' ? raw : JSON.parse(raw);
+  for (const [key, raw] of records) if (raw !== null && BACKUP_KEYS.includes(key as BackupKey)) data[key as BackupKey] = RAW_STRING_KEYS.has(key as BackupKey) ? raw : JSON.parse(raw);
   return parseBackup(JSON.stringify({ format: 'dark-study-backup', version: 1, createdAt: at.toISOString(), data }));
 }
 export function backupSummary(backup: Backup) {
@@ -112,7 +154,6 @@ export function backupSummary(backup: Backup) {
   const farm = backup.data['dark-study-farm'] as Obj | undefined;
   return { modules: Object.keys(backup.data).length, schedules: main?.state.schedules.length ?? 0,
     courses: main?.state.schedules.reduce((count: number, s: Obj) => count + s.courses.length, 0) ?? 0,
-    tasks: main?.state.courseTasks?.length ?? 0,
     grades: main?.state.grades.length ?? 0,
     messages: ['messages', 'memory', 'petMessages'].reduce((count, field) => count + (whale?.state[field]?.length ?? 0), 0),
     farm: !!farm, coins: farm?.coins ?? 0 };
@@ -127,7 +168,7 @@ export function buildRestorePlan(backup: Backup, current: readonly (readonly [st
     const key = name as BackupKey;
     let incoming = cleanModule(key, raw) as Obj;
     const existingRaw = disk.get(key);
-    const existing = existingRaw ? key === 'dark-study-whale-voice' ? existingRaw : JSON.parse(existingRaw) : undefined;
+    const existing = existingRaw ? RAW_STRING_KEYS.has(key) ? existingRaw : JSON.parse(existingRaw) : undefined;
     if (key === 'dark-study-settings') incoming = { ...incoming, state: { ...incoming.state, apiKey: existing?.state?.apiKey ?? '', backgroundImage: existing?.state?.backgroundImage ?? null } };
     if (key === 'dark-study-storage' && !('courseTasks' in incoming.state) && Array.isArray(existing?.state?.courseTasks)) {
       incoming.state.courseTasks = normalizeCourseTasks(existing.state.courseTasks);
@@ -139,10 +180,17 @@ export function buildRestorePlan(backup: Backup, current: readonly (readonly [st
         incoming.state.courseTasks = union(normalizeCourseTasks(existing.state.courseTasks), normalizeCourseTasks((raw as Obj).state.courseTasks), 3000);
       } else if (key === 'dark-study-whale-memory') {
         incoming = { ...incoming, state: { ...incoming.state, ...existing.state } };
-        for (const field of ['messages', 'memory', 'petMessages', 'facts']) incoming.state[field] = union(existing.state[field] ?? [], (raw as Obj).state[field] ?? [], field === 'facts' ? 60 : 200);
+        for (const [field, limit] of [
+          ['messages', 200], ['memory', 200], ['petMessages', 200],
+          ['facts', 100], ['episodes', 50], ['openLoops', 20], ['reflections', 24],
+        ] as const) {
+          if (Array.isArray(existing.state[field]) || Array.isArray((raw as Obj).state[field])) {
+            incoming.state[field] = union(existing.state[field] ?? [], (raw as Obj).state[field] ?? [], limit);
+          }
+        }
         for (const field of ['messages', 'memory', 'petMessages']) incoming.state[field].sort((a: Obj, b: Obj) => a.timestamp - b.timestamp);
       } else return [key, existingRaw!] as [string, string];
     }
-    return [key, key === 'dark-study-whale-voice' ? String(incoming) : JSON.stringify(incoming)];
+    return [key, RAW_STRING_KEYS.has(key) ? String(incoming) : JSON.stringify(incoming)];
   });
 }

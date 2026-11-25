@@ -1,17 +1,33 @@
-# 大肥鱼离线语音
+# 大肥鱼轻量化混合语音与全彩蛋音效
 
-用户只看到“鱼语”开关。聊天与桌宠共用 `speakWhale(text)` / `stopWhaleVoice()`，默认开启并保留已有开关状态。无需 API Key、账号、网络、首次启动下载或服务端。
+## 设计目标
 
-内置 Kokoro v1.1 中文 INT8 模型，固定中文女声 `zf_001`（上游 speaker ID 3）。替代原来的 Fish S2.1 Pro / Voice ID；Fish 的云端 Voice ID 不是可下载的离线模型。当前音色作为软萌方向的候选，实际幼态、自然程度需真机听感确认，不保证复制 Fish 音色。
+替代历史上 100+ MB 的本地 Kokoro 离线语音包（`zf_001` 成熟播音腔不符合大肥鱼软萌傲娇人设，且安装包过度膨胀）与生硬的系统朗读：
 
-自动判断 normal / happy / excited / sleepy / comfort，常规内容默认 normal。Kokoro 不提供 Fish 式情绪标签；这里只对同一说话人的语速做小幅变化，不切换音色、不拉高播放音高。
+- **零新增原生依赖**：全部基于项目已安装的 `expo-audio`、`expo-file-system`、`expo-secure-store`、`expo-speech`。
+- **极小体积**：全套 35 个农场与隐藏彩蛋音效 + 大肥鱼 5 种情绪软萌拟声由 `scripts/build-sfx-assets.py` 合成并通过 `ffmpeg` 压制为单声道 48kbps MP3，总大小约 **183 KB（< 0.2 MB）**。
+- **人设贴合**：参考 B 站「蓝色大肥鱼（DeepSeek 鲸鱼娘）」公认的「软萌为底 + 傲娇 + 奶凶」少女音，提供多引擎自由切换，离线或无 Key 时默认柔和回退为软萌鲸鱼拟声，不再默认播放机械系统音。
 
-链路：清理 Markdown、代码、URL、emoji、颜文字和动作 → 判断语气 → 短句缓存 → 本机合成 PCM16 WAV → expo-audio。首段最长 28 字，后段最长 64 字；下一段在上一段播放时准备。启动且鱼语开启时预热模型。无云端等待，但首次模型解包、加载和手机计算仍有耗时；未做延迟测量。
+## 大肥鱼混合语音架构
 
-缓存约 100 MiB，键包含模型、Voice ID、文本、语气及 voiceVersion；旧 Fish 缓存失效。停止操作同时取消本机生成、停止播放器、停止系统朗读并使旧 token 失效；旧结果不能恢复播放。模型不在可清理的语音缓存内。
+主聊天（[AssistantScreen.tsx](file:///d:/dark%20study/src/screens/AssistantScreen.tsx)）、桌宠（[WhalePet.tsx](file:///d:/dark%20study/src/components/WhalePet.tsx)）与农场串门大肥鱼（[FarmScreen.tsx](file:///d:/dark%20study/src/screens/FarmScreen.tsx)）共用 `speakWhale(text)` / `stopWhaleVoice()`：
 
-模型文件随源码放在 `assets/voice/models/whale-kokoro-v2/`。`plugins/withWhaleOfflineVoice.js` 在原生构建时把资源目录加入 Android assets / iOS bundle，缺文件时直接报错。新装 App 不需要联网下载。模型来源及许可证见 `assets/voice/README.md`。
+1. **智能混合（`auto`，默认）**：已配置 Key 时优先使用 BreezeBlue「大肥鱼」或硅基流动 `CosyVoice2-0.5B` → 未配置 Key 时在移动端尝试免 Key Edge 少女音（`zh-CN-XiaoyiNeural` / `zh-CN-XiaoshuangNeural`，含 `Sec-MS-GEC` v2 鉴权与高萌语调微调）→ 离线或异常时自动播放内置 5 情绪软萌鲸鱼拟声。
+2. **BreezeBlue「大肥鱼」（`breezeblue`，BYOK）**：对接 `POST https://api.breeze.blue/v1/text-to-speech/{voice_id}`（`xi-api-key` 存 `expo-secure-store`），支持在「大肥鱼设置 → 声音音效」一键检索「大肥鱼」机灵/迷糊少女音。
+3. **硅基流动 CosyVoice2-0.5B（`siliconflow`，BYOK）**：国内直连 `https://api.siliconflow.cn/v1/audio/speech`，内置 `diana` / `claire` / `bella` / `anna`，亦支持填入 3 秒干声复刻的自定义 `speech:...` URI。
+4. **免 Key Edge 少女音（`edge`）**：纯 TypeScript 实现 v2 DRM 鉴权与 SSML 语调微调（Web 端受浏览器 WebSocket 头限制自动降级）。
+5. **纯离线软萌拟声（`cute_sfx`）**与显式 **系统朗读（`system`）**。
+6. **本地 MP3 LRU 缓存**：上限 50 MiB，按 `(version, provider, voiceId, mood, text)` 缓存，高频问候二次播报 0 延迟、0 流量消耗。
 
-新增原生库需要包含它的新安装包；仅刷新 JS、旧 APK 或 Expo Go 无法获得内置引擎。此次按要求不构建 APK、不执行 prebuild、不做真机测试。原生库初始化/合成失败时保留 expo-speech 容错；此时音色及离线能力取决于设备已安装的系统语音，不应作为固定音色验收结果。Web 同样使用系统朗读。
+## 彩蛋与农场音效系统
 
-本次仅运行 `npx expo lint`、`npx tsc --noEmit`。保留并迁移旧语音回归脚本的 mock，但不运行它。用户后续在新原生安装包中确认：首次启动断网朗读、软萌听感、长短句衔接、快速切换消息/关开语音、桌宠和聊天音色一致。
+由 [soundEffects.ts](file:///d:/dark%20study/src/services/soundEffects.ts) 与独立开关 [useSoundEffects.ts](file:///d:/dark%20study/src/store/useSoundEffects.ts) 统一管理，支持并发池上限（6 路）、45ms 防抖冷却、切后台自动停音、以及连击/集星动态升调：
+
+- **农场彩蛋**：播种、浇水、打水、施肥、单株/批量收获、买卖金币、做菜/鱼汤、升级与每日领奖、进出小屋/切房/盖被子睡觉、摸坤坤与鸡窝、篝火聚会、随机奇遇、伴读钟、池塘垂钓（甩竿/咬钩/上鱼/漂流瓶/脱钩）、抓虫连击升调、**夜间「恐怖徐睡阴」降临与成功劝退**。
+- **全应用隐藏彩蛋**：课表 7 次秘密充能升调、隐藏夜空收集 7 颗星升调 / 星座解锁 / 猫头鹰呼唤与带路、「放学后」三大彩蛋（星光列车 / 云朵咖啡搅拌 / 请假条盖章）、失重 `ZERO-G`、大肥鱼水花召唤/潜回退场与桌宠摸头/狂戳炸毛/吃团子/跳舞转圈。
+
+## 回归检查
+
+- `node scripts/check-whale-voice.cjs`
+- `node scripts/check-sound-effects.cjs`
+- `npx tsc --noEmit` & `npx expo lint`

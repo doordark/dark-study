@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { playSfx, risingRate } from "@/services/soundEffects";
 import { selectHaptic, successHaptic } from "@/utils/haptics";
 import { makeSky, remainingRoute, SKY_ROUTES, turnSky } from "@/utils/afterHours";
 
@@ -37,17 +38,27 @@ function Platform() {
     setRoute(remainingRoute(route, cell));
     setMoves(moves + 1);
     setHint(null);
-    if (next.every(Boolean)) successHaptic();
-    else selectHaptic();
+    if (next.every(Boolean)) {
+      successHaptic();
+      playSfx("farm_level_up", { volume: 0.72 });
+    } else {
+      selectHaptic();
+      playSfx("after_star_flip", { rate: risingRate(next.filter(Boolean).length % 8, 0.035, 0.92) });
+    }
   }
 
   function nextStop() {
-    if (stage === 2) { setArrived(true); return; }
+    if (stage === 2) {
+      setArrived(true);
+      playSfx("star_constellation", { volume: 0.74 });
+      return;
+    }
     const next = stage + 1;
     setStage(next);
     setBoard(makeSky(next));
     setRoute([...SKY_ROUTES[next]]);
     setHint(null);
+    playSfx("farm_event", { volume: 0.66 });
   }
 
   return <>
@@ -96,7 +107,13 @@ function Coffee() {
     <Text style={s.title}>云朵冲泡处</Text>
     <Text style={s.body}>本店只收一种货币：发一小会儿呆。</Text>
     <Pressable accessibilityRole="button" accessibilityLabel="搅拌云朵咖啡" onPress={() => {
-      if (stirs < 3) { setStirs(stirs + 1); selectHaptic(); }
+      if (stirs < 3) {
+        const nextStirs = stirs + 1;
+        setStirs(nextStirs);
+        selectHaptic();
+        if (nextStirs >= 3) playSfx("farm_event", { volume: 0.7 });
+        else playSfx("after_coffee_stir", { rate: risingRate(nextStirs - 1, 0.09, 0.96) });
+      }
     }} style={s.coffee}>
       <Text style={s.steam}>{stirs % 2 ? "﹏　﹏　﹏" : "　∿　∿　"}</Text>
       <View style={s.cup}><Text style={s.foam}>{stirs >= 3 ? "♡" : "☁"}</Text></View>
@@ -118,7 +135,7 @@ function Permission() {
       {stamped ? <View style={s.stamp}><Text style={s.stampText}>准予快乐\n即刻生效</Text></View> : null}
     </View>
     <Text accessibilityLiveRegion="polite" style={s.caption}>{stamped ? "已获你本人批准。\n这张条子不用交，放在心里就行。" : "本申请只需要一个人的批准。"}</Text>
-    {!stamped ? <SecretButton label="我批准了 · 盖章" onPress={() => { setStamped(true); successHaptic(); }} /> : null}
+    {!stamped ? <SecretButton label="我批准了 · 盖章" onPress={() => { setStamped(true); successHaptic(); playSfx("after_stamp", { volume: 0.82 }); }} /> : null}
   </>;
 }
 

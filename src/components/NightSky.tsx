@@ -27,6 +27,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AtlasSprite } from "@/components/AtlasSprite";
 import { NightSkyMessage } from "@/components/NightSkyMessage";
 import { useAnimationActive } from "@/hooks/useAnimationActive";
+import { playSfx, playStarScaleNote, risingRate } from "@/services/soundEffects";
 
 import {
   successHaptic,
@@ -286,9 +287,11 @@ function Moon({
   const [phase, setPhase] = useState(() => moonPhase(new Date()));
   useEffect(() => {
     const refresh = () => setPhase(moonPhase(new Date()));
+    refresh();
+    if (!motion) return;
     const timer = setInterval(refresh, 30000);
     return () => clearInterval(timer);
-  }, []);
+  }, [motion]);
   const illumination = [0, 0.16, 0.5, 0.84, 1, 0.84, 0.5, 0.16][phase];
   const bright = illumination * (0.45 + (lit / TOTAL_STARS) * 0.55);
 
@@ -737,11 +740,14 @@ export function NightSky({
   const travel = useSharedValue(0);
   const [owlHint, setOwlHint] = useState("");
   const owlTaps = useRef(0);
+  const collectedSetRef = useRef<Set<number>>(new Set());
   const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const constellationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(
     () => () => {
       if (hintTimer.current) clearTimeout(hintTimer.current);
+      if (constellationTimer.current) clearTimeout(constellationTimer.current);
     },
     [],
   );
@@ -751,7 +757,22 @@ export function NightSky({
   const reduceMotion = useReducedMotion();
   const closingRef = useRef(false);
   const done = lit >= TOTAL_STARS;
-  useEffect(() => { if (done) successHaptic(); }, [done]);
+  useEffect(() => {
+    if (!done) return;
+    successHaptic();
+    // 紧接第 7 颗星的 Si (B5)，约 220ms 后由高音 Do' (C6) 星座和弦自然收束
+    constellationTimer.current = setTimeout(() => {
+      if (!closingRef.current) {
+        playSfx("star_constellation", { volume: 0.76, ignoreCooldown: true });
+      }
+    }, 220);
+    return () => {
+      if (constellationTimer.current) {
+        clearTimeout(constellationTimer.current);
+        constellationTimer.current = null;
+      }
+    };
+  }, [done]);
   const owlStage: OwlStage = followingOwl ? "leaving"
     : !done ? "waiting" : owlLanded || reduceMotion ? "perched" : "arriving";
   const landOwl = useCallback(() => setOwlLanded(true), []);
@@ -905,7 +926,7 @@ export function NightSky({
       />
       <Animated.Image
         pointerEvents="none"
-        source={require("../../assets/images/night-forest-v2.png")}
+        source={require("../../assets/images/night-forest-v2.webp")}
         resizeMode="cover"
         fadeDuration={0}
         style={[{ position: "absolute", width: w, height: h, opacity: 0.68 }, sceneStyle]}
@@ -1000,8 +1021,11 @@ export function NightSky({
           collected={picked[i]}
           onCollect={() => {
             if (closingRef.current) return;
+            if (collectedSetRef.current.has(i)) return;
+            const stepIndex = collectedSetRef.current.size;
+            collectedSetRef.current.add(i);
             tapHaptic();
-
+            playStarScaleNote(stepIndex, { volume: 0.74 });
             setPickOrder((prev) =>
               prev.includes(i) ? prev : [...prev, i],
             );
@@ -1030,10 +1054,13 @@ export function NightSky({
             // 前几次都只是对话，最后一次呼唤它才肯带路
             if (n >= OWL_TAPS_NEEDED) {
               thumpHaptic();
+              playSfx("owl_hoot", { volume: 0.74, ignoreCooldown: true });
+              playSfx("farm_event", { volume: 0.62 });
               enterFarm();
               return;
             }
             tapHaptic();
+            playSfx("owl_hoot", { rate: risingRate(n - 1, 0.05, 0.96), volume: 0.68 });
             setOwlHint(OWL_LINES[n - 1] ?? "");
             if (hintTimer.current) clearTimeout(hintTimer.current);
             hintTimer.current = setTimeout(() => setOwlHint(""), 3000);
@@ -1062,7 +1089,7 @@ export function NightSky({
             paddingVertical: compact ? 12 : 16,
           }}
         >
-          <Image pointerEvents="none" source={require("../../assets/images/night-letter-bg.png")}
+          <Image pointerEvents="none" source={require("../../assets/images/night-letter-bg.webp")}
             resizeMode="cover" fadeDuration={0}
             style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, width: "100%", height: "100%" }} />
           <LinearGradient pointerEvents="none" colors={["rgba(7,12,30,0.24)", "rgba(7,12,30,0.38)"]}

@@ -1,14 +1,11 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import React, {
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -23,6 +20,8 @@ import {
   GlassContainer,
   GlassTargetProvider,
 } from "@/components/GlassContainer";
+import { useSettings } from "@/store/useSettings";
+import { useStore } from "@/store/useStore";
 import type {
   GradeRecord,
   GradeRule,
@@ -32,9 +31,9 @@ import type {
 } from "@/types";
 import {
   deriveGpa,
+  getGpaScaleMeta,
   GRADE_SEMESTERS,
 } from "@/utils/grades";
-import { useStore } from "@/store/useStore";
 
 const SCORE_TYPE_LABEL: Record<GradeScoreType, string> = {
   numeric: "数字",
@@ -43,7 +42,7 @@ const SCORE_TYPE_LABEL: Record<GradeScoreType, string> = {
 };
 
 const SCORE_PLACEHOLDER: Record<GradeScoreType, string> = {
-  numeric: "如 87",
+  numeric: "如 87 或 87.5",
   letter: "如 A / B+",
   text: "如 优秀 / 及格",
 };
@@ -59,7 +58,7 @@ function Field({
   value: string;
   placeholder?: string;
   onChange: (v: string) => void;
-  keyboardType?: "default" | "numeric";
+  keyboardType?: "default" | "decimal-pad" | "number-pad";
 }) {
   return (
     <View className="mb-3">
@@ -91,7 +90,12 @@ function useSheetHeight(ratio: number) {
       hide.remove();
     };
   }, []);
-  return Math.max(300, Math.min(Math.round(winH * ratio), winH - kbH - 16));
+  // Android 开启了 softwareKeyboardLayoutMode: "resize"，窗口高度已收缩，避免二次扣减
+  const effectiveKb = Platform.OS === "ios" ? kbH : 0;
+  return Math.max(
+    300,
+    Math.min(Math.round(winH * ratio), winH - effectiveKb - 16),
+  );
 }
 
 export interface GradeEditorPanelProps {
@@ -120,8 +124,19 @@ export function GradeEditorPanel({
   const years = useStore((s) => s.gradeYears);
   const addGradeType = useStore((s) => s.addGradeType);
   const removeGradeType = useStore((s) => s.removeGradeType);
-  const sheetH = useSheetHeight(0.82);
+  const gpaScale = useSettings((s) => s.gpaScale);
+  const scaleMeta = getGpaScaleMeta(gpaScale);
+  const sheetH = useSheetHeight(0.84);
   const scrollRef = useRef<ScrollViewInstance>(null);
+
+  const initialDerived = grade
+    ? deriveGpa(grade.scoreType, grade.score, gpaScale)
+    : null;
+  const initialMatchesDerived =
+    !grade ||
+    (grade.gpa != null &&
+      initialDerived != null &&
+      Math.abs(grade.gpa - initialDerived) < 1e-6);
 
   const [name, setName] = useState(grade?.name ?? "");
   const [credit, setCredit] = useState(
@@ -132,7 +147,12 @@ export function GradeEditorPanel({
   );
   const [score, setScore] = useState(grade?.score ?? "");
   const [gpa, setGpa] = useState(grade?.gpa != null ? String(grade.gpa) : "");
-  const [gpaTouched, setGpaTouched] = useState(!!grade);
+  /** true 时改分数会按当前绩点制自动同步绩点；手动编辑绩点框后改为 false */
+  const [gpaAuto, setGpaAuto] = useState(initialMatchesDerived);
+  /** 用户是否主动清空过绩点框（支持显式设为「不计绩点」） */
+  const [gpaExplicitEmpty, setGpaExplicitEmpty] = useState(
+    Boolean(grade && grade.gpa == null),
+  );
   const [type, setType] = useState(
     grade?.type ?? types[0]?.id ?? "required",
   );
@@ -145,24 +165,27 @@ export function GradeEditorPanel({
   const [manageTypes, setManageTypes] = useState(false);
 
   const fillGpa = (nextScoreType: GradeScoreType, nextScore: string) => {
-    const derived = deriveGpa(nextScoreType, nextScore);
+    const derived = deriveGpa(nextScoreType, nextScore, gpaScale);
     setGpa(derived == null ? "" : String(derived));
-    setGpaTouched(false);
+    setGpaAuto(true);
+    setGpaExplicitEmpty(false);
   };
 
   const changeScore = (v: string) => {
     setScore(v);
-    if (!gpaTouched) {
-      const derived = deriveGpa(scoreType, v);
+    if (gpaAuto) {
+      const derived = deriveGpa(scoreType, v, gpaScale);
       setGpa(derived == null ? "" : String(derived));
+      setGpaExplicitEmpty(false);
     }
   };
 
   const changeScoreType = (next: GradeScoreType) => {
     setScoreType(next);
-    if (!gpaTouched) {
-      const derived = deriveGpa(next, score);
+    if (gpaAuto) {
+      const derived = deriveGpa(next, score, gpaScale);
       setGpa(derived == null ? "" : String(derived));
+      setGpaExplicitEmpty(false);
     }
   };
 
@@ -185,13 +208,31 @@ export function GradeEditorPanel({
     if (types.length <= 2) setManageTypes(false);
   };
 
+  const confirmDeleteGrade = () => {
+    if (!grade || !onDelete) return;
+    Alert.alert(
+      "删除这门成绩",
+      `确定删除「${grade.name}」的成绩记录？删除后不可恢复。`,
+      [
+        { text: "取消", style: "cancel" },
+        {
+          text: "删除",
+          style: "destructive",
+          onPress: () => {
+            onDelete(grade.id);
+            onClose();
+          },
+        },
+      ],
+    );
+  };
+
   const submit = () => {
     const trimmedName = name.trim();
     if (!trimmedName) {
       Alert.alert("请填写课程名称");
       return;
     }
-    // 学分允许留空：识别不到学分时先存 null，用户之后可随时补填
     const creditText = credit.trim();
     let creditNum: number | null = null;
     if (creditText) {
@@ -219,12 +260,12 @@ export function GradeEditorPanel({
         Alert.alert("绩点格式不正确", "绩点需要在 0 ~ 5 之间");
         return;
       }
-    } else {
-      gpaNum = deriveGpa(scoreType, trimmedScore);
+    } else if (!gpaExplicitEmpty) {
+      gpaNum = deriveGpa(scoreType, trimmedScore, gpaScale);
     }
 
     if (!trimmedScore && gpaNum == null) {
-      Alert.alert("请填写分数或绩点", "至少填写一项才能计入统计");
+      Alert.alert("请填写分数或绩点", "至少填写一项才能保存");
       return;
     }
 
@@ -251,7 +292,9 @@ export function GradeEditorPanel({
       <GlassTargetProvider>
         <View className="flex-1 justify-end bg-black/45">
           <Pressable className="flex-1" onPress={onClose} />
-          <KeyboardAvoidingView behavior="padding">
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
             <Animated.View
               entering={FadeInDown.springify()}
               exiting={FadeOutDown}
@@ -265,7 +308,7 @@ export function GradeEditorPanel({
                 <ScrollView
                   ref={scrollRef}
                   style={{ flex: 1 }}
-                  contentContainerStyle={{ paddingBottom: 4 }}
+                  contentContainerStyle={{ paddingBottom: 12 }}
                   className="px-5 pt-5"
                   keyboardShouldPersistTaps="handled"
                 >
@@ -281,13 +324,18 @@ export function GradeEditorPanel({
                     </Pressable>
                   </View>
 
-                  <Field label="课程名称" value={name} placeholder="如 高等数学" onChange={setName} />
+                  <Field
+                    label="课程名称"
+                    value={name}
+                    placeholder="如 高等数学"
+                    onChange={setName}
+                  />
                   <Field
                     label="学分（可留空）"
                     value={credit}
-                    placeholder="如 3，识别不到可稍后补填"
+                    placeholder="如 3 或 1.5，识别不到可稍后补填"
                     onChange={setCredit}
-                    keyboardType="numeric"
+                    keyboardType="decimal-pad"
                   />
 
                   <Text className="mb-1.5 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
@@ -327,19 +375,25 @@ export function GradeEditorPanel({
                     value={score}
                     placeholder={SCORE_PLACEHOLDER[scoreType]}
                     onChange={changeScore}
-                    keyboardType={scoreType === "numeric" ? "numeric" : "default"}
+                    keyboardType={
+                      scoreType === "numeric" ? "decimal-pad" : "default"
+                    }
                   />
 
                   <View className="mb-3">
                     <View className="mb-1.5 flex-row items-center justify-between">
                       <Text className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-                        绩点（0 ~ 5）
+                        绩点（{scaleMeta.shortLabel}，留空可不计绩点）
                       </Text>
                       <Pressable
                         onPress={() => fillGpa(scoreType, score)}
                         className="flex-row items-center"
                       >
-                        <Ionicons name="calculator-outline" size={12} color="#38BDF8" />
+                        <Ionicons
+                          name="calculator-outline"
+                          size={12}
+                          color="#38BDF8"
+                        />
                         <Text className="ml-1 text-[10.5px] font-semibold text-sky-500 dark:text-sky-300">
                           按分数换算
                         </Text>
@@ -349,15 +403,16 @@ export function GradeEditorPanel({
                       value={gpa}
                       onChangeText={(v) => {
                         setGpa(v);
-                        setGpaTouched(true);
+                        setGpaAuto(false);
+                        setGpaExplicitEmpty(v.trim() === "");
                       }}
-                      placeholder="可手动修改"
+                      placeholder="可手动修改，清空即不计绩点"
                       placeholderTextColor="rgba(148,163,184,0.7)"
-                      keyboardType="numeric"
+                      keyboardType="decimal-pad"
                       className="rounded-2xl border border-white/30 bg-white/50 px-3.5 py-2.5 text-[14px] text-slate-800 dark:border-white/10 dark:bg-white/[0.07] dark:text-slate-100"
                     />
                     <Text className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">
-                      默认 60 分起算 1.0，每高 1 分加 0.1（80 分 = 3.0），可手动修改；识别成绩单时优先使用原文绩点
+                      当前制式：{scaleMeta.label}（{scaleMeta.summary}）
                     </Text>
                   </View>
 
@@ -443,7 +498,9 @@ export function GradeEditorPanel({
                         onPress={addType}
                         className="rounded-xl bg-sky-500/85 px-3 py-2"
                       >
-                        <Text className="text-[12px] font-bold text-white">添加</Text>
+                        <Text className="text-[12px] font-bold text-white">
+                          添加
+                        </Text>
                       </Pressable>
                     </View>
                   ) : null}
@@ -519,10 +576,7 @@ export function GradeEditorPanel({
 
                   {grade && onDelete ? (
                     <Pressable
-                      onPress={() => {
-                        onDelete(grade.id);
-                        onClose();
-                      }}
+                      onPress={confirmDeleteGrade}
                       className="mt-2.5 items-center rounded-2xl border border-rose-400/40 bg-rose-400/10 py-2.5"
                     >
                       <Text className="text-[12px] font-semibold text-rose-500 dark:text-rose-300">
@@ -546,10 +600,8 @@ export function GradeEditorPanel({
 
 export interface GradeYearEditorProps {
   visible: boolean;
-  /** undefined = 新建学年 */
   year?: GradeYear;
   canDelete: boolean;
-  /** 该学年下的成绩数量，删除前提示用 */
   gradeCount: number;
   onClose: () => void;
   onSave: (name: string) => void;
@@ -565,7 +617,7 @@ export function GradeYearEditor({
   onSave,
   onDelete,
 }: GradeYearEditorProps) {
-  const sheetH = useSheetHeight(0.42);
+  const sheetH = useSheetHeight(0.44);
   const [name, setName] = useState(year?.name ?? "");
 
   const submit = () => {
@@ -608,7 +660,9 @@ export function GradeYearEditor({
       <GlassTargetProvider>
         <View className="flex-1 justify-end bg-black/45">
           <Pressable className="flex-1" onPress={onClose} />
-          <KeyboardAvoidingView behavior="padding">
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
             <Animated.View
               entering={FadeInDown.springify()}
               exiting={FadeOutDown}
@@ -682,7 +736,6 @@ export function GradeYearEditor({
 
 export interface GradeRuleEditorProps {
   visible: boolean;
-  /** undefined = 新建规则 */
   rule?: GradeRule;
   canDelete: boolean;
   onClose: () => void;
@@ -703,7 +756,7 @@ export function GradeRuleEditor({
   onDelete,
 }: GradeRuleEditorProps) {
   const types = useStore((s) => s.gradeTypes);
-  const sheetH = useSheetHeight(0.66);
+  const sheetH = useSheetHeight(0.68);
   const [name, setName] = useState(rule?.name ?? "");
   const [excludedTypes, setExcludedTypes] = useState<string[]>(
     rule?.excludedTypes ?? [],
@@ -724,6 +777,25 @@ export function GradeRuleEditor({
     onSave({ name: trimmed, excludedTypes, clearManual });
   };
 
+  const confirmDeleteRule = () => {
+    if (!rule || !onDelete) return;
+    Alert.alert(
+      "删除计算规则",
+      `确定删除规则「${rule.name}」？不会删除你的成绩数据。`,
+      [
+        { text: "取消", style: "cancel" },
+        {
+          text: "删除",
+          style: "destructive",
+          onPress: () => {
+            onDelete();
+            onClose();
+          },
+        },
+      ],
+    );
+  };
+
   return (
     <Modal
       visible={visible}
@@ -734,7 +806,9 @@ export function GradeRuleEditor({
       <GlassTargetProvider>
         <View className="flex-1 justify-end bg-black/45">
           <Pressable className="flex-1" onPress={onClose} />
-          <KeyboardAvoidingView behavior="padding">
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
             <Animated.View
               entering={FadeInDown.springify()}
               exiting={FadeOutDown}
@@ -801,7 +875,9 @@ export function GradeRuleEditor({
                           }`}
                         >
                           <Ionicons
-                            name={excluded ? "close-circle" : "checkmark-circle"}
+                            name={
+                              excluded ? "close-circle" : "checkmark-circle"
+                            }
                             size={12}
                             color={excluded ? "#FB7185" : "#34D399"}
                           />
@@ -852,10 +928,7 @@ export function GradeRuleEditor({
 
                   {rule && canDelete && onDelete ? (
                     <Pressable
-                      onPress={() => {
-                        onDelete();
-                        onClose();
-                      }}
+                      onPress={confirmDeleteRule}
                       className="mt-2.5 items-center rounded-2xl border border-rose-400/40 bg-rose-400/10 py-2.5"
                     >
                       <Text className="text-[12px] font-semibold text-rose-500 dark:text-rose-300">

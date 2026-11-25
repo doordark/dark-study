@@ -1,0 +1,14 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+version = '1.0.0'
+
+android {
+  namespace 'expo.modules.liquidglass'
+}
+
+dependencies {
+  implementation 'com.github.Dimezis:BlurView:version-3.1.0'
+}

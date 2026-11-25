@@ -4,11 +4,27 @@ import { widgetAccent } from "@/constants/widgetPalette";
 import { addDays, mondayOf, parseIsoDate, toIsoDate } from "@/utils/time";
 
 export type WidgetShape = "square" | "rectangle" | "large";
-export type WidgetTheme = "dark" | "light";
+export type WidgetTheme = "system" | "dark" | "light";
+/** 卡片表面质感：清透玻璃 / 澎湃瓷卡 / 主题彩卡 */
+export type WidgetSurfaceStyle = "frosted" | "porcelain" | "tinted";
+/** 展示内容模式：智能预告（今日及后续） / 仅看今日（今日无课显示可爱空态） */
+export type WidgetDisplayMode = "upcoming" | "today";
+
 export const WIDGET_SHAPES = [
-  { key: "square", label: "正方形", size: "2 × 2", capacity: 2 },
-  { key: "rectangle", label: "长方形", size: "4 × 2", capacity: 2 },
-  { key: "large", label: "大卡片", size: "4 × 4", capacity: 5 },
+  { key: "square", label: "小方卡", size: "2 × 2", capacity: 2, desc: "紧凑聚焦" },
+  { key: "rectangle", label: "宽卡片", size: "4 × 2", capacity: 2, desc: "桌面与负一屏首选" },
+  { key: "large", label: "大卡片", size: "4 × 4", capacity: 5, desc: "全景日程一览" },
+] as const;
+
+export const WIDGET_SURFACE_STYLES = [
+  { key: "frosted", label: "清透玻璃", desc: "柔和半透质感" },
+  { key: "porcelain", label: "澎湃瓷卡", desc: "通透纯净卡片" },
+  { key: "tinted", label: "主题彩卡", desc: "柔和渐变色彩" },
+] as const;
+
+export const WIDGET_DISPLAY_MODES = [
+  { key: "upcoming", label: "智能预告", desc: "优先今日，顺延显示后续课程" },
+  { key: "today", label: "仅看今日", desc: "今日无课时展示可爱放空态" },
 ] as const;
 
 export interface WidgetCourse {
@@ -27,6 +43,15 @@ function clock(value: string | undefined): number | null {
   const match = value?.match(/^(\d{1,2}):(\d{2})$/);
   if (!match || +match[1] > 23 || +match[2] > 59) return null;
   return +match[1] * 60 + +match[2];
+}
+
+function hexToRgba(hex: string, alpha: number): string {
+  const cleaned = hex.replace("#", "");
+  if (cleaned.length !== 6) return hex;
+  const r = parseInt(cleaned.slice(0, 2), 16);
+  const g = parseInt(cleaned.slice(2, 4), 16);
+  const b = parseInt(cleaned.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 /** Expand actual teaching weeks, retaining ongoing lessons and future occurrences. */
@@ -51,11 +76,25 @@ export function upcomingWidgetCourses(schedule: Schedule | undefined, now = new 
       start.setHours(Math.floor(from / 60), from % 60, 0, 0);
       end.setHours(Math.floor(to / 60), to % 60, 0, 0);
       if (end.getTime() <= now.getTime()) continue;
-      result.push({ id: `${course.id}-${iso}`, name: course.name, classroom: course.classroom, teacher: course.teacher,
-        start: start.getTime(), end: end.getTime(), time: `${course.startTime ?? first!.startTime}–${course.endTime ?? last!.endTime}`, color: course.color });
+      result.push({
+        id: `${course.id}-${iso}`,
+        name: course.name,
+        classroom: course.classroom,
+        teacher: course.teacher,
+        start: start.getTime(),
+        end: end.getTime(),
+        time: `${course.startTime ?? first!.startTime}–${course.endTime ?? last!.endTime}`,
+        color: course.color,
+      });
     }
   }
   return result.sort((a, b) => a.start - b.start || a.name.localeCompare(b.name));
+}
+
+/** Filter upcoming courses to today only (still ongoing or later today). */
+export function todayWidgetCourses(courses: WidgetCourse[], now = new Date()): WidgetCourse[] {
+  const todayIso = toIsoDate(now);
+  return courses.filter((item) => toIsoDate(new Date(item.start)) === todayIso);
 }
 
 export function widgetDayLabel(start: number, now = new Date()): string {
@@ -65,23 +104,115 @@ export function widgetDayLabel(start: number, now = new Date()): string {
   return `${date.getMonth() + 1}/${date.getDate()} 周${"日一二三四五六"[date.getDay()]}`;
 }
 
-/** 组件右上角的日期信息：11.4 第8周 周三（不在学期内时只显示日期和星期） */
-export function widgetMeta(schedule: Schedule | undefined, now = new Date()): string {
+/** 组件右上角的日期信息：11.4 第8周 周三（不在学期内或紧凑尺寸时可省略周次） */
+export function widgetMeta(schedule: Schedule | undefined, now = new Date(), compact = false): string {
   const weekday = `周${"日一二三四五六"[now.getDay()]}`;
   const dateLabel = `${now.getMonth() + 1}.${now.getDate()}`;
-  if (!schedule) return `${dateLabel} ${weekday}`;
+  if (!schedule || compact) return `${dateLabel} ${weekday}`;
   const monday = mondayOf(parseIsoDate(schedule.startDate));
   if (!Number.isFinite(monday.getTime())) return `${dateLabel} ${weekday}`;
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const week = Math.floor((today.getTime() - monday.getTime()) / 86400000 / 7) + 1;
+  const diffDays = Math.floor(
+    (Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) -
+      Date.UTC(monday.getFullYear(), monday.getMonth(), monday.getDate())) /
+      86400000,
+  );
+  const week = Math.floor(diffDays / 7) + 1;
   if (week < 1 || week > schedule.totalWeeks) return `${dateLabel} ${weekday}`;
   return `${dateLabel} 第${week}周 ${weekday}`;
 }
 
-/** 根据深浅模式取小组件主题色对应的基础配色 */
-export function widgetAccentColors(accent: string | undefined, theme: WidgetTheme) {
+export interface ResolvedWidgetColors {
+  background: string;
+  backgroundEnd: string;
+  border: string;
+  brand: string;
+  ink: string;
+  muted: string;
+  weekdayHighlight: string;
+  emptyKaomoji: string;
+}
+
+/** 根据深浅模式与表面质感取小组件主题色对应的完整配色（与原生 XML Drawable 同步） */
+export function widgetAccentColors(
+  accent: string | undefined,
+  theme: WidgetTheme,
+  systemDark = true,
+  style: WidgetSurfaceStyle = "tinted",
+): ResolvedWidgetColors {
   const palette: WidgetAccentPalette = widgetAccent(accent);
-  return theme === "dark"
-    ? { background: palette.bgDark, border: palette.borderDark, brand: palette.brandDark }
-    : { background: palette.bgLight, border: palette.borderLight, brand: palette.brandLight };
+  const dark = theme === "dark" || (theme === "system" && systemDark);
+  const ink = dark ? "#F8FAFC" : "#172033";
+  const muted = dark ? "#9EB0C9" : "#64748B";
+  const brand = dark ? palette.brandDark : palette.brandLight;
+  const emptyKaomoji = dark ? "#94A3B8" : "#7B879B";
+
+  if (style === "porcelain") {
+    return dark
+      ? {
+          background: hexToRgba(palette.porcelainDark, 0.96),
+          backgroundEnd: hexToRgba(palette.porcelainDarkEnd, 0.96),
+          border: hexToRgba(palette.borderDark, 0.36),
+          brand,
+          ink,
+          muted,
+          weekdayHighlight: brand,
+          emptyKaomoji,
+        }
+      : {
+          background: hexToRgba(palette.porcelainLight, 0.96),
+          backgroundEnd: hexToRgba(palette.porcelainLightEnd, 0.96),
+          border: hexToRgba(palette.borderLight, 0.55),
+          brand,
+          ink,
+          muted,
+          weekdayHighlight: brand,
+          emptyKaomoji,
+        };
+  }
+
+  if (style === "frosted") {
+    return dark
+      ? {
+          background: hexToRgba(palette.bgDark, 0.84),
+          backgroundEnd: hexToRgba(palette.bgDarkEnd, 0.88),
+          border: hexToRgba(palette.borderDark, 0.62),
+          brand,
+          ink,
+          muted,
+          weekdayHighlight: brand,
+          emptyKaomoji,
+        }
+      : {
+          background: hexToRgba(palette.porcelainLight, 0.86),
+          backgroundEnd: hexToRgba(palette.bgLight, 0.88),
+          border: hexToRgba(palette.borderLight, 0.72),
+          brand,
+          ink,
+          muted,
+          weekdayHighlight: brand,
+          emptyKaomoji,
+        };
+  }
+
+  return dark
+    ? {
+        background: palette.bgDark,
+        backgroundEnd: palette.bgDarkEnd,
+        border: palette.borderDark,
+        brand,
+        ink,
+        muted,
+        weekdayHighlight: brand,
+        emptyKaomoji,
+      }
+    : {
+        background: palette.bgLight,
+        backgroundEnd: palette.bgLightEnd,
+        border: palette.borderLight,
+        brand,
+        ink,
+        muted,
+        weekdayHighlight: brand,
+        emptyKaomoji,
+      };
 }

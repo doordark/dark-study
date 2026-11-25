@@ -1,8 +1,10 @@
 import type {
+  GpaScaleId,
   GradeDraft,
   GradeRecord,
   GradeRule,
   GradeScoreType,
+  GradeType,
   SemesterKind,
 } from "@/types";
 
@@ -28,8 +30,68 @@ export function normalizeSemester(input: unknown): SemesterKind | null {
   return null;
 }
 
-/** 字母等级 → 常见 4.0 制绩点 */
-const LETTER_GPA: Record<string, number> = {
+export interface GpaScaleMeta {
+  id: GpaScaleId;
+  label: string;
+  shortLabel: string;
+  maxGpa: number;
+  summary: string;
+}
+
+export const GPA_SCALES: readonly GpaScaleMeta[] = [
+  {
+    id: "five",
+    label: "5.0 线性制",
+    shortLabel: "5.0 制",
+    maxGpa: 5.0,
+    summary: "60 分起算 1.0，每高 1 分 +0.1（100 分 = 5.0）",
+  },
+  {
+    id: "four_std",
+    label: "标准 4.0 制",
+    shortLabel: "4.0 分段",
+    maxGpa: 4.0,
+    summary: "90+=4.0, 85+=3.7, 82+=3.3, 78+=3.0, 75+=2.7, 72+=2.3, 68+=2.0, 64+=1.5, 60+=1.0",
+  },
+  {
+    id: "four_pku",
+    label: "北大 4.0 制",
+    shortLabel: "北大 4.0",
+    maxGpa: 4.0,
+    summary: "60 分起算：GPA = 4 − 3×(100 − 分数)² ÷ 1600",
+  },
+  {
+    id: "four_three",
+    label: "4.3 分段制",
+    shortLabel: "4.3 制",
+    maxGpa: 4.3,
+    summary: "95+=4.3, 90+=4.0, 85+=3.7, 82+=3.3, 78+=3.0, 75+=2.7, 72+=2.3, 68+=2.0, 64+=1.5, 60+=1.0",
+  },
+  {
+    id: "four_linear",
+    label: "4.0 线性制",
+    shortLabel: "4.0 线性",
+    maxGpa: 4.0,
+    summary: "60 分起算 1.0，每高 1 分 +0.1，90 分及以上满绩 4.0",
+  },
+];
+
+export function isGpaScaleId(value: unknown): value is GpaScaleId {
+  return (
+    value === "five" ||
+    value === "four_std" ||
+    value === "four_pku" ||
+    value === "four_three" ||
+    value === "four_linear"
+  );
+}
+
+export function getGpaScaleMeta(scale: GpaScaleId = "five"): GpaScaleMeta {
+  return GPA_SCALES.find((item) => item.id === scale) ?? GPA_SCALES[0];
+}
+
+/** 字母等级 → 各绩点制对应绩点 */
+const LETTER_GPA_40: Record<string, number> = {
   "A+": 4.0,
   A: 4.0,
   "A-": 3.7,
@@ -38,30 +100,123 @@ const LETTER_GPA: Record<string, number> = {
   "B-": 2.7,
   "C+": 2.3,
   C: 2.0,
-  "C-": 1.5,
+  "C-": 1.7,
   "D+": 1.3,
   D: 1.0,
   "D-": 0.7,
   F: 0,
 };
 
-/** 文字等级 → 常见 4.0 制绩点 */
-const TEXT_GPA: Record<string, number> = {
-  优秀: 4.0,
-  良好: 3.5,
-  中等: 2.5,
-  及格: 1.5,
-  不及格: 0,
-  // 「合格 / 通过」类通常不计入绩点
+const LETTER_GPA_43: Record<string, number> = {
+  ...LETTER_GPA_40,
+  "A+": 4.3,
 };
 
+const LETTER_GPA_50: Record<string, number> = {
+  "A+": 5.0,
+  A: 4.5,
+  "A-": 4.2,
+  "B+": 3.8,
+  B: 3.5,
+  "B-": 3.2,
+  "C+": 2.8,
+  C: 2.5,
+  "C-": 2.2,
+  "D+": 1.8,
+  D: 1.5,
+  "D-": 1.0,
+  F: 0,
+};
+
+/** 文字等级 → 各绩点制对应绩点（合格 / 通过类通常不计入绩点） */
+const TEXT_GPA_BY_SCALE: Record<GpaScaleId, Record<string, number>> = {
+  five: {
+    优秀: 4.5,
+    良好: 3.5,
+    中等: 2.5,
+    及格: 1.5,
+    不及格: 0,
+  },
+  four_std: {
+    优秀: 4.0,
+    良好: 3.3,
+    中等: 2.3,
+    及格: 1.0,
+    不及格: 0,
+  },
+  four_pku: {
+    优秀: 4.0,
+    良好: 3.5,
+    中等: 2.7,
+    及格: 1.5,
+    不及格: 0,
+  },
+  four_three: {
+    优秀: 4.0,
+    良好: 3.3,
+    中等: 2.3,
+    及格: 1.0,
+    不及格: 0,
+  },
+  four_linear: {
+    优秀: 4.0,
+    良好: 3.5,
+    中等: 2.5,
+    及格: 1.5,
+    不及格: 0,
+  },
+};
+
+const LETTER_GPA_BY_SCALE: Record<GpaScaleId, Record<string, number>> = {
+  five: LETTER_GPA_50,
+  four_std: LETTER_GPA_40,
+  four_pku: LETTER_GPA_40,
+  four_three: LETTER_GPA_43,
+  four_linear: LETTER_GPA_40,
+};
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
 /**
- * 百分制分数 → 绩点：60 分起算 1.0，每高 1 分加 0.1
- * （60 → 1.0，80 → 3.0，85 → 3.5，100 → 5.0），低于 60 记 0
+ * 百分制分数 → 绩点（按所选绩点制换算，默认 5.0 线性制以兼容存量）
  */
-export function numericScoreToGpa(score: number): number {
+export function numericScoreToGpa(
+  score: number,
+  scale: GpaScaleId = "five",
+): number {
   if (!Number.isFinite(score) || score < 60) return 0;
-  return Math.round((1 + (score - 60) * 0.1) * 10) / 10;
+  const clamped = Math.min(100, Math.max(0, score));
+  switch (scale) {
+    case "five":
+      return Math.round((1 + (clamped - 60) * 0.1) * 10) / 10;
+    case "four_linear":
+      return Math.min(4.0, Math.round((1 + (clamped - 60) * 0.1) * 10) / 10);
+    case "four_pku":
+      return round2(4 - (3 * Math.pow(100 - clamped, 2)) / 1600);
+    case "four_three":
+      if (clamped >= 95) return 4.3;
+      if (clamped >= 90) return 4.0;
+      if (clamped >= 85) return 3.7;
+      if (clamped >= 82) return 3.3;
+      if (clamped >= 78) return 3.0;
+      if (clamped >= 75) return 2.7;
+      if (clamped >= 72) return 2.3;
+      if (clamped >= 68) return 2.0;
+      if (clamped >= 64) return 1.5;
+      return 1.0;
+    case "four_std":
+      if (clamped >= 90) return 4.0;
+      if (clamped >= 85) return 3.7;
+      if (clamped >= 82) return 3.3;
+      if (clamped >= 78) return 3.0;
+      if (clamped >= 75) return 2.7;
+      if (clamped >= 72) return 2.3;
+      if (clamped >= 68) return 2.0;
+      if (clamped >= 64) return 1.5;
+      return 1.0;
+  }
 }
 
 /** 判断原始分数的展示类型 */
@@ -70,9 +225,9 @@ export function detectScoreType(raw: string): GradeScoreType {
   if (!text) return "numeric";
   const num = Number(text);
   if (text !== "" && Number.isFinite(num)) return "numeric";
-  if (LETTER_GPA[text.toUpperCase()] != null) return "letter";
+  if (LETTER_GPA_40[text.toUpperCase()] != null) return "letter";
   if (
-    TEXT_GPA[text] != null ||
+    TEXT_GPA_BY_SCALE.five[text] != null ||
     /通过|合格|不合格|未通过|缓考|免修/.test(text)
   ) {
     return "text";
@@ -84,26 +239,38 @@ export function detectScoreType(raw: string): GradeScoreType {
 export function deriveGpa(
   scoreType: GradeScoreType,
   score: string,
+  scale: GpaScaleId = "five",
 ): number | null {
   const text = score.trim();
   if (!text) return null;
   if (scoreType === "numeric") {
     const n = Number(text);
-    return Number.isFinite(n) ? numericScoreToGpa(n) : null;
+    return Number.isFinite(n) && n >= 0 && n <= 100
+      ? numericScoreToGpa(n, scale)
+      : null;
   }
   if (scoreType === "letter") {
-    return LETTER_GPA[text.toUpperCase()] ?? null;
+    return LETTER_GPA_BY_SCALE[scale][text.toUpperCase()] ?? null;
   }
-  return TEXT_GPA[text] ?? null;
+  return TEXT_GPA_BY_SCALE[scale][text] ?? null;
 }
 
 /** 绩点保留两位小数用于统计展示 */
 export const formatGpa = (value: number | null | undefined): string =>
   value == null || !Number.isFinite(value) ? "--" : value.toFixed(2);
 
-/** 单门课程绩点展示：保留一位小数 */
-export const formatCourseGpa = (value: number | null | undefined): string =>
-  value == null || !Number.isFinite(value) ? "--" : value.toFixed(1);
+/** 单门课程绩点展示：保留有效小数（1~2 位），不截断如 3.75 / 3.33 */
+export const formatCourseGpa = (value: number | null | undefined): string => {
+  if (value == null || !Number.isFinite(value)) return "--";
+  const rounded = round2(value);
+  return Math.abs(rounded * 10 - Math.round(rounded * 10)) < 1e-6
+    ? rounded.toFixed(1)
+    : rounded.toFixed(2);
+};
+
+/** 加权平均分展示 */
+export const formatWeightedScore = (value: number | null | undefined): string =>
+  value == null || !Number.isFinite(value) ? "--" : value.toFixed(2);
 
 /** 课程是否计入当前计算规则 */
 export function isGradeIncluded(
@@ -117,11 +284,34 @@ export function isGradeIncluded(
   );
 }
 
+/** 判断该条成绩是否通过（用于统计已获总学分，兼容通过/合格制） */
+export function isGradePassed(grade: GradeRecord): boolean {
+  const text = (grade.score ?? "").trim();
+  if (grade.scoreType === "numeric" && text) {
+    const n = Number(text);
+    if (Number.isFinite(n)) return n >= 60;
+  }
+  if (grade.scoreType === "letter" && text) {
+    return text.toUpperCase() !== "F";
+  }
+  if (grade.scoreType === "text" && text) {
+    if (/不及格|不合格|未通过|缺考|缓考/.test(text)) return false;
+    return true;
+  }
+  return grade.gpa != null && grade.gpa > 0;
+}
+
 export interface GradeStats {
   /** 学分加权平均绩点 */
   value: number | null;
-  /** 计入的学分总数 */
+  /** 百分制学分加权平均分（仅统计有效百分制数字成绩） */
+  weightedScore: number | null;
+  /** 参与加权平均分计算的课程数 */
+  weightedScoreCount: number;
+  /** 计入绩点计算的学分总数 */
   credits: number;
+  /** 已获总学分（含通过/合格等无绩点但已通过且有学分的课程） */
+  earnedCredits: number;
   /** 计入的课程数 */
   count: number;
   /** 当前范围内全部课程数 */
@@ -132,7 +322,7 @@ export interface GradeStats {
   missingCredit: number;
 }
 
-/** 学分加权平均绩点：Σ(绩点 × 学分) / Σ学分 */
+/** 学分加权平均绩点：Σ(绩点 × 学分) / Σ学分，同时计算加权平均分与已获总学分 */
 export function calcGradeStats(
   rule: GradeRule | undefined,
   grades: GradeRecord[],
@@ -142,15 +332,36 @@ export function calcGradeStats(
   let count = 0;
   let missing = 0;
   let missingCredit = 0;
+  let weightedScoreSum = 0;
+  let weightedScoreCredits = 0;
+  let weightedScoreCount = 0;
+  let earnedCredits = 0;
 
   for (const grade of grades) {
     if (!isGradeIncluded(rule, grade)) continue;
+    const credit = Number(grade.credit);
+    const hasCredit =
+      grade.credit != null && Number.isFinite(credit) && credit > 0;
+
+    if (hasCredit && isGradePassed(grade)) {
+      earnedCredits += credit;
+    }
+
+    const scoreText = (grade.score ?? "").trim();
+    if (hasCredit && grade.scoreType === "numeric" && scoreText) {
+      const numeric = Number(scoreText);
+      if (Number.isFinite(numeric) && numeric >= 0 && numeric <= 100) {
+        weightedScoreSum += numeric * credit;
+        weightedScoreCredits += credit;
+        weightedScoreCount += 1;
+      }
+    }
+
     if (grade.gpa == null || !Number.isFinite(grade.gpa)) {
       missing += 1;
       continue;
     }
-    const credit = Number(grade.credit);
-    if (grade.credit == null || !Number.isFinite(credit) || credit <= 0) {
+    if (!hasCredit) {
       missingCredit += 1;
       continue;
     }
@@ -161,7 +372,11 @@ export function calcGradeStats(
 
   return {
     value: credits > 0 ? weighted / credits : null,
-    credits: Math.round(credits * 100) / 100,
+    weightedScore:
+      weightedScoreCredits > 0 ? weightedScoreSum / weightedScoreCredits : null,
+    weightedScoreCount,
+    credits: round2(credits),
+    earnedCredits: round2(earnedCredits),
     count,
     total: grades.length,
     missing,
@@ -169,17 +384,84 @@ export function calcGradeStats(
   };
 }
 
+/** 归一化名称用于导入去重对比 */
+export function normalizeGradeCourseName(name: string): string {
+  return name.replace(/[\s"'“”‘’()（）]/g, "").toLowerCase();
+}
+
+/** 成绩入库去重键：同学年 + 同学期 + 归一化同名 */
+export function gradeDuplicateKey(
+  yearId: string,
+  semester: SemesterKind,
+  name: string,
+): string {
+  return `${yearId}|${semester}|${normalizeGradeCourseName(name)}`;
+}
+
+/** 把识别或输入的课程类型匹配到用户现有的课程类型 id（兼容自定义类型） */
+export function resolveGradeTypeId(
+  rawType: unknown,
+  customTypes?: readonly GradeType[],
+): string {
+  const typeRaw = String(rawType ?? "").trim();
+  const list = customTypes?.length ? customTypes : undefined;
+  const fallback = list?.[0]?.id ?? "required";
+
+  if (typeRaw && list) {
+    const exactId = list.find((t) => t.id === typeRaw);
+    if (exactId) return exactId.id;
+    const exactName = list.find((t) => t.name.trim() === typeRaw);
+    if (exactName) return exactName.id;
+    const fuzzy = list.find(
+      (t) =>
+        typeRaw.includes(t.name.trim()) ||
+        (t.name.trim().length >= 2 && t.name.trim().includes(typeRaw)),
+    );
+    if (fuzzy) return fuzzy.id;
+  }
+
+  const builtin =
+    typeRaw === "必修" ||
+    typeRaw === "必修课" ||
+    typeRaw === "required" ||
+    /必修|学位/.test(typeRaw)
+      ? "required"
+      : typeRaw === "通识" ||
+          typeRaw === "通识选修" ||
+          typeRaw === "通识选修课" ||
+          typeRaw === "general" ||
+          /通识|公选|通选/.test(typeRaw)
+        ? "general"
+        : typeRaw === "选修" ||
+            typeRaw === "选修课" ||
+            typeRaw === "任选" ||
+            typeRaw === "限选" ||
+            typeRaw === "elective" ||
+            /选修|任选|限选/.test(typeRaw)
+          ? "elective"
+          : fallback;
+
+  if (!list) return builtin;
+  return list.some((t) => t.id === builtin) ? builtin : fallback;
+}
+
 /** 规范化一条识别/迁移来的成绩（补全类型、绩点与学期；学年由入库方补上） */
-export function normalizeGradeInput(input: {
-  name?: unknown;
-  credit?: unknown;
-  score?: unknown;
-  grade?: unknown;
-  scoreType?: unknown;
-  gpa?: unknown;
-  type?: unknown;
-  semester?: unknown;
-}): GradeDraft | null {
+export function normalizeGradeInput(
+  input: {
+    name?: unknown;
+    credit?: unknown;
+    score?: unknown;
+    grade?: unknown;
+    scoreType?: unknown;
+    gpa?: unknown;
+    type?: unknown;
+    semester?: unknown;
+  },
+  opts?: {
+    scale?: GpaScaleId;
+    types?: readonly GradeType[];
+  },
+): GradeDraft | null {
   const name = String(input.name ?? "").trim();
   if (!name) return null;
 
@@ -202,8 +484,11 @@ export function normalizeGradeInput(input: {
 
   const gpaRaw = Number(input.gpa);
   const hasGpa =
-    input.gpa != null && String(input.gpa).trim() !== "" &&
-    Number.isFinite(gpaRaw) && gpaRaw >= 0 && gpaRaw <= 5;
+    input.gpa != null &&
+    String(input.gpa).trim() !== "" &&
+    Number.isFinite(gpaRaw) &&
+    gpaRaw >= 0 &&
+    gpaRaw <= 5;
   // 分数与绩点至少提供一项
   if (!score && !hasGpa) return null;
 
@@ -221,26 +506,8 @@ export function normalizeGradeInput(input: {
       ? detectScoreType(score)
       : declaredType;
 
-  const gpa = hasGpa
-    ? Math.round(gpaRaw * 100) / 100
-    : deriveGpa(scoreType, score);
-
-  const typeRaw = String(input.type ?? "").trim();
-  const type =
-    typeRaw === "必修" || typeRaw === "必修课" || typeRaw === "required"
-      ? "required"
-      : typeRaw === "通识" ||
-          typeRaw === "通识选修" ||
-          typeRaw === "通识选修课" ||
-          typeRaw === "general"
-        ? "general"
-        : typeRaw === "选修" ||
-            typeRaw === "选修课" ||
-            typeRaw === "任选" ||
-            typeRaw === "限选" ||
-            typeRaw === "elective"
-          ? "elective"
-          : "required";
+  const scale = opts?.scale ?? "five";
+  const gpa = hasGpa ? round2(gpaRaw) : deriveGpa(scoreType, score, scale);
 
   return {
     name,
@@ -249,6 +516,6 @@ export function normalizeGradeInput(input: {
     score,
     gpa,
     semester: normalizeSemester(input.semester) ?? "fall",
-    type,
+    type: resolveGradeTypeId(input.type, opts?.types),
   };
 }

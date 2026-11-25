@@ -67,6 +67,46 @@ function wait(ms: number, signal?: AbortSignal) {
   });
 }
 
+/** 轻量连通性测试：查询 /models，零 token 消耗，校验密钥与网络连通性 */
+export async function testDeepSeekConnection(
+  apiKey: string,
+  signal?: AbortSignal,
+): Promise<{ latencyMs: number; modelCount: number }> {
+  const key = apiKey.trim();
+  if (!key) throw new DeepSeekError("请先填写 API Key");
+  const start = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  const onAbort = () => controller.abort();
+  signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    const res = await fetch(`${BASE_URL}/models`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${key}` },
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw httpError(res.status, detail);
+    }
+    const json = (await res.json().catch(() => ({}))) as { data?: unknown[] };
+    return {
+      latencyMs: Math.max(1, Date.now() - start),
+      modelCount: Array.isArray(json.data) ? json.data.length : 0,
+    };
+  } catch (err) {
+    if (err instanceof DeepSeekError) throw err;
+    if (signal?.aborted) throw abortError();
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new DeepSeekError("连接超时，请检查网络或代理后重试", { retryable: true });
+    }
+    throw new DeepSeekError("网络不可达，请检查网络连接后重试", { retryable: true });
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
+  }
+}
+
 /**
  * 把 HTTP 错误翻译成用户能看懂的话。
  * 原始 JSON（request_id、service_unavailable 等）只进开发日志，不直接甩到聊天框。
@@ -98,6 +138,7 @@ async function requestOnce(
     model?: string;
     temperature?: number;
     jsonMode?: boolean;
+    expectJson?: boolean;
     timeoutMs?: number;
     maxTokens?: number;
     signal?: AbortSignal;
@@ -139,9 +180,20 @@ async function requestOnce(
     }
 
     const data = await res.json();
-    const text: string | undefined = data?.choices?.[0]?.message?.content;
+    const choice = data?.choices?.[0];
+    const text: string | undefined = choice?.message?.content;
     if (typeof text !== "string") {
       throw new DeepSeekError("DeepSeek 返回了非预期的结构");
+    }
+    if (
+      opts.expectJson &&
+      choice?.finish_reason === "length" &&
+      !extractJson(text)
+    ) {
+      throw new DeepSeekError(
+        "单次识别内容过多导致返回被截断，建议拆分图片或分批上传后重试",
+        { status: 413 },
+      );
     }
     return text;
   } catch (e) {
@@ -170,6 +222,7 @@ async function chatDirect(
     model?: string;
     temperature?: number;
     jsonMode?: boolean;
+    expectJson?: boolean;
     timeoutMs?: number;
     maxTokens?: number;
     signal?: AbortSignal;
@@ -230,6 +283,7 @@ export async function chatJson<T>(
         priority: opts.priority,
         model: opts.model,
         jsonMode,
+        expectJson: true,
         timeoutMs: opts.timeoutMs,
         temperature: attempt === 0 ? (opts.temperature ?? 0.4) : 0.1,
       });
