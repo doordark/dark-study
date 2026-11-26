@@ -1,7 +1,9 @@
 const assert=require('node:assert/strict');const fs=require('node:fs');const path=require('node:path');const Module=require('node:module');const ts=require('typescript');
 const filename=path.resolve(__dirname,'../src/services/farmChat.ts'),m=new Module(filename,module);
-const coordinator = require('./load-project-ts.cjs')()('src/utils/requestCoordinator.ts');
-m.require=name=>name==='../utils/requestCoordinator'?coordinator:name==='./deepseek'?{TEXT_MODEL:'mock-model'}:require(name);
+const loadTs = require('./load-project-ts.cjs')();
+const coordinator = loadTs('src/utils/requestCoordinator.ts');
+const replyClean = loadTs('src/utils/farmReplyClean.ts');
+m.require=name=>name==='../utils/requestCoordinator'?coordinator:name==='../utils/farmReplyClean'?replyClean:name==='./deepseek'?{TEXT_MODEL:'mock-model'}:require(name);
 m._compile(ts.transpileModule(fs.readFileSync(filename,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText,filename);
 const {farmChat}=m.exports;const saved=global.fetch;
 async function main(){

@@ -304,13 +304,23 @@ export class FarmResidentEngine {
     return this.conversations.get(id)?.record;
   }
   takeHistory() {
-    return this.history.map(c => ({
-      ...c,
-      participants: [...c.participants],
-      lines: c.lines.map(l => ({
-        ...l
-      }))
-    })).slice(-40);
+    return this.history.map(c => {
+      const live = c.endedAt === null ? this.conversations.get(c.id) : undefined;
+      const pendingLines = live && !live.waiting
+        ? live.planned
+            .slice(live.index)
+            .filter(l => l.text.trim().length > 0)
+            .map(l => ({ speaker: l.speaker, text: l.text }))
+        : undefined;
+      return {
+        ...c,
+        participants: [...c.participants],
+        lines: c.lines.map(l => ({
+          ...l
+        })),
+        ...(pendingLines && pendingLines.length ? { pendingLines } : {}),
+      };
+    }).slice(-40);
   }
   restoreHistory(history: ResidentConversation[]) {
     this.history = history;
@@ -390,7 +400,19 @@ export class FarmResidentEngine {
     if (paused && this.pausedAt === null) {
       this.advancePositions(at);
       this.pausedAt = at;
-      for (const c of [...this.conversations.values()]) this.finishConversation(c.record.id, at);
+      for (const c of [...this.conversations.values()]) {
+        // If a player-commissioned request already received its complete replies, flush them so opening Group Chat/Bag never cuts off the answer!
+        if (c.record.discussion?.kind === 'request' && !c.waiting) {
+          const remaining = c.planned.slice(c.index).filter(l => l.text.trim().length > 0);
+          if (remaining.length > 0) {
+            remaining.forEach((l, idx) => c.record.lines.push({ ...l, at: at + idx + 1 }));
+            c.index = c.planned.length;
+            this.finishConversation(c.record.id, at, true);
+            continue;
+          }
+        }
+        this.finishConversation(c.record.id, at);
+      }
       for (const r of Object.values(this.residents)) r.motion = null;
       this.effects = [];
     } else if (!paused && this.pausedAt !== null) {

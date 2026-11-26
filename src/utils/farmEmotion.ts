@@ -187,7 +187,7 @@ export function describeFarmEmotion(state: FarmEmotionState): FarmEmotionDescrip
       pose: 'angry',
       color: '#C84B31',
       bg: '#FDE8E2',
-      toneHint: '心里憋着点火气或不太耐烦，说话会更直率带点小脾气，好好哄或道歉会缓和',
+      toneHint: '心里憋着点火气或不太耐烦，说话会更直率带点小脾气，好好哄两句或翻篇就行',
       legacyMood: calm <= 26 ? '生气' : '不悦',
       discussionMood: '不服气',
     };
@@ -200,7 +200,7 @@ export function describeFarmEmotion(state: FarmEmotionState): FarmEmotionDescrip
       pose: 'sad',
       color: '#536D94',
       bg: '#E8EEF8',
-      toneHint: '兴致不高、略显伤感或委屈，语气温吞慢半拍，需要耐心倾听与陪伴',
+      toneHint: '兴致不高、有点闷闷的，说话简短慢半拍，顺着聊点轻松的会好些',
       legacyMood: '不悦',
       discussionMood: '低落',
     };
@@ -292,9 +292,9 @@ export function socialReactionEmotionDelta(
     case 'warm':
       return { joy: 12, calm: 6, social: 8, energy: 3, reason: '被温暖夸奖与感谢' };
     case 'teasing':
-      return { joy: -8, calm: -14, social: -4, reason: '被故意打趣逗弄' };
+      return { joy: -3, calm: -6, social: 0, reason: '被轻轻打趣调侃了一下' };
     case 'insult':
-      return { joy: -22, calm: -30, social: -16, reason: '被凶了一句很不开心' };
+      return { joy: -18, calm: -24, social: -12, reason: '被凶了一句有点不爽' };
     case 'apology':
       return { joy: 10, calm: 18, social: 6, reason: '收到真诚道歉，心里缓和了' };
     default:

@@ -314,21 +314,12 @@ function ActiveWaveScene({
       easing: Easing.out(Easing.cubic),
       reduceMotion: ReduceMotion.Never,
     });
-    if (!wave.silent) {
-      if (wave.kind === "enter") {
-        playSfx("whale_ui_ripple", { volume: 0.44 });
-      } else if (wave.kind === "theme") {
-        playSfx("whale_ui_ripple", { volume: 0.56 });
-      } else if (wave.kind === "exit") {
-        playSfx("whale_popover_close", { volume: 0.34 });
-      }
-    }
     const timer = setTimeout(() => finishRef.current(wave.id), duration + 50);
     return () => {
       clearTimeout(timer);
       cancelAnimation(p);
     };
-  }, [duration, p, wave.id, wave.kind, wave.silent]);
+  }, [duration, p, wave.id]);
 
   const reducedVeilStyle = useAnimatedStyle(() => ({
     opacity: Math.sin(p.value * Math.PI) * (isDark ? 0.24 : 0.22),

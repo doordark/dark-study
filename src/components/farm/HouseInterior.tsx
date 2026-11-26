@@ -2,7 +2,16 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Modal, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type ImageSourcePropType } from 'react-native';
-import Animated, { FadeIn, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, {
+  cancelAnimation,
+  Easing,
+  FadeIn,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withRepeat,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AnimatedAtlas } from '@/components/AnimatedAtlas';
 import { HOUSE_ROOM } from '@/constants/farmMap';
@@ -57,7 +66,69 @@ const ROOM_ART: Record<FarmRoomId, { day: ImageSourcePropType; night: ImageSourc
 };
 
 const SLEEP_SPRITES = require('../../../assets/images/farm-runtime/farm-sleep-sprites.png');
+/** 只保留头和头发、按各房间夜景枕头配色调过色的睡颜图集（scripts/build-sleep-heads.py 生成） */
+const SLEEP_HEADS = require('../../../assets/images/farm-runtime/farm-sleep-heads-night.png');
 const SLEEP_HOLDS = [620, 560, 620, 560];
+/** 睡颜单格 112×128 源像素 → 房间 240×180 逻辑单位的缩放（0.85 个原画像素 / 源像素，原画为逻辑 3 倍） */
+const HEAD_K = 0.85 / 3;
+const HEAD_W = 112 * HEAD_K;
+const HEAD_H = 128 * HEAD_K;
+/** 每格下巴统一落在第 72 行 */
+const HEAD_CHIN = 72 * HEAD_K;
+/** 下巴陷入被单的深度，保证裁剪残边被被单完全盖住 */
+const HEAD_SINK = 1.6;
+
+/** 一枚从枕头边缘缓缓飘起又渐隐的小 z */
+function FloatingZ({ left, top, unit, size, delay, active }: { left: number; top: number; unit: number; size: number; delay: number; active: boolean }) {
+  const t = useSharedValue(0);
+  useEffect(() => {
+    if (!active) {
+      cancelAnimation(t);
+      t.value = 0;
+      return;
+    }
+    t.value = withDelay(delay, withRepeat(withTiming(1, { duration: 2600, easing: Easing.out(Easing.quad) }), -1, false));
+    return () => cancelAnimation(t);
+  }, [active, delay, t]);
+  const style = useAnimatedStyle(() => ({
+    opacity: t.value < 0.15 ? t.value / 0.15 : 1 - (t.value - 0.15) / 0.85,
+    transform: [
+      { translateX: Math.sin(t.value * Math.PI * 1.5) * 2.2 * unit },
+      { translateY: -t.value * 11 * unit },
+      { scale: 0.7 + t.value * 0.5 },
+    ],
+  }));
+  return (
+    <Animated.Text
+      pointerEvents="none"
+      style={[
+        {
+          position: 'absolute',
+          left,
+          top,
+          fontSize: size,
+          color: '#E9E3FF',
+          fontWeight: '800',
+          textShadowColor: 'rgba(20, 14, 40, 0.6)',
+          textShadowRadius: 2,
+        },
+        style,
+      ]}
+    >
+      z
+    </Animated.Text>
+  );
+}
+
+function SleepZ({ left, top, unit, delay, active }: { left: number; top: number; unit: number; delay: number; active: boolean }) {
+  if (!active) return null;
+  return (
+    <>
+      <FloatingZ left={left} top={top} unit={unit} size={Math.max(8, 4.2 * unit)} delay={delay} active={active} />
+      <FloatingZ left={left} top={top} unit={unit} size={Math.max(7, 3.4 * unit)} delay={delay + 1300} active={active} />
+    </>
+  );
+}
 const SLEEPER_ROW: Record<ResidentId, number> = {
   door: 0,
   gu: 1,
@@ -95,9 +166,6 @@ export function HouseInterior({
     light.value = withTiming(night ? 1 : 0, { duration: 600 });
   }, [night, light]);
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
-  useEffect(() => {
-    if (visible) playSfx('farm_door', { volume: 0.65 });
-  }, [visible]);
 
   const nightStyle = useAnimatedStyle(() => ({ opacity: light.value }));
   const byRoom = useMemo(() => sleepersByRoom(sleepingResidents), [sleepingResidents]);
@@ -120,7 +188,6 @@ export function HouseInterior({
 
   const close = () => {
     if (!sleeping) {
-      playSfx('farm_door', { volume: 0.54, rate: 0.92 });
       setSelectedSleeper(null);
       onClose();
     }
@@ -182,7 +249,6 @@ export function HouseInterior({
                   accessibilityRole="tab"
                   accessibilityState={{ selected: active }}
                   onPress={() => {
-                    if (rid !== roomId) playSfx('after_star_flip', { volume: 0.44, rate: 0.88 });
                     setRoomId(rid);
                     setSelectedSleeper(null);
                   }}
@@ -289,67 +355,170 @@ export function HouseInterior({
                 }}
               />
 
-              {/* 夜晚床上熟睡的家人像素贴图（door & 顾并排睡在主卧双人床上！） */}
-              {night
-                ? room.sleepSlots.map(slot => {
+              {/* 夜晚：家人头像枕在床上真实的枕头上，下巴塞进房间原画的被单里（door & 顾并排睡在主卧双人床上） */}
+              {night && roomSleepers.length > 0 ? (
+                <Animated.View pointerEvents="box-none" style={[StyleSheet.absoluteFill, nightStyle]}>
+                  {room.sleepSlots.map(slot => {
                     if (!roomSleepers.includes(slot.resident)) return null;
                     const row = SLEEPER_ROW[slot.resident];
-                    const frames = [row * 4, row * 4 + 1, row * 4 + 2, row * 4 + 3];
+                    const cx = slot.x + slot.w / 2;
+                    const tuck = slot.y + slot.h;
+                    const isPicked = selectedSleeper === slot.resident;
+                    return (
+                      <View key={slot.resident} pointerEvents="none" style={StyleSheet.absoluteFill}>
+                        {isPicked ? (
+                          <View
+                            style={{
+                              position: 'absolute',
+                              left: (slot.x - 1.5) * scale,
+                              top: (slot.y - 1.5) * scale,
+                              width: (slot.w + 3) * scale,
+                              height: (slot.h + 3) * scale,
+                              borderRadius: 4 * scale,
+                              backgroundColor: 'rgba(247, 215, 138, 0.14)',
+                              borderWidth: 1,
+                              borderColor: 'rgba(247, 215, 138, 0.55)',
+                            }}
+                          />
+                        ) : null}
+                        {/* 枕头上的接触阴影 */}
+                        <View
+                          style={{
+                            position: 'absolute',
+                            left: (cx - 10) * scale,
+                            top: (tuck - 10) * scale,
+                            width: 20 * scale,
+                            height: 10.6 * scale,
+                            borderRadius: 10 * scale,
+                            backgroundColor: 'rgba(50, 25, 45, 0.16)',
+                          }}
+                        />
+                        <View
+                          style={{
+                            position: 'absolute',
+                            left: (cx - HEAD_W / 2) * scale,
+                            top: (tuck + HEAD_SINK - HEAD_CHIN) * scale,
+                          }}
+                        >
+                          <AnimatedAtlas
+                            source={SLEEP_HEADS}
+                            columns={4}
+                            rows={5}
+                            frames={[row * 4, row * 4 + 1, row * 4 + 2, row * 4 + 3]}
+                            holds={SLEEP_HOLDS}
+                            width={HEAD_W * scale}
+                            height={HEAD_H * scale}
+                            active={visible && !sleeping}
+                          />
+                        </View>
+                      </View>
+                    );
+                  })}
+
+                  {/* 重新盖上一条原画被单：头像下巴“钻进被窝”，再加一道极淡的翻边高光与阴影 */}
+                  <View
+                    pointerEvents="none"
+                    style={{
+                      position: 'absolute',
+                      left: room.sheetFold.x * scale,
+                      top: room.sheetFold.y * scale,
+                      width: room.sheetFold.w * scale,
+                      height: room.sheetFold.h * scale,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <Image
+                      source={ROOM_ART[roomId].night}
+                      resizeMode="stretch"
+                      fadeDuration={0}
+                      style={{
+                        position: 'absolute',
+                        left: -room.sheetFold.x * scale,
+                        top: -room.sheetFold.y * scale,
+                        width: roomW,
+                        height: HOUSE_ROOM.height * scale,
+                      }}
+                    />
+                    <View
+                      style={{
+                        position: 'absolute',
+                        left: 2 * scale,
+                        right: 2 * scale,
+                        top: 0,
+                        height: Math.max(1, 0.6 * scale),
+                        backgroundColor: 'rgba(255, 238, 246, 0.24)',
+                      }}
+                    />
+                    <View
+                      style={{
+                        position: 'absolute',
+                        left: 2 * scale,
+                        right: 2 * scale,
+                        top: 0.7 * scale,
+                        height: Math.max(1, 0.6 * scale),
+                        backgroundColor: 'rgba(60, 28, 48, 0.2)',
+                      }}
+                    />
+                  </View>
+
+                  {/* 飘起的小 z、点选名字气泡与点击热区 */}
+                  {room.sleepSlots.map((slot, index) => {
+                    if (!roomSleepers.includes(slot.resident)) return null;
                     const isPicked = selectedSleeper === slot.resident;
                     return (
                       <Pressable
-                        key={slot.resident}
+                        key={`${slot.resident}-hit`}
                         accessibilityRole="button"
                         accessibilityLabel={`正在熟睡的${RESIDENTS[slot.resident].name}，点击查看梦话或互动`}
                         onPress={() => setSelectedSleeper(prev => (prev === slot.resident ? null : slot.resident))}
                         style={{
                           position: 'absolute',
-                          left: slot.x * scale,
-                          top: slot.y * scale,
-                          width: slot.w * scale,
-                          height: slot.h * scale,
-                          alignItems: 'center',
-                          justifyContent: 'center',
+                          left: (slot.x - 2) * scale,
+                          top: (slot.y - 4) * scale,
+                          width: (slot.w + 4) * scale,
+                          height: (slot.h + 10) * scale,
                         }}
                       >
-                        <View
-                          style={{
-                            borderRadius: 6,
-                            borderWidth: isPicked ? 1.5 : 0,
-                            borderColor: '#F7D78A',
-                            overflow: 'hidden',
-                          }}
-                        >
-                          <AnimatedAtlas
-                            source={SLEEP_SPRITES}
-                            columns={4}
-                            rows={6}
-                            frames={frames}
-                            holds={SLEEP_HOLDS}
-                            width={slot.w * scale}
-                            height={slot.h * scale}
-                            active={visible && !sleeping}
-                          />
-                        </View>
-                        <View
-                          pointerEvents="none"
-                          style={{
-                            position: 'absolute',
-                            top: -12,
-                            paddingHorizontal: 5,
-                            paddingVertical: 1,
-                            borderRadius: 99,
-                            backgroundColor: 'rgba(22, 28, 44, 0.84)',
-                          }}
-                        >
-                          <Text style={{ color: '#F5E7C6', fontSize: 9, fontWeight: '800' }}>
-                            {RESIDENTS[slot.resident].name} zZ
-                          </Text>
-                        </View>
+                        <SleepZ
+                          left={(slot.w - 1) * scale}
+                          top={1 * scale}
+                          unit={scale}
+                          delay={index * 900}
+                          active={visible && !sleeping}
+                        />
+                        {isPicked ? (
+                          <Animated.View
+                            entering={FadeIn.duration(160)}
+                            pointerEvents="none"
+                            style={{
+                              position: 'absolute',
+                              left: 0,
+                              right: 0,
+                              top: -9 * scale,
+                              alignItems: 'center',
+                            }}
+                          >
+                            <View
+                              style={{
+                                paddingHorizontal: 7,
+                                paddingVertical: 2,
+                                borderRadius: 99,
+                                backgroundColor: 'rgba(28, 22, 36, 0.78)',
+                                borderWidth: 1,
+                                borderColor: 'rgba(247, 215, 138, 0.45)',
+                              }}
+                            >
+                              <Text style={{ color: '#F7E2B0', fontSize: 9.5, fontWeight: '800' }}>
+                                {RESIDENTS[slot.resident].name} · 熟睡中
+                              </Text>
+                            </View>
+                          </Animated.View>
+                        ) : null}
                       </Pressable>
                     );
-                  })
-                : null}
+                  })}
+                </Animated.View>
+              ) : null}
             </View>
 
             {/* 房间简介 + 双模式休息操作区 */}

@@ -18,6 +18,7 @@ import {
   useRef,
   useState,
   type ComponentRef,
+  type ReactNode,
 } from "react";
 import {
   Alert,
@@ -72,9 +73,9 @@ import { farmPressPoint } from "@/utils/farmPressPoint";
 import { planFarmRoute } from "@/utils/farmNavigation";
 import { approachSpotForTarget } from "@/utils/farmResidentSpace";
 import { FARM_SCENES } from "@/components/farm/sceneTextures";
-import { FarmBottomDock } from "@/components/farm/FarmBottomDock";
+import { FarmBottomDock, farmBottomDockHeight } from "@/components/farm/FarmBottomDock";
 import { warmMarketAssets } from "@/components/farm/marketAssets";
-import { FarmChatConversation } from "@/components/farm/FarmChatConversation";
+import { FarmChatConversation, type FarmChatGiftCard } from "@/components/farm/FarmChatConversation";
 import { FarmGroupChatSheet } from "@/components/farm/FarmGroupChatSheet";
 import { FarmMemoryBook } from "@/components/farm/FarmMemoryBook";
 import { FarmTownBoard } from "@/components/farm/FarmTownBoard";
@@ -99,6 +100,7 @@ import {
   negotiateVendorDeal,
 } from "@/utils/farmMarket";
 import { FarmNPCSheet } from "@/components/farm/FarmNPCSheet";
+import { FarmHeaderAction, FarmNPCHeader, type FarmNPCBadge } from "@/components/farm/FarmNPCHeader";
 import { FarmRain } from "@/components/farm/FarmRain";
 import { farmTime } from "@/utils/farmTime";
 import {
@@ -230,6 +232,7 @@ import {
   maybeSynthesizeReflection,
   recordGroupChatMemory,
   recordNpcConversationMemory,
+  recordVerifiedGiftMemory,
   removeMemoryEpisode,
   removePlayerFact,
   type NpcConversationMemoryNote,
@@ -312,17 +315,23 @@ import {
   type DecorId,
 } from "@/utils/farmDecor";
 import {
+  dismissActiveVisitor,
   emptyVisitorState,
   evaluateVisitorGift,
+  formatVisitorStayHint,
+  inviteVisitorToFarm,
   isFarmSleepDeprived,
+  markVisitorSlotGreeted,
   recordHorrorAftermathToFamily,
-  resolveDailyVisitor,
   resolveHorrorBanish,
   resolveVisitorDisplayProfile,
   resolveVisitorEmotion,
+  resolveVisitorVisit,
   runVisitorChatTurn,
   shiftVisitorEmotion,
   shouldTriggerNightHorror,
+  visitorArrivalLine,
+  visitorFarewellLine,
   type HorrorBanishMethod,
   type NormalVisitorId,
   type VisitorId,
@@ -559,6 +568,7 @@ interface FarmChatMsg {
   id: string;
   role: "user" | "assistant";
   text: string;
+  gift?: FarmChatGiftCard;
 }
 
 const TALK_TOPICS: Record<Speaker, string[]> = {
@@ -731,6 +741,114 @@ function NameTag({
   );
 }
 
+/** 池塘畔统一风格的实景磨砂胶囊按钮（打水 / 钓鱼共用同一规格，避免与站立 NPC 冲突） */
+function PondActionPill({
+  label,
+  badge,
+  accessibilityLabel,
+  icon,
+  iconBg,
+  accentBorder,
+  badgeColor = "#E6EEDB",
+  highlightDotColor,
+  muted = false,
+  onPress,
+}: {
+  label: string;
+  badge?: string;
+  accessibilityLabel: string;
+  icon: ReactNode;
+  iconBg: string;
+  accentBorder: string;
+  badgeColor?: string;
+  highlightDotColor?: string;
+  muted?: boolean;
+  onPress: () => void;
+}) {
+  const [pressed, setPressed] = useState(false);
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      onPress={onPress}
+      onPressIn={() => setPressed(true)}
+      onPressOut={() => setPressed(false)}
+      hitSlop={6}
+      android_ripple={{ color: "rgba(255, 248, 232, 0.2)" }}
+      style={[
+        {
+          height: 28,
+          paddingLeft: 5,
+          paddingRight: 9,
+          borderRadius: 999,
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 5,
+          backgroundColor: "rgba(18, 33, 25, 0.84)",
+          borderWidth: 1,
+          borderBottomWidth: 2,
+          borderColor: accentBorder,
+          shadowColor: "#08120C",
+          shadowOpacity: 0.34,
+          shadowRadius: 5,
+          shadowOffset: { width: 0, height: 2 },
+          elevation: 5,
+        },
+        pressed && { opacity: 0.86, transform: [{ scale: 0.96 }] },
+      ]}
+    >
+      <View
+        style={{
+          width: 18,
+          height: 18,
+          borderRadius: 9,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: iconBg,
+        }}
+      >
+        {icon}
+      </View>
+      <Text
+        numberOfLines={1}
+        style={{
+          color: muted ? "rgba(232, 240, 232, 0.82)" : "#FAF2DF",
+          fontSize: 11,
+          lineHeight: 14,
+          fontWeight: "800",
+        }}
+      >
+        {label}
+      </Text>
+      {badge ? (
+        <Text
+          numberOfLines={1}
+          style={{
+            color: badgeColor,
+            fontSize: 9.5,
+            lineHeight: 12,
+            fontWeight: "800",
+            fontVariant: ["tabular-nums"],
+          }}
+        >
+          {badge}
+        </Text>
+      ) : null}
+      {highlightDotColor ? (
+        <View
+          style={{
+            width: 5,
+            height: 5,
+            borderRadius: 2.5,
+            backgroundColor: highlightDotColor,
+          }}
+        />
+      ) : null}
+    </Pressable>
+  );
+}
+
 /* -------------------------------------------------------------------------- */
 /*  农场主界面                                                                 */
 /* -------------------------------------------------------------------------- */
@@ -750,6 +868,7 @@ export function FarmScreen() {
   const sceneW = width;
   const scale = sceneW / VIEW_W;
   const sceneH = VIEW_H * scale;
+  const hudOverlayH = farmBottomDockHeight(insets.bottom);
   /** 聊天消息区高度：小屏 + 键盘弹起时不把面板顶出屏幕 */
   const chatMaxH = Math.max(150, Math.min(258, Math.round(height * 0.32)));
 
@@ -1087,7 +1206,11 @@ export function FarmScreen() {
   const activeRandomEvent = getRandomEventById(randomEventState.activeEventId);
   const tuckedIdsToday = town.tuckedIn?.day === day ? town.tuckedIn.ids : [];
   const visitorState = town.visitors ?? emptyVisitorState();
-  const activeNormalVisitor = resolveDailyVisitor(visitorState, now);
+  const activeVisitorVisit = resolveVisitorVisit(visitorState, now);
+  const activeNormalVisitor = activeVisitorVisit?.who ?? null;
+  const lastObservedVisitRef = useRef<{ slotKey: string; who: NormalVisitorId } | null>(null);
+  const manualDismissedSlotRef = useRef<string>("");
+  const visitorCycleReadyRef = useRef(false);
   const sleepDeprived = isFarmSleepDeprived(visitorState, day);
   const wokenIdsToday = night && wokenNightState.day === day ? wokenNightState.ids : [];
   const { sleeping: sleepingResidents, soloEvent: nightSoloEvent } = computeSleepingResidents({
@@ -1164,7 +1287,8 @@ export function FarmScreen() {
     const syncCamera = () => {
       const target = getResidentsRef().find((r) => r.id === followedId);
       if (!target) return;
-      const nextY = Math.max(0, Math.round(target.logicalPosition.y * scale - mapHeight / 2));
+      const visibleMapH = Math.max(180, mapHeight - hudOverlayH);
+      const nextY = Math.max(0, Math.round(target.logicalPosition.y * scale - visibleMapH / 2));
       if (Math.abs(nextY - lastTargetY) >= 8) {
         lastTargetY = nextY;
         farmScroll.current?.scrollTo({ y: nextY, animated: true });
@@ -1184,6 +1308,7 @@ export function FarmScreen() {
     groupOpen,
     speaker,
     mapHeight,
+    hudOverlayH,
     scale,
     getResidentsRef,
     subscribeResidentsRef,
@@ -1217,6 +1342,78 @@ export function FarmScreen() {
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, loadFailed, night, day]);
+
+  // 访客多时段自然到达与到点告辞生命周期：记录到访次数并在进退场时给出温和提示
+  useEffect(() => {
+    if (!loaded || loadFailed || visitorState.horrorActive) return;
+    const prev = lastObservedVisitRef.current;
+    const curKey = activeVisitorVisit?.slotKey ?? "";
+    const curWho = activeVisitorVisit?.who ?? null;
+    const isInitialSync = !visitorCycleReadyRef.current;
+
+    const isSamePersonHandoff = prev !== null && curWho !== null && prev.who === curWho;
+    const isManualReplace = activeVisitorVisit?.source === "invited";
+    const shouldToastDeparture =
+      !isInitialSync &&
+      prev !== null &&
+      prev.slotKey !== curKey &&
+      !isSamePersonHandoff &&
+      !isManualReplace &&
+      manualDismissedSlotRef.current !== prev.slotKey &&
+      focused;
+
+    const shouldGreetScheduled =
+      activeVisitorVisit !== null &&
+      activeVisitorVisit.source === "scheduled" &&
+      visitorState.lastGreetedSlotKey !== activeVisitorVisit.slotKey &&
+      (isInitialSync || activeVisitorVisit.slotKey !== prev?.slotKey);
+
+    const departingWho = shouldToastDeparture && prev ? prev.who : null;
+    const arrivingVisit = shouldGreetScheduled ? activeVisitorVisit : null;
+    const timer = setTimeout(() => {
+      visitorCycleReadyRef.current = true;
+      lastObservedVisitRef.current = curWho && curKey ? { slotKey: curKey, who: curWho } : null;
+      if (!isInitialSync && prev && prev.slotKey !== curKey) {
+        manualDismissedSlotRef.current = "";
+      }
+
+      if (arrivingVisit) {
+        const at = eventTime();
+        setTown((p) => ({
+          ...p,
+          visitors: markVisitorSlotGreeted(
+            p.visitors ?? emptyVisitorState(),
+            arrivingVisit,
+            at,
+            !isSamePersonHandoff,
+          ),
+        }));
+      }
+
+      if (!isInitialSync && focused) {
+        if (departingWho && arrivingVisit && !isSamePersonHandoff) {
+          const prevName = resolveVisitorDisplayProfile(departingWho, whaleSync).name;
+          const nextName = resolveVisitorDisplayProfile(arrivingVisit.who, whaleSync).name;
+          showToast(`${prevName}告辞离开，${nextName}正好来院子里串门啦！`);
+        } else if (departingWho) {
+          showToast(visitorFarewellLine(departingWho, whaleSync));
+        } else if (arrivingVisit && !isSamePersonHandoff) {
+          showToast(visitorArrivalLine(arrivingVisit.who, whaleSync));
+        }
+      }
+    }, isInitialSync ? 250 : 400);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    loaded,
+    loadFailed,
+    activeVisitorVisit?.slotKey,
+    activeVisitorVisit?.who,
+    activeVisitorVisit?.source,
+    visitorState.lastGreetedSlotKey,
+    focused,
+    visitorState.horrorActive,
+  ]);
 
   const taskReportSince = useRef(eventTime());
   const interruptedRequests: ResidentConversation[] = lifeOpen ? RESIDENT_IDS.flatMap(actor => {
@@ -2160,7 +2357,6 @@ export function FarmScreen() {
         ),
       );
       setSupply(null);
-      playSfx("farm_fertilize", { volume: 0.68, rate: 1.08 });
       showToast(supply === "repellent" ? "已清除虫害" : "成长进度增加 45%");
       return;
     }
@@ -2195,7 +2391,6 @@ export function FarmScreen() {
             : p,
         ),
       );
-      playSfx("farm_fertilize", { volume: 0.72 });
       showToast("施肥完成 · 成长 +25%，收获为优质品");
       return;
     }
@@ -2236,7 +2431,6 @@ export function FarmScreen() {
             : p,
         ),
       );
-      playSfx("farm_plant", { volume: 0.72 });
       showToast(`种下了${CROP_ART[kind].label} · 水壶 ${water}/${waterCap}`);
       return;
     }
@@ -2286,7 +2480,6 @@ export function FarmScreen() {
         ...g,
         rust: Math.min(100, g.rust + Math.max(1, 6 - canUpgrade)),
       }));
-    playSfx("farm_water", { volume: 0.7 });
     showToast(`浇水了，接下来长得很快 · 水壶还剩 ${result.water} 次`);
   };
 
@@ -2303,7 +2496,6 @@ export function FarmScreen() {
       return;
     }
     setWater(waterCap);
-    playSfx("farm_refill", { volume: 0.74 });
     showToast("打满了水壶");
   };
 
@@ -2426,7 +2618,6 @@ export function FarmScreen() {
     if (coins < price) return;
     setCoins((value) => value - price);
     setGear((value) => ({ ...value, coop: { ...value.coop, [id]: true } }));
-    playSfx("farm_coin", { volume: 0.7 });
     showToast("鸡窝已安装" + COOP_SUPPLIES[id].label);
   };
 
@@ -2462,7 +2653,6 @@ export function FarmScreen() {
       return;
     setSeeds(nextSeeds);
     setCoins((c) => c - price);
-    playSfx("farm_coin", { volume: 0.68 });
     setGear((g) => ({
       ...g,
       extras: nextExtras,
@@ -2492,7 +2682,6 @@ export function FarmScreen() {
     const price = vendorPrice("smith", base);
     if (coins < price) return;
     setCoins((c) => c - price);
-    playSfx("farm_coin", { volume: 0.7 });
     if (service === "can") {
       setCanUpgrade((c) => c + 1);
       setGear((g) => ({ ...g, rust: 0 }));
@@ -2894,7 +3083,6 @@ export function FarmScreen() {
       };
     residents.interact(who, standSpot.x);
     moveTo(standSpot.x, standSpot.y, { faceTowardX: at.x });
-    if (who === "chicken") playSfx("farm_chicken", { volume: 0.72 });
     setSpeaker(who);
     setMemoryBookOpen(false);
     setGiftBarOpen(false);
@@ -2948,7 +3136,22 @@ export function FarmScreen() {
       ...prev,
       [who]: [
         ...prev[who],
-        { id: chatId(), role: "user", text: `（送给你一份${itemText}）` },
+        {
+          id: `gift-${chatId()}`,
+          role: "user",
+          text: `（送给你一份${itemText}）`,
+          gift: {
+            kind: "gift",
+            itemLabel: itemText,
+            itemId: item,
+            quantity: 1,
+            recipientName: RESIDENTS[who].name,
+            tier: outcome.tier,
+            affinityDelta: outcome.affinityDelta,
+            rewardLabel: outcome.reward?.label,
+            inventoryConsumed: true,
+          },
+        },
         { id: `${chatId()}-gift`, role: "assistant", text: outcome.reply },
       ].slice(-40),
     }));
@@ -3031,21 +3234,20 @@ export function FarmScreen() {
     setCompost((c) => Math.min(5, c + 1));
     setMemories((prev) => {
       const current = prev[wish.resident];
-      const boosted = appendEpisode(
+      const boosted = recordVerifiedGiftMemory(
         {
           ...current,
           affinity: Math.min(100, current.affinity + 8),
           mood: "开心",
         },
         {
-          id: `wish-${nowAt}-${wish.resident}`,
-          kind: "chat",
-          text: `客人帮我实现了今日心愿，送来 ${wish.quantity} 份${giftLabel(wish.crop)}（${wish.reason}），特别暖心。`,
-          actors: ["player"],
-          tags: [giftLabel(wish.crop), "心愿", "帮忙"],
-          importance: 8,
-          emotion: "开心",
-          privacy: "public",
+          who: wish.resident,
+          itemId: wish.crop,
+          itemLabel: giftLabel(wish.crop),
+          quantity: wish.quantity,
+          tier: "loved",
+          source: "wish",
+          note: `客人帮我实现了今日心愿，从背包实际送来 ${wish.quantity} 份${giftLabel(wish.crop)}（${wish.reason}），特别暖心。`,
           at: nowAt,
         },
       );
@@ -3060,9 +3262,20 @@ export function FarmScreen() {
       [wish.resident]: [
         ...prev[wish.resident],
         {
-          id: chatId(),
+          id: `wish-${chatId()}`,
           role: "user",
           text: `（帮你实现心愿：送来 ${wish.quantity} 份${giftLabel(wish.crop)}）`,
+          gift: {
+            kind: "wish",
+            itemLabel: giftLabel(wish.crop),
+            itemId: wish.crop,
+            quantity: wish.quantity,
+            recipientName: RESIDENTS[wish.resident].name,
+            tier: "loved",
+            affinityDelta: 8,
+            rewardLabel: `${wish.rewardCoins} 金币 · 1 有机肥`,
+            inventoryConsumed: true,
+          },
         },
         { id: `${chatId()}-wish`, role: "assistant", text: thankLine },
       ].slice(-40),
@@ -3180,7 +3393,6 @@ export function FarmScreen() {
     if (res.sold <= 0) return;
     setTown((prev) => ({ ...prev, fishing: res.nextBook }));
     setCoins((c) => c + res.earned);
-    playSfx("farm_coin", { volume: 0.72 });
     showToast(`出售 ${res.sold} 条${FISH_META[fish].label} · +${res.earned} 金币`);
   }
 
@@ -3263,7 +3475,6 @@ export function FarmScreen() {
       },
       events: [...prev.events.filter((e) => e.expiresAt > nowAt && e.title !== ev.title), ev].slice(-12),
     }));
-    playSfx("farm_coin", { volume: 0.72 });
     showToast(`已购置并摆出「${item.label}」！${RESIDENTS[firstNoticer].name}一眼就注意到啦`);
   }
 
@@ -3318,9 +3529,6 @@ export function FarmScreen() {
       moveTo(standSpot.x, standSpot.y, { faceTowardX: position.x });
     }
     setVisitorSpeaker(who);
-    if (who === "dafeiyu") playSfx("whale_cute_happy", { volume: 0.74 });
-    else if (who === "dark_xushuiyin") playSfx("horror_appear", { volume: 0.65 });
-    else playSfx("farm_event", { volume: 0.56 });
     setVisitorDraft("");
     setVisitorHint("");
     setVisitorOnline(Boolean(apiKey));
@@ -3427,7 +3635,20 @@ export function FarmScreen() {
       ...prev,
       [who]: [
         ...prev[who],
-        { id: chatId(), role: "user", text: `（送给来串门的${displayProfile.name}一份${label}）` },
+        {
+          id: `vg-${chatId()}`,
+          role: "user",
+          text: `（送给来串门的${displayProfile.name}一份${label}）`,
+          gift: {
+            kind: "gift",
+            itemLabel: label,
+            itemId: item,
+            quantity: 1,
+            recipientName: displayProfile.name,
+            affinityDelta: res.affinityDelta,
+            inventoryConsumed: true,
+          },
+        },
         { id: `${chatId()}-vg`, role: "assistant", text: res.reply },
       ].slice(-36),
     }));
@@ -3970,7 +4191,7 @@ export function FarmScreen() {
     let replyEpisode: { text?: unknown; importance?: unknown; emotion?: unknown } | undefined;
     const localReaction = followUpQuestion ? "neutral" : localSocialReaction(text);
     let reaction = localReaction;
-    const crossedBoundary = reaction === "teasing" || reaction === "insult";
+    const crossedBoundary = !apiKey && (reaction === "teasing" || reaction === "insult");
     const query =
       /^(?:请|能不能)?(?:帮我)?(?:联网搜(?:索)?|查(?:一)?下|搜(?:一)?下|搜索)[：:，,\s]*(.{2,120})$/u
         .exec(text)?.[1]
@@ -4400,7 +4621,25 @@ export function FarmScreen() {
     (turn) => !isFarmChatContinuation(turn.player),
   );
   const effectiveHeaderH = headerHeight > 0 ? headerHeight : insets.top + 58;
-  const dockMinHeight = Math.max(0, Math.round(height - effectiveHeaderH - sceneH));
+  const availMapH = mapHeight > 0 ? mapHeight : Math.max(0, height - effectiveHeaderH);
+  // 让农场背景贴图自然延展铺满至屏幕底端，并为小屏提供平滑滚动避让悬浮底栏的草坡余量
+  const bottomSkirtH = Math.max(0, Math.ceil(Math.max(availMapH - sceneH, hudOverlayH - 6)));
+  const skirtStretch = 1.8;
+  const skirtTileH = Math.max(22, Math.round(sceneH * 0.026 * skirtStretch));
+  const skirtImageH = Math.round(sceneH * skirtStretch);
+  const skirtTileCount = bottomSkirtH > 0 ? Math.ceil(bottomSkirtH / skirtTileH) : 0;
+  const weigangAtPond = (() => {
+    const wg = residents.getResidents().find((r) => r.id === "weigang");
+    return Boolean(
+      wg &&
+        Math.hypot(
+          wg.logicalPosition.x - POND.approach.x,
+          wg.logicalPosition.y - POND.approach.y,
+        ) <= 46,
+    );
+  })();
+  const pondNeedsWater = gear.rust < 100 && water < waterCap;
+  const pondFishingBonus = weigangAtPond || period === "evening" || period === "night";
   const deliverableOrderList = deliverableOrders(economy, level, now);
   const activeTownEventsCount = town.events.filter((ev) => ev.expiresAt > now).length;
   const unfulfilledWishCount = dailyWishes.filter((w) => !w.fulfilled).length;
@@ -4558,9 +4797,8 @@ export function FarmScreen() {
       <View
         onLayout={({ nativeEvent }) => setMapHeight(nativeEvent.layout.height)}
         style={{
-          flexGrow: 1,
-          flexShrink: 1,
-          maxHeight: sceneH,
+          flex: 1,
+          zIndex: 1,
           overflow: "hidden",
           backgroundColor: night ? "#122134" : "#3E5D38",
         }}
@@ -4604,15 +4842,16 @@ export function FarmScreen() {
           bounces={false}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={{ width: sceneW, height: sceneH }}>
-            <Image
-              pointerEvents="none"
-              source={FARM_SCENES[sceneVariant]}
-              style={{ width: sceneW, height: sceneH }}
-              resizeMode="cover"
-              fadeDuration={0}
-              onLoadEnd={() => setTerrainPainted(true)}
-            />
+          <View style={{ width: sceneW }}>
+            <View style={{ width: sceneW, height: sceneH }}>
+              <Image
+                pointerEvents="none"
+                source={FARM_SCENES[sceneVariant]}
+                style={{ width: sceneW, height: sceneH }}
+                resizeMode="cover"
+                fadeDuration={0}
+                onLoadEnd={() => setTerrainPainted(true)}
+              />
             <FarmCropLayer plots={plots} scale={scale} timeShift={timeShift} active={focused && !shopOpen} onBug={openBugGame} />
 
             {/* 空气里缓慢浮动的光点 */}
@@ -4643,7 +4882,7 @@ export function FarmScreen() {
               onPress={(e) => {
                 const point = farmPressPoint(e, scale);
                 if (!point) return;
-                if (point.y >= 300) goToMarket();
+                if (point.y >= 310) goToMarket();
                 else moveTo(point.x, point.y, { showRipple: true });
               }}
             />
@@ -4694,12 +4933,12 @@ export function FarmScreen() {
                 left: 0,
                 bottom: 0,
                 width: sceneW,
-                height: 30 * scale,
+                height: 20 * scale,
                 zIndex: 400,
               }}
-            ></Pressable>
+            />
 
-            {/* 水池：轻点打水 */}
+            {/* 水池：轻点水面也可直接打水 */}
             <Pressable
               onPress={fetchWater}
               accessibilityRole="button"
@@ -4714,41 +4953,6 @@ export function FarmScreen() {
                 zIndex: POND.footY + 2,
               }}
             />
-            <View
-              pointerEvents="none"
-              style={{
-                position: "absolute",
-                left: (POND.x + POND.w / 2 - 20) * scale,
-                top: (POND.y - 6) * scale,
-                zIndex: POND.footY + 2,
-              }}
-            >
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  borderRadius: 3,
-                  paddingHorizontal: 7,
-                  paddingVertical: 3,
-                  backgroundColor: "rgba(14,26,18,0.66)",
-                  borderWidth: 1,
-                  borderColor: "rgba(94,200,242,0.28)",
-                }}
-              >
-                <Ionicons name="water" size={9} color="#47798F" />
-                <Text
-                  style={{
-                    marginLeft: 4,
-                    color: "rgba(246,238,220,0.86)",
-                    fontSize: 8.5,
-                    fontWeight: "700",
-                    fontFamily: PIXEL_FONT,
-                  }}
-                >
-                  打水
-                </Text>
-              </View>
-            </View>
 
             <Pressable
               accessibilityRole="button"
@@ -4827,25 +5031,74 @@ export function FarmScreen() {
               );
             })}
 
-            {/* 池塘畔钓鱼快捷图标（不干扰点池塘打水） */}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="在池塘边钓鱼"
-              onPress={() => {
-                moveTo(POND.approach.x, POND.approach.y);
-                setFishingOpen(true);
-              }}
+            {/* 池塘南岸统一实景胶囊操作栏：打水与钓鱼整齐并排落位，避开池心莲花与北岸站立居民 */}
+            <View
+              pointerEvents="box-none"
               style={{
                 position: "absolute",
-                left: (POND.x + 2) * scale,
-                top: (POND.y - 11) * scale,
-                zIndex: POND.footY + 2,
+                right: Math.max(8, Math.round(4 * scale)),
+                top: (POND.footY - 6) * scale,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 6,
+                zIndex: 450,
               }}
             >
-              <FarmSlotFrame size={Math.max(26, Math.round(15 * scale))} rarity={2}>
-                <FarmPropSprite name="rod" size={Math.max(18, Math.round(11 * scale))} />
-              </FarmSlotFrame>
-            </Pressable>
+              <PondActionPill
+                label="打水"
+                badge={gear.rust >= 100 ? "已锈" : pondNeedsWater ? `${water}/${waterCap}` : "满"}
+                accessibilityLabel={
+                  gear.rust >= 100
+                    ? "水壶已生锈，点此提示除锈"
+                    : `在池塘打水，当前水量 ${water}/${waterCap}`
+                }
+                icon={
+                  <Ionicons
+                    name="water"
+                    size={11.5}
+                    color={gear.rust >= 100 ? "#F5AE84" : pondNeedsWater ? "#7ADBFF" : "#92C8DC"}
+                  />
+                }
+                iconBg={
+                  gear.rust >= 100
+                    ? "rgba(224, 118, 76, 0.28)"
+                    : pondNeedsWater
+                      ? "rgba(74, 184, 226, 0.30)"
+                      : "rgba(96, 168, 196, 0.22)"
+                }
+                accentBorder={
+                  gear.rust >= 100
+                    ? "rgba(232, 138, 96, 0.84)"
+                    : pondNeedsWater
+                      ? "rgba(104, 208, 244, 0.88)"
+                      : "rgba(222, 212, 186, 0.44)"
+                }
+                badgeColor={
+                  gear.rust >= 100
+                    ? "#F8B992"
+                    : pondNeedsWater
+                      ? "#B4ECFF"
+                      : "rgba(198, 222, 212, 0.86)"
+                }
+                highlightDotColor={pondNeedsWater ? "#70DCFF" : undefined}
+                muted={gear.rust < 100 && !pondNeedsWater}
+                onPress={fetchWater}
+              />
+              <PondActionPill
+                label="钓鱼"
+                badge={weigangAtPond ? "加成" : period === "evening" || period === "night" ? "月鱼" : undefined}
+                accessibilityLabel="在池塘边钓鱼"
+                icon={<FarmPropSprite name="rod" size={14} />}
+                iconBg={pondFishingBonus ? "rgba(244, 198, 96, 0.30)" : "rgba(214, 194, 146, 0.22)"}
+                accentBorder={pondFishingBonus ? "rgba(240, 200, 108, 0.86)" : "rgba(226, 210, 174, 0.54)"}
+                badgeColor="#FBE098"
+                highlightDotColor={pondFishingBonus ? "#F7CE68" : undefined}
+                onPress={() => {
+                  moveTo(POND.approach.x, POND.approach.y);
+                  setFishingOpen(true);
+                }}
+              />
+            </View>
 
             {walkRipple ? (
               <View
@@ -5003,22 +5256,6 @@ export function FarmScreen() {
               />
             ) : null}
 
-            <FarmRain
-              width={sceneW}
-              height={sceneH}
-              active={
-                focused &&
-                !shopOpen &&
-                !speaker &&
-                !groupOpen &&
-                !townOpen &&
-                !bagOpen &&
-                !lifeOpen &&
-                !houseOpen &&
-                !gameOpen &&
-                weather === "rain"
-              }
-            />
             {/* 玩家 */}
             <Animated.View
               pointerEvents="none"
@@ -5093,22 +5330,85 @@ export function FarmScreen() {
                 </View>
               </Pressable>
             ) : null}
+            </View>
+
+            {/* 无缝延展南侧草坡与出院小路，使农场贴图自然延伸铺满至屏幕底部并衬托悬浮 HUD */}
+            {bottomSkirtH > 0 ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="沿南侧小路前往dark集市"
+                onPress={() => goToMarket()}
+                style={{
+                  width: sceneW,
+                  height: bottomSkirtH,
+                  overflow: "hidden",
+                  backgroundColor: night ? "#122134" : "#3E5D38",
+                }}
+              >
+                {Array.from({ length: skirtTileCount }, (_, idx) => (
+                  <View
+                    key={idx}
+                    pointerEvents="none"
+                    style={{
+                      width: sceneW,
+                      height: skirtTileH,
+                      overflow: "hidden",
+                    }}
+                  >
+                    <Image
+                      source={FARM_SCENES[sceneVariant]}
+                      resizeMode="cover"
+                      fadeDuration={0}
+                      style={
+                        idx % 2 === 0
+                          ? {
+                              position: "absolute",
+                              top: 0,
+                              width: sceneW,
+                              height: skirtImageH,
+                              transform: [{ scaleY: -1 }],
+                            }
+                          : {
+                              position: "absolute",
+                              top: -(skirtImageH - skirtTileH),
+                              width: sceneW,
+                              height: skirtImageH,
+                            }
+                      }
+                    />
+                  </View>
+                ))}
+                <LinearGradient
+                  pointerEvents="none"
+                  colors={
+                    night
+                      ? ["rgba(8, 16, 28, 0)", "rgba(8, 16, 28, 0.34)"]
+                      : ["rgba(18, 28, 14, 0)", "rgba(18, 28, 14, 0.24)"]
+                  }
+                  style={StyleSheet.absoluteFill}
+                />
+              </Pressable>
+            ) : null}
+
+            <FarmRain
+              width={sceneW}
+              height={sceneH + bottomSkirtH}
+              night={night}
+              active={
+                focused &&
+                !shopOpen &&
+                !speaker &&
+                !groupOpen &&
+                !townOpen &&
+                !bagOpen &&
+                !lifeOpen &&
+                !houseOpen &&
+                !gameOpen &&
+                weather === "rain"
+              }
+            />
           </View>
         </ScrollView>
-        {!shopOpen ? (
-          <LinearGradient
-            pointerEvents="none"
-            colors={["rgba(24, 17, 10, 0)", "rgba(24, 17, 10, 0.22)"]}
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: 0,
-              height: 12,
-              zIndex: 1400,
-            }}
-          />
-        ) : null}
         {toast ? (
           <Animated.View
             key={toast.id}
@@ -5119,7 +5419,7 @@ export function FarmScreen() {
               position: "absolute",
               left: 12,
               right: 12,
-              bottom: followedId ? 70 : 12,
+              bottom: hudOverlayH + (followedId ? 68 : 10),
               zIndex: 1800,
               alignItems: "center",
             }}
@@ -5154,7 +5454,8 @@ export function FarmScreen() {
           onClose={() => setRecapManuallyOpen(false)}
           onCrops={index => {
             const plot = plotPos(index);
-            farmScroll.current?.scrollTo({ y: Math.max(0, (plot.y + plot.h / 2) * scale - mapHeight / 2), animated: true });
+            const visibleMapH = Math.max(180, mapHeight - hudOverlayH);
+            farmScroll.current?.scrollTo({ y: Math.max(0, (plot.y + plot.h / 2) * scale - visibleMapH / 2), animated: true });
           }}
           onOrders={() => goToMarket(true)}
           onReports={() => { setLifeInitialTab("logs"); setLifeReportsOnly(true); setLifeOpen(true); }}
@@ -5221,7 +5522,7 @@ export function FarmScreen() {
           <View
             style={{
               position: "absolute",
-              bottom: 10,
+              bottom: hudOverlayH + 8,
               left: 12,
               right: 12,
               zIndex: 1700,
@@ -5298,7 +5599,6 @@ export function FarmScreen() {
 
       <FarmBottomDock
         insetsBottom={insets.bottom}
-        minHeight={dockMinHeight}
         shopOpen={shopOpen}
         weather={weather}
         rainbow={rainbow}
@@ -5407,192 +5707,70 @@ export function FarmScreen() {
             overflow: "hidden",
           }}
         >
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              paddingHorizontal: 14,
-              paddingTop: 12,
-              paddingBottom: 10,
-            }}
-          >
-            <View
-              style={{
-                width: 42,
-                height: 54,
-                alignItems: "center",
-                justifyContent: "center",
-                borderRadius: 3,
-                backgroundColor: "#F5ECD8",
-              }}
-            >
+          <FarmNPCHeader
+            portrait={
               <FarmPersonSprite
                 who={speaker ?? "gu"}
                 emotionPose={speaker ? describeFarmEmotion(getResidentEmotion(chatMemory, speaker, now)).pose : "neutral"}
                 size={36}
                 centered
               />
-            </View>
-            <View style={{ marginLeft: 10, flex: 1 }}>
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                  gap: 5,
-                }}
-              >
-                <Text
-                  variant="title"
-                  style={{
-                    color: "#59432E",
-                    fontSize: 14,
-                    fontWeight: "800",
-                    letterSpacing: 1,
+            }
+            name={speakerName}
+            meta={`${speakerMood} · 好感 ${chatMemory.affinity}/100`}
+            subtitle={speakerSub}
+            badges={(() => {
+              const status = speaker ? residentWeatherStatus(speaker, weather, rainbow, period) : null;
+              const list: FarmNPCBadge[] = [];
+              if (status?.badge) {
+                list.push({ label: status.badge, tone: status.badgeKind === "rainbow" ? "rainbow" : "rain" });
+              }
+              list.push({ label: chatOffline ? "本地台词" : "在线", tone: chatOffline ? "muted" : "online" });
+              return list;
+            })()}
+            actions={
+              <>
+                <FarmHeaderAction
+                  icon={<FarmUiIcon name="gift" size={14} />}
+                  tone="amber"
+                  active={giftBarOpen}
+                  accessibilityLabel={giftBarOpen ? "收起送礼栏" : "给居民送礼"}
+                  label={
+                    giftBarOpen
+                      ? "收礼盒"
+                      : dailyWishes.some((w) => w.resident === (speaker ?? "gu") && !w.fulfilled)
+                        ? "送礼·心愿"
+                        : "送礼"
+                  }
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setMemoryBookOpen(false);
+                    setGiftBarOpen((prev) => !prev);
                   }}
-                >
-                  {speakerName}
-                </Text>
-                <Text style={{ fontSize: 10, color: "#8A785E" }}>
-                  {speakerMood} · 好感 {chatMemory.affinity}/100
-                </Text>
-                {(() => {
-                  const status = speaker
-                    ? residentWeatherStatus(speaker, weather, rainbow, period)
-                    : null;
-                  if (!status?.badge) return null;
-                  const isRainbowBadge = status.badgeKind === "rainbow";
-                  return (
-                    <View
-                      style={{
-                        paddingHorizontal: 6,
-                        paddingVertical: 1.5,
-                        borderRadius: 99,
-                        backgroundColor: isRainbowBadge ? "#FDF0D1" : "#E1EEF9",
-                      }}
-                    >
-                      <Text
-                        style={{
-                          color: isRainbowBadge ? "#9C6219" : "#2F638C",
-                          fontSize: 8.5,
-                          fontWeight: "700",
-                        }}
-                      >
-                        {status.badge}
-                      </Text>
-                    </View>
-                  );
-                })()}
-                <View
-                  style={{
-                    marginLeft: 7,
-                    paddingHorizontal: 6,
-                    paddingVertical: 1.5,
-                    borderRadius: 99,
-                    backgroundColor: chatOffline
-                      ? "#F1E5CC"
-                      : "rgba(143,209,79,0.16)",
+                />
+                <FarmHeaderAction
+                  icon={<FarmUiIcon name="memory" size={14} />}
+                  tone="sage"
+                  active={memoryBookOpen}
+                  accessibilityLabel={memoryBookOpen ? "返回聊天" : "查看人格记忆本"}
+                  label={
+                    memoryBookOpen
+                      ? "回聊天"
+                      : `记忆${(chatMemory.playerFacts?.length ?? 0) + (chatMemory.episodes?.length ?? 0) > 0 ? `(${(chatMemory.playerFacts?.length ?? 0) + (chatMemory.episodes?.length ?? 0)})` : ""}`
+                  }
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setGiftBarOpen(false);
+                    setMemoryBookOpen((prev) => !prev);
                   }}
-                >
-                  <Text
-                    style={{
-                      color: chatOffline ? "#8A785E" : "#5F7749",
-                      fontSize: 8.5,
-                      fontWeight: "700",
-                    }}
-                  >
-                    {chatOffline ? "本地台词" : "在线"}
-                  </Text>
-                </View>
-              </View>
-              <Text
-                style={{
-                  color: "#8A785E",
-                  fontSize: 10,
-                  marginTop: 3,
-                }}
-              >
-                {speakerSub}
-              </Text>
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={giftBarOpen ? "收起送礼栏" : "给居民送礼"}
-              onPress={() => {
-                Keyboard.dismiss();
-                setMemoryBookOpen(false);
-                setGiftBarOpen((prev) => !prev);
-              }}
-              style={{
-                marginRight: 5,
-                paddingHorizontal: 8,
-                height: 28,
-                borderRadius: 99,
-                flexDirection: "row",
-                gap: 4,
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: giftBarOpen ? "#F8E6CC" : "#F5ECD8",
-                borderWidth: 1,
-                borderColor: giftBarOpen ? "#D59D53" : "#DFD1BA",
-              }}
-            >
-              <FarmUiIcon name="gift" size={14} />
-              <Text style={{ color: "#7D5224", fontSize: 10.5, fontWeight: "700" }}>
-                {giftBarOpen
-                  ? "收礼盒"
-                  : dailyWishes.some((w) => w.resident === (speaker ?? "gu") && !w.fulfilled)
-                    ? "送礼·心愿"
-                    : "送礼"}
-              </Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={memoryBookOpen ? "返回聊天" : "查看人格记忆本"}
-              onPress={() => {
-                Keyboard.dismiss();
-                setGiftBarOpen(false);
-                setMemoryBookOpen((prev) => !prev);
-              }}
-              style={{
-                marginRight: 6,
-                paddingHorizontal: 8,
-                height: 28,
-                borderRadius: 99,
-                flexDirection: "row",
-                gap: 4,
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: memoryBookOpen ? "#DFE7CE" : "#F5ECD8",
-                borderWidth: 1,
-                borderColor: memoryBookOpen ? "#A7AF89" : "#DFD1BA",
-              }}
-            >
-              <FarmUiIcon name="memory" size={14} />
-              <Text style={{ color: "#55683E", fontSize: 10.5, fontWeight: "700" }}>
-                {memoryBookOpen
-                  ? "回聊天"
-                  : `记忆${(chatMemory.playerFacts?.length ?? 0) + (chatMemory.episodes?.length ?? 0) > 0 ? `(${(chatMemory.playerFacts?.length ?? 0) + (chatMemory.episodes?.length ?? 0)})` : ""}`}
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={() => {
-                closePersonalChat();
-                Keyboard.dismiss();
-              }}
-              hitSlop={8}
-              style={{
-                width: 28,
-                height: 28,
-                borderRadius: 3,
-                alignItems: "center",
-                justifyContent: "center",
-                backgroundColor: "#F5ECD8",
-              }}
-            >
-              <Ionicons name="close" size={16} color="#8FA08F" />
-            </Pressable>
-          </View>
+                />
+              </>
+            }
+            onClose={() => {
+              closePersonalChat();
+              Keyboard.dismiss();
+            }}
+          />
 
           {/* 居民四维数值情绪状态条 */}
           {speaker ? (
@@ -5939,6 +6117,7 @@ export function FarmScreen() {
         storyBadgeCount={storyBadgeCount}
         visitorState={visitorState}
         activeVisitor={activeNormalVisitor}
+        activeVisit={activeVisitorVisit}
         whaleSync={whaleSync}
         activeRandomEvent={activeRandomEvent}
         onTriggerRandomEvent={() => handleTriggerRandomEvent(true)}
@@ -5949,38 +6128,35 @@ export function FarmScreen() {
         sleepingResidents={sleepingResidents}
         nightSoloEvent={nightSoloEvent}
         onInviteVisitor={(who) => {
-          const today = realDate(eventTime());
+          const at = eventTime();
+          if (activeVisitorVisit) manualDismissedSlotRef.current = activeVisitorVisit.slotKey;
           const displayProfile = resolveVisitorDisplayProfile(who, whaleSync);
-          setTown((prev) => {
-            const curV = prev.visitors ?? emptyVisitorState();
-            return {
-              ...prev,
-              visitors: {
-                ...curV,
-                activeVisitor: who,
-                activeDate: today,
-                horrorActive: false,
-                records: {
-                  ...curV.records,
-                  [who]: {
-                    ...curV.records[who],
-                    visits: curV.records[who].visits + 1,
-                    lastVisitDate: today,
-                  },
-                },
-              },
-            };
-          });
+          setTown((prev) => ({
+            ...prev,
+            visitors: inviteVisitorToFarm(prev.visitors ?? emptyVisitorState(), who, at),
+          }));
           setTownOpen(false);
           showToast(
             who === "dafeiyu"
-              ? `已邀请「${displayProfile.name}」从课表来农场串门啦！`
-              : `已邀请 door 的室友「${displayProfile.name}」来农场串门啦！`,
+              ? `已邀请「${displayProfile.name}」从课表来农场串门 45 分钟啦！`
+              : `已邀请 door 的室友「${displayProfile.name}」来农场串门 45 分钟啦！`,
           );
         }}
         onTalkVisitor={(who) => {
           setTownOpen(false);
           openVisitorTalk(who);
+        }}
+        onDismissVisitor={() => {
+          const res = dismissActiveVisitor(visitorState, now);
+          if (!res.departed) return;
+          if (activeVisitorVisit) manualDismissedSlotRef.current = activeVisitorVisit.slotKey;
+          setTown((prev) => ({
+            ...prev,
+            visitors: dismissActiveVisitor(prev.visitors ?? emptyVisitorState(), now).nextState,
+          }));
+          if (visitorSpeaker === res.departed) closeVisitorChat();
+          setTownOpen(false);
+          showToast(visitorFarewellLine(res.departed, whaleSync));
         }}
         onToggleHorror={(enabled) => {
           setTown((prev) => ({
@@ -6031,6 +6207,29 @@ export function FarmScreen() {
         onGiveCrop={handleVisitorGiveCrop}
         onGiveDish={handleVisitorGiveDish}
         onBanishHorror={handleBanishHorror}
+        onDismissVisitor={
+          activeVisitorVisit && visitorSpeaker === activeVisitorVisit.who
+            ? () => {
+                const res = dismissActiveVisitor(visitorState, now);
+                if (!res.departed) {
+                  closeVisitorChat();
+                  return;
+                }
+                manualDismissedSlotRef.current = activeVisitorVisit.slotKey;
+                setTown((prev) => ({
+                  ...prev,
+                  visitors: dismissActiveVisitor(prev.visitors ?? emptyVisitorState(), now).nextState,
+                }));
+                closeVisitorChat();
+                showToast(visitorFarewellLine(res.departed, whaleSync));
+              }
+            : undefined
+        }
+        stayHint={
+          activeVisitorVisit && visitorSpeaker === activeVisitorVisit.who
+            ? formatVisitorStayHint(activeVisitorVisit)
+            : undefined
+        }
         onClose={closeVisitorChat}
         maxHeight={chatMaxH}
         weather={weather}
@@ -6068,18 +6267,7 @@ export function FarmScreen() {
         visible={fishingOpen}
         onClose={() => setFishingOpen(false)}
         period={period}
-        weigangNearby={
-          (() => {
-            const wg = residents.getResidents().find((r) => r.id === "weigang");
-            return Boolean(
-              wg &&
-                Math.hypot(
-                  wg.logicalPosition.x - POND.approach.x,
-                  wg.logicalPosition.y - POND.approach.y,
-                ) <= 46,
-            );
-          })()
-        }
+        weigangNearby={weigangAtPond}
         book={fishingBook}
         onCatch={handleFishingCatch}
         onSellFish={handleSellFish}

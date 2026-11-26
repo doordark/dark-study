@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { LinearGradient } from 'expo-linear-gradient';
 import { AppState, Image, Modal, Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AtlasSprite } from '@/components/AtlasSprite';
@@ -19,7 +20,7 @@ import type { FarmWeather } from '@/utils/farmTown';
 import { FarmChatConversation } from './FarmChatConversation';
 import { vendorCanTrade } from '@/utils/farmMarket';
 import { FarmNPCSheet } from './FarmNPCSheet';
-import { FarmTabButton } from './FarmTabButton';
+import { FarmNPCHeader, FarmSegmentTabs, FarmTopicChips } from './FarmNPCHeader';
 import { CROP_ART } from './sprites';
 import { MARKET_PEOPLE } from './marketAssets';
 import { useSettings } from '@/store/useSettings';
@@ -34,6 +35,18 @@ const VENDOR_HOLDS = [1100, 180, 100, 160, 240, 220, 250, 400];
 const BAG_SLOT_SKIN = require('../../../assets/images/farm-bag-slots-v6.png');
 const GEAR = require('../../../assets/images/farm-market-gear.png');
 const positions = [{ x: 52, y: 127 }, { x: 151, y: 127 }, { x: 46, y: 239 }, { x: 155, y: 239 }] as const;
+const VENDOR_TAGLINES: Record<Vendor, string> = {
+  smith: '炉火不熄的老铁匠，修锄头、升级水壶都找他',
+  farmer: '种了一辈子地的禾姨，收菜、出种子、开工坊',
+  chemist: '瓶瓶罐罐里装着驱虫水与生长剂',
+  traveler: '背着货箱走南闯北，总有稀奇小玩意',
+};
+const VENDOR_TOPICS: Record<Vendor, readonly string[]> = {
+  smith: ['我的工具该升级了吗？', '能便宜点吗？'],
+  farmer: ['今天收什么菜？', '有什么好种子推荐？', '能便宜点吗？'],
+  chemist: ['驱虫水怎么用？', '有什么新药剂？', '能便宜点吗？'],
+  traveler: ['今天有什么好货？', '路上见到什么新鲜事？', '能便宜点吗？'],
+};
 
 export function MarketIcon({ index, size = 28 }: { index: number; size?: number }) {
   return <AtlasSprite source={ITEMS} columns={4} rows={3} column={index % 4} row={Math.floor(index / 4)} width={size} />;
@@ -216,7 +229,13 @@ export function FarmMarket({ visible, onClose, at, paused = false, initialOrders
     }
   };
   const memory = vendor ? vendorMemories[vendor] : null;
-  return <View style={{ position: 'absolute', inset: 0, backgroundColor: '#F5EDD8', zIndex: 2000 }}>
+  return <View style={{ position: 'absolute', inset: 0, backgroundColor: '#1E2A1A', zIndex: 2000 }}>
+    {/* 地图下方（Dock 背后）的延展：把场景底边镜像向下翻转 + 柔化压暗，和农场一样始终有贴图垫底 */}
+    <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: scale * 330, height: Math.max(0, height - scale * 330 + 40), overflow: 'hidden' }}>
+      <Image source={MARKET_SCENES[lighting.sceneVariant]} resizeMode="cover" fadeDuration={0} blurRadius={3}
+        style={{ position: 'absolute', left: 0, top: 0, width: mapWidth, height: scale * 330, transform: [{ scaleY: -1 }] }} />
+      <LinearGradient colors={['rgba(20, 28, 16, 0.18)', 'rgba(20, 28, 16, 0.62)']} style={{ position: 'absolute', inset: 0 }} />
+    </View>
     <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
       <View style={{ width: mapWidth, height: scale * 330 }}>
         <Image source={MARKET_SCENES[lighting.sceneVariant]} resizeMode="cover" fadeDuration={0}
@@ -229,41 +248,39 @@ export function FarmMarket({ visible, onClose, at, paused = false, initialOrders
         </Pressable> : null) : null}
         {castReady ? <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 0, top: 0 }, playerStyle]}><Animated.View style={facingStyle}><FarmPersonSprite who="hero" size={20 * scale} activity={walking ? 'walk' : 'idle'} active={animationReady && visible && !vendor && !paused} /></Animated.View></Animated.View> : null}
         <Pressable accessibilityRole="button" accessibilityLabel="走出集市返回农场" onPress={() => travel({ x: 100, y: 316 }, onClose)} style={{ position: 'absolute', bottom: 0, left: 0, width: mapWidth, height: 25 * scale }} />
-        <FarmRain width={mapWidth} height={330 * scale} active={animationReady && visible && !vendor && !paused && liveWeather === 'rain'} />
+        <FarmRain width={mapWidth} height={330 * scale} night={lighting.night} active={animationReady && visible && !vendor && !paused && liveWeather === 'rain'} />
       </View>
     </ScrollView>
     <FarmNPCSheet visible={Boolean(vendor && memory)} onClose={back}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingTop: 12, paddingBottom: 10, gap: 10 }}>
-        {vendor ? <View style={{ width: 42, height: 54, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F5ECD8', borderRadius: 8 }}><AtlasSprite source={PEOPLE} columns={8} rows={4} column={0} row={VENDORS.indexOf(vendor)} width={36} height={48} /></View> : null}
-        <View style={{ flex: 1 }}><View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 5 }}>
-          <FarmText variant="title" style={{ fontSize: 14 }}>{vendor ? VENDOR_NAMES[vendor] : ''}</FarmText>
-          <FarmText style={{ fontSize: 10, color: '#8A785E' }}>{memory?.mood ?? '平静'} · 好感 {memory?.affinity ?? 0}/100</FarmText>
-          {liveWeather === 'rain' ? (
-            <View style={{ paddingHorizontal: 6, paddingVertical: 1.5, borderRadius: 99, backgroundColor: '#E1EEF9' }}>
-              <FarmText style={{ fontSize: 9, color: '#2F638C', fontWeight: '700' }}>雨中守摊</FarmText>
-            </View>
-          ) : liveRainbow ? (
-            <View style={{ paddingHorizontal: 6, paddingVertical: 1.5, borderRadius: 99, backgroundColor: '#FDF0D1' }}>
-              <FarmText style={{ fontSize: 9, color: '#9C6219', fontWeight: '700' }}>摊前看彩虹</FarmText>
-            </View>
-          ) : null}
-        </View></View>
-        <Pressable accessibilityLabel="关闭人物面板" onPress={back} hitSlop={8} style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F5ECD8' }}><FarmText style={{ fontSize: 20 }}>×</FarmText></Pressable>
-      </View>
+      <FarmNPCHeader
+        portrait={vendor ? <AtlasSprite source={PEOPLE} columns={8} rows={4} column={0} row={VENDORS.indexOf(vendor)} width={36} height={48} /> : null}
+        name={vendor ? VENDOR_NAMES[vendor] : ''}
+        meta={`${memory?.mood ?? '平静'} · 好感 ${memory?.affinity ?? 0}/100`}
+        subtitle={vendor ? VENDOR_TAGLINES[vendor] : undefined}
+        badges={liveWeather === 'rain' ? [{ label: '雨中守摊', tone: 'rain' }] : liveRainbow ? [{ label: '摊前看彩虹', tone: 'rainbow' }] : []}
+        onClose={back}
+      />
       {vendor && memory ? <>
-        <View style={{ paddingHorizontal: 12, paddingBottom: 6 }}><View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-          {([['trade', vendor === 'smith' ? '升级维修' : '购买'], ['requests', '委托'], ...(vendor === 'farmer' ? [['sell', '出售'], ['craft', '工坊'], ['guide', '图鉴']] : []), ['chat', '对话']] as [typeof section, string][]).map(([id, label]) => <FarmTabButton key={id} label={label} selected={section === id} onPress={() => setSection(id)} />)}
-        </View></View>
+        <FarmSegmentTabs
+          items={[['trade', vendor === 'smith' ? '升级维修' : '购买'], ['requests', '委托'], ...(vendor === 'farmer' ? [['sell', '出售'], ['craft', '工坊'], ['guide', '图鉴']] as const : []), ['chat', '对话']] as readonly (readonly [typeof section, string])[]}
+          value={section}
+          onChange={setSection}
+        />
         {section !== 'chat' ? <ScrollView key={vendor + section} style={{ flexGrow: 0, flexShrink: 1, maxHeight: Math.min(420, height * .48) }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets contentContainerStyle={{ padding: 12, gap: 10 }}>
 
           {section === 'trade' && vendor !== 'smith' ? <FarmText>商品每小时刷新 · {60 - new Date(at).getMinutes()} 分钟后更新</FarmText> : null}
           {!vendorCanTrade(memory) ? <FarmText>店主暂停交易，可以先和对方说说话。</FarmText> : renderShop(vendor, section)}
         </ScrollView> : null}
         {section === 'chat' ? <>
+          <FarmTopicChips
+            topics={[...VENDOR_TOPICS[vendor], liveWeather === 'rain' ? '下雨天还出摊呀？' : liveRainbow ? '看见彩虹了吗？' : '最近生意怎么样？']}
+            disabled={busy}
+            onPick={topic => void send(topic)}
+          />
           <FarmChatConversation messages={[
             ...memory.turns.flatMap(turn => [{ id: turn.id + '-user', role: 'user' as const, text: turn.player }, { id: turn.id + '-reply', role: 'assistant' as const, text: turn.reply }]),
             ...(pendingMessage ? [{ id: pendingMessage.id + '-pending', role: 'user' as const, text: pendingMessage.text }] : []),
-          ]} busy={busy} value={draft} onChange={setDraft} onSend={() => void send()} placeholder="" maxHeight={Math.max(150, Math.min(258, height * .32))} />
+          ]} busy={busy} value={draft} onChange={setDraft} onSend={() => void send()} placeholder={`和${VENDOR_NAMES[vendor].split('·').pop()}聊聊，或试着砍砍价…`} maxHeight={Math.max(150, Math.min(258, height * .32))} />
         </> : null}
       </> : null}
     </FarmNPCSheet>

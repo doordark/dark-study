@@ -21,7 +21,7 @@ export function FarmNPCSheet({ visible, onClose, children }: { visible: boolean;
   return <Modal visible={visible} transparent statusBarTranslucent navigationBarTranslucent animationType="fade" onRequestClose={close}>
     <View ref={host} onLayout={measure} style={{ flex: 1, justifyContent: 'flex-end' }}>
       <Pressable accessibilityLabel="关闭人物面板" onPress={close} style={{ position: 'absolute', inset: 0, backgroundColor: '#241B1766' }} />
-      <View style={{ marginBottom: overlap, maxHeight: Math.max(120, frame.height - overlap - insets.top - 8), flexShrink: 1, backgroundColor: '#F5EDD8', borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden', paddingBottom: keyboardTop === null ? insets.bottom : 4 }}>
+      <View style={{ marginBottom: overlap, maxHeight: Math.max(120, frame.height - overlap - insets.top - 8), flexShrink: 1, backgroundColor: '#FFF7ED', borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden', paddingBottom: keyboardTop === null ? insets.bottom : 4 }}>
         <View style={{ alignSelf: 'center', width: 32, height: 4, marginTop: 8, marginBottom: 4, borderRadius: 2, backgroundColor: '#D5C3A7' }} />
         {children}
       </View>

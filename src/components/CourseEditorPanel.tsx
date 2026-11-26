@@ -17,7 +17,9 @@ import {
   View,
   type ScrollViewInstance,
 } from "react-native";
+import { useColorScheme } from "nativewind";
 import Animated, { Easing, FadeInDown, useReducedMotion } from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { CourseExceptionForm } from "@/components/CourseExceptionForm";
 import {
@@ -39,6 +41,23 @@ import { findConflicts, normalizeClockInput } from "@/utils/time";
 
 const actionButton = "items-center rounded-2xl py-3.5";
 const actionText = "text-[15px] font-bold text-white";
+
+const COURSE_COLOR_LABELS: Record<CourseColor, string> = {
+  sky: "天蓝",
+  violet: "紫罗兰",
+  emerald: "翡翠绿",
+  amber: "琥珀黄",
+  rose: "玫瑰红",
+  cyan: "青色",
+};
+
+function hexToRgba(hex: string, alpha: number): string {
+  const clean = hex.replace("#", "");
+  const r = parseInt(clean.slice(0, 2), 16);
+  const g = parseInt(clean.slice(2, 4), 16);
+  const b = parseInt(clean.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
 
 interface DeleteConfirmation {
   schedule: Schedule;
@@ -220,6 +239,9 @@ function CourseEditorPanelBody({
     }));
 
   const { height: winH } = useWindowDimensions();
+  const { colorScheme } = useColorScheme();
+  const isDark = colorScheme !== "light";
+  const insets = useSafeAreaInsets();
   const reducedMotion = useReducedMotion();
   const [kbH, setKbH] = useState(0);
   const scrollRef = useRef<ScrollViewInstance>(null);
@@ -239,6 +261,7 @@ function CourseEditorPanelBody({
     320,
     Math.min(Math.round(winH * 0.84), winH - kbH - 16),
   );
+  const bottomSafePad = kbH > 0 ? 16 : Math.max(insets.bottom, 16) + 12;
 
   const focusTopField = () => {
     scrollRef.current?.scrollTo({ y: 0, animated: true });
@@ -441,17 +464,30 @@ function CourseEditorPanelBody({
                   : FadeInDown.duration(220).easing(Easing.out(Easing.cubic))
               }
             >
+              {/* 关闭 GlassContainer 顶层 SVG 99% 描边并把底部留白移入 ScrollView，避免白色底边横线穿过“删除课程”按钮 */}
               <GlassContainer
                 variant="sheet"
                 radius={32}
-                borderOpacity={0.3}
-                style={{ height: sheetH, paddingBottom: 16 }}
+                borderOpacity={0}
+                style={{
+                  height: sheetH,
+                  borderTopLeftRadius: 32,
+                  borderTopRightRadius: 32,
+                  borderBottomLeftRadius: 0,
+                  borderBottomRightRadius: 0,
+                  borderWidth: 1,
+                  borderBottomWidth: 0,
+                  borderColor: isDark
+                    ? "rgba(255,255,255,0.16)"
+                    : "rgba(255,255,255,0.72)",
+                }}
               >
                 <ScrollView
                   ref={scrollRef}
                   style={{ flex: 1 }}
-                  contentContainerStyle={{ paddingBottom: 8 }}
+                  contentContainerStyle={{ paddingBottom: bottomSafePad }}
                   className="px-5 pt-5"
+                  showsVerticalScrollIndicator={false}
                   keyboardShouldPersistTaps="handled"
                 >
                   {exceptionOpen && course && exceptionSchedule ? (
@@ -908,23 +944,78 @@ function CourseEditorPanelBody({
                       <Text className="mb-1.5 text-[11px] font-semibold text-slate-600 dark:text-slate-400">
                         主题色
                       </Text>
-                      <View className="mb-4 flex-row gap-x-2.5">
-                        {courseColorNames.map((name: CourseColor) => (
-                          <Pressable
-                            key={name}
-                            onPress={() => set("color", name)}
-                            className={`h-9 flex-1 items-center justify-center rounded-full border-2 ${
-                              draft.color === name
-                                ? "border-slate-800 dark:border-white"
-                                : "border-transparent"
-                            }`}
-                            style={{ backgroundColor: coursePalette[name].solid }}
-                          >
-                            {draft.color === name ? (
-                              <Ionicons name="checkmark" size={14} color="#FFFFFF" />
-                            ) : null}
-                          </Pressable>
-                        ))}
+                      <View className="mb-4 flex-row items-center gap-x-2">
+                        {courseColorNames.map((name: CourseColor) => {
+                          const selected = draft.color === name;
+                          const solid = coursePalette[name].solid;
+                          return (
+                            <View
+                              key={name}
+                              className="flex-1 rounded-full"
+                              style={{
+                                borderWidth: 1.5,
+                                borderColor: selected
+                                  ? hexToRgba(solid, isDark ? 0.65 : 0.52)
+                                  : "transparent",
+                                boxShadow: selected
+                                  ? isDark
+                                    ? [
+                                        {
+                                          offsetX: 0,
+                                          offsetY: 0,
+                                          blurRadius: 12,
+                                          color: hexToRgba(solid, 0.52),
+                                        },
+                                      ]
+                                    : [
+                                        {
+                                          offsetX: 0,
+                                          offsetY: 3,
+                                          blurRadius: 10,
+                                          color: hexToRgba(solid, 0.42),
+                                        },
+                                        {
+                                          offsetX: 0,
+                                          offsetY: 1,
+                                          blurRadius: 4,
+                                          color: "rgba(15,23,42,0.12)",
+                                        },
+                                      ]
+                                  : undefined,
+                              }}
+                            >
+                              <Pressable
+                                onPress={() => set("color", name)}
+                                accessibilityRole="radio"
+                                accessibilityState={{ selected }}
+                                accessibilityLabel={`主题色 ${COURSE_COLOR_LABELS[name]}`}
+                                className="h-9 items-center justify-center rounded-full"
+                                style={{
+                                  backgroundColor: solid,
+                                  borderWidth: selected ? 2.5 : 1,
+                                  borderColor: selected
+                                    ? "#FFFFFF"
+                                    : isDark
+                                      ? "rgba(255,255,255,0.16)"
+                                      : "rgba(255,255,255,0.52)",
+                                }}
+                              >
+                                {selected ? (
+                                  <Ionicons
+                                    name="checkmark"
+                                    size={16}
+                                    color="#FFFFFF"
+                                    style={{
+                                      textShadowColor: "rgba(15,23,42,0.22)",
+                                      textShadowOffset: { width: 0, height: 1 },
+                                      textShadowRadius: 2,
+                                    }}
+                                  />
+                                ) : null}
+                              </Pressable>
+                            </View>
+                          );
+                        })}
                       </View>
 
                       {/* 实时冲突提示 */}
@@ -938,24 +1029,26 @@ function CourseEditorPanelBody({
                       ) : null}
 
                       {/* 保存 / 删除 */}
-                      <Pressable
-                        onPress={handleSavePress}
-                        accessibilityRole="button"
-                        className={`${actionButton} mb-3 bg-sky-500`}
-                      >
-                        <Text className={actionText}>
-                          {course ? "保存修改" : "添加课程"}
-                        </Text>
-                      </Pressable>
-                      {course && onDelete && exceptionSchedule ? (
+                      <View className="mt-1 gap-y-3">
                         <Pressable
+                          onPress={handleSavePress}
                           accessibilityRole="button"
-                          onPress={openDeleteConfirmation}
-                          className={`${actionButton} mb-3 bg-rose-600`}
+                          className={`${actionButton} bg-sky-500`}
                         >
-                          <Text className={actionText}>删除课程</Text>
+                          <Text className={actionText}>
+                            {course ? "保存修改" : "添加课程"}
+                          </Text>
                         </Pressable>
-                      ) : null}
+                        {course && onDelete && exceptionSchedule ? (
+                          <Pressable
+                            accessibilityRole="button"
+                            onPress={openDeleteConfirmation}
+                            className={`${actionButton} bg-rose-600`}
+                          >
+                            <Text className={actionText}>删除课程</Text>
+                          </Pressable>
+                        ) : null}
+                      </View>
                     </>
                   )}
                 </ScrollView>

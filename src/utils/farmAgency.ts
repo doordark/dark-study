@@ -3,12 +3,12 @@ import type { ResidentMemory } from './farmMemory';
 import { formatPersonaMemoryBlock } from './farmPersonaMemory';
 
 export const RESIDENT_PROJECTS = {
-  door: { goal: '做一个家人都能上手的小工具', tension: '想把问题想透，却容易让家人等得太久。', location: 'bench', activity: '在长椅上把工具的第一步想清楚', result: '坐下来后，我想通了：先把最常用的一步做简单。' },
-  gu: { goal: '试出忙起来也能照料的一小块菜地', tension: '想把家里照顾好，也希望大家主动搭把手。', location: 'farm', activity: '到田边看看哪一垄最方便照料', result: '田边看过了。我想先从最顺手的一垄试起。' },
-  xiaoba: { goal: '给家人做一张有隐藏路线的游戏地图', tension: '想给别人看自己的点子，又怕好不容易做出来却没人想玩。', location: 'plaza', activity: '在广场比划游戏地图的两条入口', result: '我在广场比划了一下。入口近一点，岔路藏深一点。' },
-  yujie: { goal: '把一首歌唱得敢让家里人听', tension: '很在意别人有没有听懂他的心意，又习惯先用玩笑遮过去。', location: 'bench', activity: '找个安静地方在心里过一遍副歌', result: '副歌我顺了一遍。先记住换气的地方，下次再唱给你们听。' },
-  weigang: { goal: '弄明白池边不同位置该等多久再换竿', tension: '喜欢把事情算明白，但也想学会在没有把握时先试一次。', location: 'pond', activity: '去池边观察水面，挑两个以后可比较的钓位', result: '我在池边挑好了两个钓位。下回让两边等同样久。' },
-  chicken: { goal: '找到一个能安心等家人回来的地方', tension: '好奇陌生声音，又怕离鸡窝太远。', location: 'coop', activity: '回小窝附近听一听家人的脚步', result: '咕，这里听得见家人走路，我待着就不慌啦。' },
+  door: { goal: '有空给家里鼓捣个省事的小点子', tension: '偶尔太较真，容易忘了先歇会儿。', location: 'bench', activity: '在长椅上吹吹风理理思路', result: '吹完风想通了，先把最顺手的那步弄好就行。' },
+  gu: { goal: '把院子打理得既省力又漂亮', tension: '啥都爱操心，偶尔也想偷会儿懒。', location: 'farm', activity: '去田边转一圈看看苗的长势', result: '田边看完了，长势挺好，回头轻松不少。' },
+  xiaoba: { goal: '攒点有意思的小脑洞慢慢折腾', tension: '平时话少，不太好意思主动显摆。', location: 'plaza', activity: '去广场透透气顺便想想点子', result: '在广场溜达了一圈，心里大概有谱了。' },
+  yujie: { goal: '找机会露一手让家里人夸两句', tension: '有点傲娇，嘴上说无所谓其实挺在意评价。', location: 'bench', activity: '找个清静角落哼两句顺顺心情', result: '哼完舒服多了，改天心情好再露一手。' },
+  weigang: { goal: '在院子里逛逛放松下顺便找点乐子', tension: '生人面前微慢热，熟了其实挺实在话多。', location: 'pond', activity: '去池边吹吹风发会儿呆', result: '池边风挺凉快的，发完呆整个人松快不少。' },
+  chicken: { goal: '在院子里找块最暖和的晒太阳宝地', tension: '既爱凑热闹，又怕突然的大动静。', location: 'coop', activity: '回小窝附近听听家里人的动静', result: '咕，这里听得见大家说话，晒太阳最安心啦！' },
 } as const;
 
 export type ResidentIntent =
@@ -39,7 +39,7 @@ export function residentReflections(history: readonly ResidentConversation[], ac
     const record = history[index];
     if (record.source === 'player_command' || record.endedAt === null || !record.participants.includes(actor) || !record.lines.length) continue;
     if (record.activity === 'project') {
-      notes.add('最近抽空做过自己的小目标：' + RESIDENT_PROJECTS[actor].activity + '。');
+      notes.add('最近抽空做过自己的日常小事：' + RESIDENT_PROJECTS[actor].activity + '。');
     } else {
       const topic = record.discussion?.topic ?? record.sharedTopic?.topic;
       const peers = record.participants.filter(id => id !== actor).map(id => RESIDENTS[id].name).join('、');

@@ -235,4 +235,58 @@ const restoredTown = town.restoreTownState({ ...town.emptyTownState(), visitors:
 assert.equal(restoredTown.visitors.sleepDeprivedDay, 5);
 assert.equal(restoredTown.visitors.horrorBanishedCount, 1);
 
-console.log('PASS: 120 visitor sprite cells (including Dafeiyu), schedule persona/memory sync, horror Dark Xu Shuiyin, and nighttime sleep/emo system verified');
+// 7. Multi-slot visitor rotation, stay duration, natural departure, manual invite expiry & dismissal
+const scheduleDay = new Date(2026, 10, 26, 8, 30).getTime();
+const slots = visitors.getTodayVisitorSchedule(vState, scheduleDay);
+assert.equal(slots.length, 5, '5 daily visitor windows scheduled');
+const uniqueVisitorsToday = new Set(slots.map(s => s.who));
+assert.equal(uniqueVisitorsToday.size, 4, 'all 4 normal visitors get a turn within the same day');
+for (let i = 1; i < slots.length; i++) {
+  assert.notEqual(slots[i].who, slots[i - 1].who, 'consecutive slots never repeat the same visitor');
+}
+// Quiet gap between slots & overnight quiet period
+const quietGapAt = new Date(2026, 10, 26, 10, 15).getTime();
+assert.equal(visitors.resolveDailyVisitor(vState, quietGapAt), null, 'visitor departs during quiet gap between slots');
+const lateNightAt = new Date(2026, 10, 26, 23, 30).getTime();
+assert.equal(visitors.resolveDailyVisitor(vState, lateNightAt), null, 'no scheduled visitor stays overnight');
+// Legacy activeDate lock no longer traps the entire day on one visitor
+const legacyLocked = { ...vState, activeVisitor: 'dafeiyu', activeDate: '2026-11-26' };
+assert.equal(visitors.resolveDailyVisitor(legacyLocked, quietGapAt), null, 'legacy activeDate no longer locks a visitor forever');
+// Active slot visit info + polite dismissal without instant respawn
+const activeSlotVisit = visitors.resolveVisitorVisit(vState, scheduleDay);
+assert.ok(activeSlotVisit && activeSlotVisit.source === 'scheduled' && activeSlotVisit.remainingMinutes > 0);
+const dismissed = visitors.dismissActiveVisitor(vState, scheduleDay);
+assert.equal(dismissed.departed, activeSlotVisit.who);
+assert.equal(visitors.resolveDailyVisitor(dismissed.nextState, scheduleDay), null, 'dismissed visitor leaves immediately and does not respawn in same slot');
+// Next slot still brings a fresh visitor
+const nextSlotMid = slots[1].startsAt + 15 * 60_000;
+assert.equal(visitors.resolveDailyVisitor(dismissed.nextState, nextSlotMid), slots[1].who, 'next slot brings the next visitor after earlier dismissal');
+// Manual invite lasts 45 minutes and expires naturally (invite at 10:00 -> expires at 10:45 within 09:45-11:00 gap)
+const inviteAt = new Date(2026, 10, 26, 10, 0).getTime();
+const invitedState = visitors.inviteVisitorToFarm(vState, 'huangbingqi', inviteAt);
+assert.equal(visitors.resolveDailyVisitor(invitedState, inviteAt + 10 * 60_000), 'huangbingqi', 'invited visitor stays during 45-minute window');
+assert.equal(visitors.resolveDailyVisitor(invitedState, inviteAt + visitors.MANUAL_INVITE_DURATION_MS + 1000), null, 'invited visitor departs automatically after 45 minutes');
+assert.equal(visitors.resolveDailyVisitor(invitedState, slots[1].startsAt + 1000), slots[1].who, 'scheduled slot resumes seamlessly after manual invite ends');
+// Persistence preserves manual invite & dismissedSlotKey
+const roundTripVisitors = visitors.restoreVisitorState(invitedState);
+assert.equal(roundTripVisitors.manualVisitor, 'huangbingqi');
+assert.equal(roundTripVisitors.manualExpiresAt, invitedState.manualExpiresAt);
+
+// Clock-skew clamp (never shows 46 min for a 45m invite), preserved lastGreetedSlotKey & mid-slot replacement dismiss
+const skewedVisit = visitors.resolveVisitorVisit(invitedState, inviteAt - 25_000);
+assert.equal(skewedVisit.remainingMinutes, 45, 'manual invite remainingMinutes clamped to invite duration under clock skew');
+const greetedSlot0 = visitors.markVisitorSlotGreeted(vState, activeSlotVisit, scheduleDay);
+const otherVisitor = visitors.NORMAL_VISITOR_IDS.find(id => id !== activeSlotVisit.who);
+const midSlotInvite = visitors.inviteVisitorToFarm(greetedSlot0, otherVisitor, scheduleDay + 5 * 60_000);
+assert.equal(midSlotInvite.lastGreetedSlotKey, activeSlotVisit.slotKey, 'manual invite preserves lastGreetedSlotKey to avoid double-counting');
+const dismissMidInvite = visitors.dismissActiveVisitor(midSlotInvite, scheduleDay + 10 * 60_000);
+assert.equal(dismissMidInvite.departed, otherVisitor);
+assert.notEqual(dismissMidInvite.nextState.dismissedSlotKey, activeSlotVisit.slotKey, 'dismissing an invited guest does not falsely dismiss an unrelated scheduled visitor');
+// Canonical visitor names & whaleSync.enabled=false fallback in arrival/farewell lines
+assert.ok(visitors.visitorArrivalLine('huboqi').includes('胡波奇'));
+assert.ok(visitors.visitorFarewellLine('huangbingqi').includes('黄冰骑'));
+assert.ok(visitors.visitorArrivalLine('dafeiyu', { ...customSync, enabled: false }).includes('大肥鱼'));
+assert.ok(!visitors.visitorArrivalLine('dafeiyu', { ...customSync, enabled: false }).includes('阿顾'));
+assert.ok(visitors.visitorFarewellLine('dafeiyu', { enabled: true, persona: { ...customSync.persona, userName: '' } }).includes('大爹'));
+
+console.log('PASS: 120 visitor sprite cells (including Dafeiyu), multi-slot visitor rotation & departure, schedule persona/memory sync, horror Dark Xu Shuiyin, and nighttime sleep/emo system verified');

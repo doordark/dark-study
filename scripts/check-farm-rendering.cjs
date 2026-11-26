@@ -134,8 +134,8 @@ async function main() {
   assert(!farmScreenSrc.includes('foregroundHeight'), 'FarmScreen must not compute excess foregroundHeight filler');
   assert(!farmScreenSrc.includes('resizeMode="stretch"'), 'FarmScreen must not stretch scene textures');
   assert(!sceneTexturesSrc.includes('FARM_FOREGROUNDS'), 'sceneTextures must not bundle unused foreground filler strips');
-  assert(farmScreenSrc.includes('FarmBottomDock'), 'FarmScreen must render FarmBottomDock below the natural scene');
-  assert(farmScreenSrc.includes('maxHeight: sceneH'), 'FarmScreen scene viewport must clamp cleanly at sceneH');
+  assert(farmScreenSrc.includes('FarmBottomDock'), 'FarmScreen must render floating translucent FarmBottomDock');
+  assert(farmScreenSrc.includes('height: sceneH'), 'FarmScreen must preserve natural sceneH framing without stretching');
 
   console.log('PASS: resident hook isolates movement updates, 100% mode respects interval, and FarmScreen uses clean FarmBottomDock without stretched foreground fillers');
   } finally { Date.now = realNow; }

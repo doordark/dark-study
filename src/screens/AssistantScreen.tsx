@@ -17,6 +17,9 @@ import {
   Text,
   View,
   useWindowDimensions,
+  type PressableProps,
+  type StyleProp,
+  type ViewStyle,
 } from "react-native";
 import Animated, {
   Easing,
@@ -40,7 +43,7 @@ import { ChatImage } from "@/components/ChatImage";
 import { ChatInputBar } from "@/components/ChatInputBar";
 import { GlassContainer } from "@/components/GlassContainer";
 import { ScheduleChangeDialog } from "@/components/ScheduleChangeDialog";
-import { SuggestionButton } from "@/components/SuggestionButton";
+import { AssistantEmptyState } from "@/components/AssistantEmptyState";
 import { WhaleAvatar } from "@/components/WhaleAvatar";
 import { WhaleDeco } from "@/components/WhaleDeco";
 import { WhaleLeaveFX, WhaleSummonFX } from "@/components/WhaleSummonFX";
@@ -90,13 +93,6 @@ import { pickPersonaLine } from "@/utils/whaleBehavior";
 import { describeWhaleEmotion, resolveBondStage } from "@/utils/whaleEmotion";
 import { renderPersonaText } from "@/utils/whalePersona";
 
-const SUGGESTIONS = [
-  "把周三的体育课改到周五下午",
-  "新建一份叫「外教课」的课表",
-  "帮我把周六的学术写作工作坊删掉",
-  "这学期哪天的课最多？",
-  "给周四加一门晚上 7 点的《人工智能导论》",
-];
 
 interface WhaleQuickItem {
   label: string;
@@ -201,6 +197,60 @@ function formatMessageTime(ts?: number): string {
 
 function clampPct(value: number): number {
   return Math.min(100, Math.max(4, Math.round(value)));
+}
+
+interface TactilePressableProps
+  extends Omit<PressableProps, "style" | "children"> {
+  style?: StyleProp<ViewStyle>;
+  pressedOpacity?: number;
+  pressedScale?: number;
+  children?: React.ReactNode;
+}
+
+/**
+ * 兼容 NativeWind v4 + RN 0.88 的按压容器：
+ * 始终向 Pressable 传递静态数组 style（避免函数式 style 被 css-interop 整段丢弃），
+ * 同时保留顺滑的按压透明度与微缩放反馈。
+ */
+function TactilePressable({
+  style,
+  pressedOpacity = 0.78,
+  pressedScale = 1,
+  disabled,
+  onPressIn,
+  onPressOut,
+  children,
+  ...rest
+}: TactilePressableProps) {
+  const [pressed, setPressed] = useState(false);
+
+  return (
+    <Pressable
+      {...rest}
+      disabled={disabled}
+      onPressIn={(event) => {
+        if (!disabled) setPressed(true);
+        onPressIn?.(event);
+      }}
+      onPressOut={(event) => {
+        setPressed(false);
+        onPressOut?.(event);
+      }}
+      style={[
+        style,
+        pressed && !disabled
+          ? {
+              opacity: pressedOpacity,
+              ...(pressedScale !== 1
+                ? { transform: [{ scale: pressedScale }] }
+                : {}),
+            }
+          : null,
+      ]}
+    >
+      {children}
+    </Pressable>
+  );
 }
 
 /* -------------------------------------------------------------------------- */
@@ -417,9 +467,10 @@ const WhaleChatBubble = memo(function WhaleChatBubble({
           </Text>
 
           {m.imageUri ? (
-            <Pressable
+            <TactilePressable
               onPress={() => onPreview(m.imageUri!)}
-              style={({ pressed }) => ({
+              pressedOpacity={0.9}
+              style={{
                 marginTop: 9,
                 borderRadius: 16,
                 overflow: "hidden",
@@ -427,8 +478,7 @@ const WhaleChatBubble = memo(function WhaleChatBubble({
                 borderColor: isDark
                   ? "rgba(186,230,253,0.22)"
                   : "rgba(125,211,252,0.46)",
-                opacity: pressed ? 0.9 : 1,
-              })}
+              }}
             >
               <ChatImage uri={m.imageUri} aspectRatio={m.imageAspect ?? 1} />
               <View
@@ -453,7 +503,7 @@ const WhaleChatBubble = memo(function WhaleChatBubble({
                   查看大图
                 </Text>
               </View>
-            </Pressable>
+            </TactilePressable>
           ) : null}
 
           {m.sources?.length ? (
@@ -476,10 +526,11 @@ const WhaleChatBubble = memo(function WhaleChatBubble({
                 </Text>
               </View>
               {m.sources.map((s) => (
-                <Pressable
+                <TactilePressable
                   key={s.url}
                   onPress={() => Linking.openURL(s.url).catch(() => {})}
-                  style={({ pressed }) => ({
+                  pressedOpacity={0.75}
+                  style={{
                     flexDirection: "row",
                     alignItems: "center",
                     gap: 5,
@@ -493,8 +544,7 @@ const WhaleChatBubble = memo(function WhaleChatBubble({
                     borderColor: isDark
                       ? "rgba(125,211,252,0.18)"
                       : "rgba(14,165,233,0.18)",
-                    opacity: pressed ? 0.75 : 1,
-                  })}
+                  }}
                 >
                   <Ionicons
                     name="link-outline"
@@ -511,15 +561,17 @@ const WhaleChatBubble = memo(function WhaleChatBubble({
                   >
                     {s.title}
                   </Text>
-                </Pressable>
+                </TactilePressable>
               ))}
             </View>
           ) : null}
 
           {m.actions?.length ? (
-            <Pressable
+            <TactilePressable
               onPress={() => onApply(m.actions!)}
-              style={({ pressed }) => ({
+              pressedOpacity={0.8}
+              pressedScale={0.97}
+              style={{
                 marginTop: 10,
                 alignSelf: "flex-start",
                 flexDirection: "row",
@@ -535,9 +587,7 @@ const WhaleChatBubble = memo(function WhaleChatBubble({
                 borderColor: isDark
                   ? "rgba(52,211,153,0.52)"
                   : "rgba(16,185,129,0.4)",
-                opacity: pressed ? 0.8 : 1,
-                transform: [{ scale: pressed ? 0.97 : 1 }],
-              })}
+              }}
             >
               <Ionicons
                 name="checkmark-circle"
@@ -563,7 +613,7 @@ const WhaleChatBubble = memo(function WhaleChatBubble({
                           ? "预览新建课表"
                           : "预览合并课表"}
               </Text>
-            </Pressable>
+            </TactilePressable>
           ) : null}
 
           {timeLabel ? (
@@ -815,17 +865,18 @@ function PopoverCarePill({
     <View
       style={{
         flex: 1,
+        minWidth: 0,
         borderRadius: 14,
         borderCurve: "continuous",
         paddingHorizontal: 9,
-        paddingVertical: 7,
+        paddingVertical: 7.5,
         backgroundColor: isDark
-          ? "rgba(255,255,255,0.055)"
-          : "rgba(255,255,255,0.62)",
-        borderWidth: 0.75,
+          ? "rgba(255,255,255,0.065)"
+          : "rgba(255,255,255,0.88)",
+        borderWidth: 1,
         borderColor: isDark
-          ? "rgba(186,230,253,0.14)"
-          : "rgba(148,163,184,0.22)",
+          ? "rgba(186,230,253,0.16)"
+          : "rgba(148,163,184,0.24)",
       }}
     >
       <View
@@ -837,10 +888,11 @@ function PopoverCarePill({
         }}
       >
         <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
-          <Ionicons name={icon} size={10} color={color} />
+          <Ionicons name={icon} size={10.5} color={color} />
           <Text
+            numberOfLines={1}
             style={{
-              fontSize: 9.5,
+              fontSize: 10,
               fontWeight: "600",
               color: isDark ? "#CBD5E1" : "#475569",
             }}
@@ -850,8 +902,8 @@ function PopoverCarePill({
         </View>
         <Text
           style={{
-            fontSize: 10,
-            fontWeight: "700",
+            fontSize: 10.5,
+            fontWeight: "800",
             color: isDark ? "#F1F5F9" : "#0F172A",
           }}
         >
@@ -864,7 +916,7 @@ function PopoverCarePill({
           borderRadius: 99,
           overflow: "hidden",
           backgroundColor: isDark
-            ? "rgba(255,255,255,0.1)"
+            ? "rgba(255,255,255,0.11)"
             : "rgba(148,163,184,0.22)",
         }}
       >
@@ -881,7 +933,7 @@ function PopoverCarePill({
   );
 }
 
-/** 浮层底部的快捷动作卡片按钮 */
+/** 浮层底部的等宽均分快捷动作卡片按钮 */
 function PopoverQuickAction({
   icon,
   label,
@@ -896,40 +948,52 @@ function PopoverQuickAction({
   onPress: () => void;
 }) {
   return (
-    <Pressable
+    <TactilePressable
       onPress={onPress}
-      style={({ pressed }) => ({
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      pressedOpacity={0.8}
+      pressedScale={0.97}
+      style={{
         flex: 1,
+        minWidth: 0,
+        height: 42,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
         gap: 5,
         borderRadius: 14,
         borderCurve: "continuous",
-        paddingVertical: 9,
         paddingHorizontal: 6,
         backgroundColor: isDark
-          ? "rgba(255,255,255,0.06)"
-          : "rgba(255,255,255,0.72)",
+          ? "rgba(26,44,74,0.82)"
+          : "rgba(255,255,255,0.94)",
         borderWidth: 1,
         borderColor: isDark
-          ? "rgba(186,230,253,0.16)"
-          : "rgba(148,163,184,0.22)",
-        opacity: pressed ? 0.78 : 1,
-        transform: [{ scale: pressed ? 0.96 : 1 }],
-      })}
+          ? "rgba(186,230,253,0.22)"
+          : "rgba(125,211,252,0.42)",
+        boxShadow: [
+          {
+            offsetX: 0,
+            offsetY: 2,
+            blurRadius: 6,
+            color: isDark ? "rgba(2,8,20,0.32)" : "rgba(15,41,66,0.06)",
+          },
+        ],
+      }}
     >
-      <Ionicons name={icon} size={13.5} color={accent} />
+      <Ionicons name={icon} size={14.5} color={accent} />
       <Text
+        numberOfLines={1}
         style={{
-          fontSize: 11,
+          fontSize: 11.5,
           fontWeight: "700",
-          color: isDark ? "#E2F2FF" : "#0F2942",
+          color: isDark ? "#E6F4FF" : "#0F2942",
         }}
       >
         {label}
       </Text>
-    </Pressable>
+    </TactilePressable>
   );
 }
 
@@ -1138,7 +1202,6 @@ export function AssistantScreen() {
     }
     Keyboard.dismiss();
     tapHaptic();
-    playSfx("whale_popover_open", { volume: 0.72 });
     setPopoverMounted(true);
     setPopoverOpen(true);
     cancelAnimation(popoverProgress);
@@ -1150,15 +1213,12 @@ export function AssistantScreen() {
   }, [popoverProgress, reducedMotion]);
 
   const closeCompanionPopover = useCallback(
-    (silent = false) => {
+    () => {
       if (popoverCloseTimer.current) {
         clearTimeout(popoverCloseTimer.current);
         popoverCloseTimer.current = null;
       }
       if (!popoverOpen && !popoverMounted) return;
-      if (!silent) {
-        playSfx("whale_popover_close", { volume: 0.56 });
-      }
       setPopoverOpen(false);
       cancelAnimation(popoverProgress);
       if (reducedMotion) {
@@ -1218,10 +1278,12 @@ export function AssistantScreen() {
     const idx = Math.min(taps.current.count - 1, AVATAR_TAPS.length - 1);
     tapHaptic();
     triggerPortraitBounce();
-    playSfx(idx >= 2 ? "whale_cute_tsun" : "whale_dock_boop", {
-      volume: 0.72,
-      rate: 1 + idx * 0.03,
-    });
+    if (idx >= 2) {
+      playSfx("whale_cute_tsun", {
+        volume: 0.64,
+        rate: 1 + idx * 0.03,
+      });
+    }
     flashPopoverReaction(
       renderPersonaText(AVATAR_TAPS[idx], useWhalePersona.getState().persona),
     );
@@ -1261,7 +1323,7 @@ export function AssistantScreen() {
     if (popoverCloseTimer.current) clearTimeout(popoverCloseTimer.current);
     popoverCloseTimer.current = setTimeout(() => {
       popoverCloseTimer.current = null;
-      if (mountedRef.current) closeCompanionPopover(true);
+      if (mountedRef.current) closeCompanionPopover();
     }, 560);
   }, [
     petVisible,
@@ -1278,7 +1340,6 @@ export function AssistantScreen() {
   const handlePatFromPopover = useCallback(() => {
     tapHaptic();
     triggerPortraitBounce();
-    playSfx("whale_dock_boop", { volume: 0.72 });
     patPet();
     applyMood({ pleasure: 10, arousal: 3, reason: "被温柔摸了摸头" });
     bumpBond("interaction");
@@ -1415,7 +1476,7 @@ export function AssistantScreen() {
   /** 收回人格：先播退场动效，动画结束后再切回普通助手界面 */
   const leaveWhale = (message?: string) => {
     if (leaveFx) return;
-    closeCompanionPopover(true);
+    closeCompanionPopover();
     bumpHaptic();
     // 先只挂动效遮罩；切人格、追加告别消息都挪到遮罩最深的时候再做，
     // 否则一堆重渲染和动画首帧撞在一起，退场会明显卡一下
@@ -1496,7 +1557,7 @@ export function AssistantScreen() {
     if (!content || pendingRequest.current) return;
     // 用户开口时先让鱼闭嘴，免得两边同时说话
     stopWhaleVoice();
-    if (popoverOpen) closeCompanionPopover(true);
+    if (popoverOpen) closeCompanionPopover();
 
     // 精确口令走本地快捷通道（零延迟、不消耗额度）；其余说法交给模型按语义判断
     if (isSummonCmd(content)) {
@@ -1513,9 +1574,6 @@ export function AssistantScreen() {
     // 想让她到屏幕边上陪着：本地直接叫出来，不用等模型（首次登场音效由 WhalePet 单点播放）
     if (whale && PET_WORDS.test(content)) {
       setInput("");
-      if (useWhalePet.getState().visible) {
-        playSfx("whale_dock_boop", { volume: 0.62 });
-      }
       showPet();
       pushLocal(
         "（尾巴一摆，从屏幕边探出头来）来啦来啦，我就挂在这儿陪你。拖我到哪儿都行，长按或点三下可以打开互动卡。",
@@ -1530,10 +1588,6 @@ export function AssistantScreen() {
         text: "你不喂我API Key我咋工作（凶巴巴）",
       });
       return;
-    }
-
-    if (whale) {
-      playSfx("whale_chat_send", { volume: 0.52 });
     }
 
     const userMsg: ChatMessage = {
@@ -1654,7 +1708,6 @@ export function AssistantScreen() {
         ]);
       } else if (action.type === "set_background") {
         const tint = resolveTint(action.tint);
-        playSfx("whale_ui_ripple", { volume: 0.64 });
         setBackgroundTint(tint);
         if (action.effect === "aurora" || action.effect === "plain") {
           setBackgroundEffect(action.effect);
@@ -1783,7 +1836,7 @@ export function AssistantScreen() {
     transform: [{ scale: popoverAvatarBounce.value }],
   }));
 
-  const popoverWidth = Math.min(width - 28, 324);
+  const popoverWidth = Math.min(width - 28, 330);
   const defaultPopoverLine = useMemo(() => {
     if (emotion.reason) {
       return renderPersonaText(
@@ -1828,12 +1881,13 @@ export function AssistantScreen() {
                 }}
               >
                 <View style={{ flexDirection: "row", alignItems: "center" }}>
-                  <Pressable
+                  <TactilePressable
                     onPress={() => router.back()}
                     hitSlop={8}
                     accessibilityRole="button"
                     accessibilityLabel="返回"
-                    style={({ pressed }) => ({
+                    pressedOpacity={0.72}
+                    style={{
                       width: 36,
                       height: 36,
                       borderRadius: 18,
@@ -1847,15 +1901,14 @@ export function AssistantScreen() {
                       borderColor: isDark
                         ? "rgba(255,255,255,0.12)"
                         : "rgba(148,163,184,0.25)",
-                      opacity: pressed ? 0.72 : 1,
-                    })}
+                    }}
                   >
                     <Ionicons
                       name="chevron-back"
                       size={18}
                       color={isDark ? "#E2E8F0" : "#334155"}
                     />
-                  </Pressable>
+                  </TactilePressable>
 
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
@@ -1925,15 +1978,16 @@ export function AssistantScreen() {
                   </View>
 
                   {/* 右侧控制组：语音 + 人设设置 + 可展开互动浮层的大肥鱼头像 */}
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
                     {whale ? (
                       <>
-                        <Pressable
+                        <TactilePressable
                           onPress={toggleVoice}
                           hitSlop={8}
                           accessibilityRole="button"
                           accessibilityLabel={voiceOn ? "关闭鱼语" : "开启鱼语"}
-                          style={({ pressed }) => ({
+                          pressedOpacity={0.72}
+                          style={{
                             width: 34,
                             height: 34,
                             borderRadius: 17,
@@ -1954,8 +2008,7 @@ export function AssistantScreen() {
                               : isDark
                                 ? "rgba(255,255,255,0.1)"
                                 : "rgba(148,163,184,0.24)",
-                            opacity: pressed ? 0.72 : 1,
-                          })}
+                          }}
                         >
                           <Ionicons
                             name={voiceOn ? "volume-high" : "volume-mute"}
@@ -1970,17 +2023,18 @@ export function AssistantScreen() {
                                   : "#64748B"
                             }
                           />
-                        </Pressable>
+                        </TactilePressable>
 
-                        <Pressable
+                        <TactilePressable
                           accessibilityRole="button"
                           accessibilityLabel="人设与记忆"
                           onPress={() => {
-                            if (popoverOpen) closeCompanionPopover(true);
+                            if (popoverOpen) closeCompanionPopover();
                             router.push("/whale-settings");
                           }}
                           hitSlop={6}
-                          style={({ pressed }) => ({
+                          pressedOpacity={0.72}
+                          style={{
                             width: 34,
                             height: 34,
                             borderRadius: 17,
@@ -1993,15 +2047,14 @@ export function AssistantScreen() {
                             borderColor: isDark
                               ? "rgba(255,255,255,0.1)"
                               : "rgba(148,163,184,0.24)",
-                            opacity: pressed ? 0.72 : 1,
-                          })}
+                          }}
                         >
                           <Ionicons
                             name="options-outline"
                             size={16.5}
                             color={isDark ? "#BAE6FD" : "#0369A1"}
                           />
-                        </Pressable>
+                        </TactilePressable>
                       </>
                     ) : null}
 
@@ -2194,59 +2247,30 @@ export function AssistantScreen() {
               </Animated.View>
             ) : null}
 
-            <FlatList
-              ref={scrollRef}
-              data={displayMessages}
-              inverted
-              keyExtractor={messageKey}
-              className="flex-1"
-              style={{ paddingHorizontal: 16 }}
-              contentContainerStyle={{ paddingTop: 12, paddingBottom: 18 }}
-              initialNumToRender={12}
-              maxToRenderPerBatch={6}
-              windowSize={7}
-              removeClippedSubviews={false}
-              overScrollMode="never"
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-              onScroll={(event) => {
-                followLatest.current = event.nativeEvent.contentOffset.y < 100;
-              }}
-              scrollEventThrottle={100}
-              onContentSizeChange={() => {
-                if (followLatest.current) {
-                  scrollRef.current?.scrollToOffset({ offset: 0, animated: false });
-                }
-              }}
-              renderItem={({ item }) => (
-                <View style={{ marginBottom: 14 }}>
-                  {whale ? (
-                    <WhaleChatBubble
-                      message={item}
-                      isDark={isDark}
-                      selectMode={selectMode}
-                      checked={selectedIds.includes(item.id)}
-                      onSelect={onSelectMessage}
-                      onPreview={setPreview}
-                      onApply={applyActions}
-                    />
-                  ) : (
-                    <AssistantMessage
-                      message={item}
-                      whale={false}
-                      selectMode={selectMode}
-                      checked={selectedIds.includes(item.id)}
-                      onSelect={onSelectMessage}
-                      onPreview={setPreview}
-                      onApply={applyActions}
-                    />
-                  )}
-                </View>
-              )}
-              ListEmptyComponent={
+            {displayMessages.length === 0 ? (
+              <ScrollView
+                className="flex-1"
+                style={{ paddingHorizontal: 16 }}
+                contentContainerStyle={{
+                  flexGrow: 1,
+                  justifyContent: kbHeight > 0 ? "flex-start" : "center",
+                  paddingTop: 10,
+                  paddingBottom: 18,
+                }}
+                overScrollMode="never"
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                {!whale ? (
+                  <AssistantEmptyState
+                    isDark={isDark}
+                    compact={kbHeight > 0}
+                    reducedMotion={Boolean(reducedMotion)}
+                    onPick={(text) => void send(text)}
+                  />
+                ) : (
                 <Animated.View
                   entering={reducedMotion ? undefined : FadeInDown.springify().damping(20)}
-                  style={{ marginTop: 8 }}
                 >
                   <GlassContainer
                     radius={28}
@@ -2394,25 +2418,27 @@ export function AssistantScreen() {
                             }}
                           >
                             {WHALE_STARTER_CARDS.map((card) => (
-                              <Pressable
+                              <TactilePressable
                                 key={card.title}
                                 onPress={() => void send(card.prompt)}
-                                style={({ pressed }) => ({
-                                  width: "48.4%",
+                                pressedOpacity={0.78}
+                                pressedScale={0.97}
+                                style={{
+                                  flexGrow: 1,
+                                  flexBasis: "46%",
+                                  minWidth: 0,
                                   borderRadius: 16,
                                   borderCurve: "continuous",
                                   paddingHorizontal: 11,
                                   paddingVertical: 10,
                                   backgroundColor: isDark
                                     ? "rgba(255,255,255,0.06)"
-                                    : "rgba(255,255,255,0.68)",
+                                    : "rgba(255,255,255,0.72)",
                                   borderWidth: 1,
                                   borderColor: isDark
                                     ? "rgba(186,230,253,0.16)"
                                     : "rgba(186,230,253,0.58)",
-                                  opacity: pressed ? 0.78 : 1,
-                                  transform: [{ scale: pressed ? 0.97 : 1 }],
-                                })}
+                                }}
                               >
                                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                                   <View
@@ -2430,7 +2456,9 @@ export function AssistantScreen() {
                                     <Ionicons name={card.icon} size={13} color={card.color} />
                                   </View>
                                   <Text
+                                    numberOfLines={1}
                                     style={{
+                                      flex: 1,
                                       fontSize: 12,
                                       fontWeight: "700",
                                       color: isDark ? "#E2F2FF" : "#0F2942",
@@ -2449,107 +2477,229 @@ export function AssistantScreen() {
                                 >
                                   {card.subtitle}
                                 </Text>
-                              </Pressable>
+                              </TactilePressable>
                             ))}
                           </View>
                         </>
-                      ) : (
-                        <View className="mt-3.5 w-full gap-y-2">
-                          {SUGGESTIONS.map((s) => (
-                            <SuggestionButton
-                              key={s}
-                              label={s}
-                              onPress={() => void send(s)}
-                            />
-                          ))}
-                        </View>
-                      )}
+                      ) : null}
                     </View>
                   </GlassContainer>
                 </Animated.View>
-              }
-              ListHeaderComponent={
-                <View>
-                  {busy ? (
+                )}
+
+                {busy ? (
+                  <View style={{ marginTop: 12 }}>
                     <WhaleTypingBubble
                       whale={whale}
                       personaName={personaName}
                       isDark={isDark}
                     />
-                  ) : null}
-                  {notice ? (
-                    <Animated.View
-                      entering={FadeInDown.duration(180)}
-                      style={{ marginTop: 8, marginBottom: 4 }}
+                  </View>
+                ) : null}
+                {notice ? (
+                  <Animated.View
+                    entering={FadeInDown.duration(180)}
+                    style={{ marginTop: 10 }}
+                  >
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 8,
+                        borderRadius: 16,
+                        borderCurve: "continuous",
+                        borderWidth: 1,
+                        paddingHorizontal: 13,
+                        paddingVertical: 10,
+                        borderColor:
+                          notice.type === "error"
+                            ? isDark
+                              ? "rgba(251,113,133,0.34)"
+                              : "rgba(244,63,94,0.32)"
+                            : isDark
+                              ? "rgba(52,211,153,0.34)"
+                              : "rgba(16,185,129,0.32)",
+                        backgroundColor:
+                          notice.type === "error"
+                            ? isDark
+                              ? "rgba(244,63,94,0.16)"
+                              : "rgba(255,241,242,0.88)"
+                            : isDark
+                              ? "rgba(16,185,129,0.16)"
+                              : "rgba(236,253,245,0.88)",
+                      }}
                     >
-                      <View
+                      <Ionicons
+                        name={
+                          notice.type === "error"
+                            ? "alert-circle-outline"
+                            : "checkmark-circle-outline"
+                        }
+                        size={16}
+                        color={
+                          notice.type === "error"
+                            ? isDark
+                              ? "#FDA4AF"
+                              : "#E11D48"
+                            : isDark
+                              ? "#6EE7B7"
+                              : "#059669"
+                        }
+                      />
+                      <Text
                         style={{
-                          flexDirection: "row",
-                          alignItems: "center",
-                          gap: 8,
-                          borderRadius: 16,
-                          borderCurve: "continuous",
-                          borderWidth: 1,
-                          paddingHorizontal: 13,
-                          paddingVertical: 10,
-                          borderColor:
+                          flex: 1,
+                          fontSize: 11.5,
+                          lineHeight: 17,
+                          color:
                             notice.type === "error"
                               ? isDark
-                                ? "rgba(251,113,133,0.34)"
-                                : "rgba(244,63,94,0.32)"
+                                ? "#FFE4E6"
+                                : "#9F1239"
                               : isDark
-                                ? "rgba(52,211,153,0.34)"
-                                : "rgba(16,185,129,0.32)",
-                          backgroundColor:
-                            notice.type === "error"
-                              ? isDark
-                                ? "rgba(244,63,94,0.16)"
-                                : "rgba(255,241,242,0.88)"
-                              : isDark
-                                ? "rgba(16,185,129,0.16)"
-                                : "rgba(236,253,245,0.88)",
+                                ? "#D1FAE5"
+                                : "#065F46",
                         }}
                       >
-                        <Ionicons
-                          name={
-                            notice.type === "error"
-                              ? "alert-circle-outline"
-                              : "checkmark-circle-outline"
-                          }
-                          size={16}
-                          color={
-                            notice.type === "error"
-                              ? isDark
-                                ? "#FDA4AF"
-                                : "#E11D48"
-                              : isDark
-                                ? "#6EE7B7"
-                                : "#059669"
-                          }
-                        />
-                        <Text
+                        {notice.text}
+                      </Text>
+                    </View>
+                  </Animated.View>
+                ) : null}
+              </ScrollView>
+            ) : (
+              <FlatList
+                ref={scrollRef}
+                data={displayMessages}
+                inverted
+                keyExtractor={messageKey}
+                className="flex-1"
+                style={{ paddingHorizontal: 16 }}
+                contentContainerStyle={{ paddingTop: 12, paddingBottom: 18 }}
+                initialNumToRender={12}
+                maxToRenderPerBatch={6}
+                windowSize={7}
+                removeClippedSubviews={false}
+                overScrollMode="never"
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+                onScroll={(event) => {
+                  followLatest.current = event.nativeEvent.contentOffset.y < 100;
+                }}
+                scrollEventThrottle={100}
+                onContentSizeChange={() => {
+                  if (followLatest.current) {
+                    scrollRef.current?.scrollToOffset({ offset: 0, animated: false });
+                  }
+                }}
+                renderItem={({ item }) => (
+                  <View style={{ marginBottom: 14 }}>
+                    {whale ? (
+                      <WhaleChatBubble
+                        message={item}
+                        isDark={isDark}
+                        selectMode={selectMode}
+                        checked={selectedIds.includes(item.id)}
+                        onSelect={onSelectMessage}
+                        onPreview={setPreview}
+                        onApply={applyActions}
+                      />
+                    ) : (
+                      <AssistantMessage
+                        message={item}
+                        whale={false}
+                        selectMode={selectMode}
+                        checked={selectedIds.includes(item.id)}
+                        onSelect={onSelectMessage}
+                        onPreview={setPreview}
+                        onApply={applyActions}
+                      />
+                    )}
+                  </View>
+                )}
+                ListHeaderComponent={
+                  <View>
+                    {busy ? (
+                      <WhaleTypingBubble
+                        whale={whale}
+                        personaName={personaName}
+                        isDark={isDark}
+                      />
+                    ) : null}
+                    {notice ? (
+                      <Animated.View
+                        entering={FadeInDown.duration(180)}
+                        style={{ marginTop: 8, marginBottom: 4 }}
+                      >
+                        <View
                           style={{
-                            flex: 1,
-                            fontSize: 11.5,
-                            lineHeight: 17,
-                            color:
+                            flexDirection: "row",
+                            alignItems: "center",
+                            gap: 8,
+                            borderRadius: 16,
+                            borderCurve: "continuous",
+                            borderWidth: 1,
+                            paddingHorizontal: 13,
+                            paddingVertical: 10,
+                            borderColor:
                               notice.type === "error"
                                 ? isDark
-                                  ? "#FFE4E6"
-                                  : "#9F1239"
+                                  ? "rgba(251,113,133,0.34)"
+                                  : "rgba(244,63,94,0.32)"
                                 : isDark
-                                  ? "#D1FAE5"
-                                  : "#065F46",
+                                  ? "rgba(52,211,153,0.34)"
+                                  : "rgba(16,185,129,0.32)",
+                            backgroundColor:
+                              notice.type === "error"
+                                ? isDark
+                                  ? "rgba(244,63,94,0.16)"
+                                  : "rgba(255,241,242,0.88)"
+                                : isDark
+                                  ? "rgba(16,185,129,0.16)"
+                                  : "rgba(236,253,245,0.88)",
                           }}
                         >
-                          {notice.text}
-                        </Text>
-                      </View>
-                    </Animated.View>
-                  ) : null}
-                </View>
-              }
-            />
+                          <Ionicons
+                            name={
+                              notice.type === "error"
+                                ? "alert-circle-outline"
+                                : "checkmark-circle-outline"
+                            }
+                            size={16}
+                            color={
+                              notice.type === "error"
+                                ? isDark
+                                  ? "#FDA4AF"
+                                  : "#E11D48"
+                                : isDark
+                                  ? "#6EE7B7"
+                                  : "#059669"
+                            }
+                          />
+                          <Text
+                            style={{
+                              flex: 1,
+                              fontSize: 11.5,
+                              lineHeight: 17,
+                              color:
+                                notice.type === "error"
+                                  ? isDark
+                                    ? "#FFE4E6"
+                                    : "#9F1239"
+                                  : isDark
+                                    ? "#D1FAE5"
+                                    : "#065F46",
+                            }}
+                          >
+                            {notice.text}
+                          </Text>
+                        </View>
+                      </Animated.View>
+                    ) : null}
+                  </View>
+                }
+              />
+            )}
           </View>
 
           {/* 用户专属：大肥鱼图标化液态玻璃快捷胶囊条 */}
@@ -2686,8 +2836,8 @@ export function AssistantScreen() {
                   pointerEvents="none"
                   colors={
                     isDark
-                      ? ["rgba(15,27,48,0.78)", "rgba(12,22,40,0.86)"]
-                      : ["rgba(255,255,255,0.76)", "rgba(240,249,255,0.84)"]
+                      ? ["rgba(15,27,48,0.86)", "rgba(12,22,40,0.92)"]
+                      : ["rgba(255,255,255,0.88)", "rgba(242,249,255,0.94)"]
                   }
                   start={{ x: 0, y: 0 }}
                   end={{ x: 0.9, y: 1 }}
@@ -2721,11 +2871,12 @@ export function AssistantScreen() {
                     </Pressable>
                   </Animated.View>
 
-                  <View style={{ flex: 1, minWidth: 0 }}>
+                  <View style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                       <Text
                         numberOfLines={1}
                         style={{
+                          flexShrink: 1,
                           fontSize: 15.5,
                           fontWeight: "800",
                           color: isDark ? "#F0F9FF" : "#0C4A6E",
@@ -2735,15 +2886,17 @@ export function AssistantScreen() {
                       </Text>
                       <View
                         style={{
+                          flexShrink: 0,
                           borderRadius: 999,
-                          paddingHorizontal: 7,
-                          paddingVertical: 2,
+                          paddingHorizontal: 7.5,
+                          paddingVertical: 2.5,
                           backgroundColor: isDark
                             ? "rgba(167,139,250,0.2)"
                             : "rgba(139,92,246,0.12)",
                         }}
                       >
                         <Text
+                          numberOfLines={1}
                           style={{
                             fontSize: 9.5,
                             fontWeight: "700",
@@ -2772,6 +2925,7 @@ export function AssistantScreen() {
                         }}
                       />
                       <Text
+                        numberOfLines={1}
                         style={{
                           fontSize: 11,
                           fontWeight: "600",
@@ -2781,6 +2935,7 @@ export function AssistantScreen() {
                         {emotionDesc.label}
                       </Text>
                       <Text
+                        numberOfLines={1}
                         style={{
                           fontSize: 10,
                           color: isDark ? "#94A3B8" : "#64748B",
@@ -2791,29 +2946,34 @@ export function AssistantScreen() {
                     </View>
                   </View>
 
-                  <Pressable
+                  <TactilePressable
                     onPress={() => closeCompanionPopover()}
                     hitSlop={8}
                     accessibilityRole="button"
                     accessibilityLabel="关闭"
-                    style={({ pressed }) => ({
-                      width: 28,
-                      height: 28,
-                      borderRadius: 14,
+                    pressedOpacity={0.7}
+                    style={{
+                      flexShrink: 0,
+                      width: 30,
+                      height: 30,
+                      borderRadius: 15,
                       alignItems: "center",
                       justifyContent: "center",
                       backgroundColor: isDark
-                        ? "rgba(255,255,255,0.08)"
-                        : "rgba(148,163,184,0.14)",
-                      opacity: pressed ? 0.7 : 1,
-                    })}
+                        ? "rgba(255,255,255,0.09)"
+                        : "rgba(148,163,184,0.15)",
+                      borderWidth: 0.75,
+                      borderColor: isDark
+                        ? "rgba(255,255,255,0.14)"
+                        : "rgba(148,163,184,0.24)",
+                    }}
                   >
                     <Ionicons
                       name="close"
                       size={15}
                       color={isDark ? "#BAE6FD" : "#0369A1"}
                     />
-                  </Pressable>
+                  </TactilePressable>
                 </View>
 
                 {/* 2. 柔光角色台词反馈条（点头像/摸头/喂饭实时互动，告别生硬黑框） */}
@@ -2981,29 +3141,42 @@ export function AssistantScreen() {
                       </Text>
                     </View>
 
-                    <Pressable
+                    <TactilePressable
                       onPress={handleTogglePetFromPopover}
                       accessibilityRole="button"
                       accessibilityLabel={petVisible ? "收回桌宠" : "召唤桌宠"}
-                      style={({ pressed }) => ({
+                      pressedOpacity={0.82}
+                      pressedScale={0.96}
+                      style={{
+                        flexShrink: 0,
+                        height: 34,
                         borderRadius: 999,
                         overflow: "hidden",
-                        paddingHorizontal: 12,
-                        paddingVertical: 7.5,
+                        paddingHorizontal: 14,
+                        alignItems: "center",
+                        justifyContent: "center",
                         backgroundColor: petVisible
                           ? isDark
-                            ? "rgba(255,255,255,0.10)"
-                            : "rgba(255,255,255,0.88)"
+                            ? "rgba(255,255,255,0.11)"
+                            : "rgba(255,255,255,0.92)"
                           : "#0EA5E9",
                         borderWidth: 1,
                         borderColor: petVisible
                           ? isDark
-                            ? "rgba(255,255,255,0.16)"
-                            : "rgba(148,163,184,0.28)"
-                          : "rgba(255,255,255,0.34)",
-                        opacity: pressed ? 0.82 : 1,
-                        transform: [{ scale: pressed ? 0.95 : 1 }],
-                      })}
+                            ? "rgba(255,255,255,0.18)"
+                            : "rgba(148,163,184,0.32)"
+                          : "rgba(255,255,255,0.38)",
+                        boxShadow: petVisible
+                          ? undefined
+                          : [
+                              {
+                                offsetX: 0,
+                                offsetY: 3,
+                                blurRadius: 8,
+                                color: "rgba(14,165,233,0.28)",
+                              },
+                            ],
+                      }}
                     >
                       {!petVisible ? (
                         <LinearGradient
@@ -3015,8 +3188,9 @@ export function AssistantScreen() {
                         />
                       ) : null}
                       <Text
+                        numberOfLines={1}
                         style={{
-                          fontSize: 11,
+                          fontSize: 11.5,
                           fontWeight: "800",
                           color: petVisible
                             ? isDark
@@ -3027,33 +3201,37 @@ export function AssistantScreen() {
                       >
                         {petVisible ? "收回" : "召唤出来"}
                       </Text>
-                    </Pressable>
+                    </TactilePressable>
                   </View>
 
                   {/* Android 原生桌面悬浮随行快捷切换条 */}
                   {Platform.OS === "android" && desktopPetAvailable ? (
-                    <Pressable
+                    <TactilePressable
                       onPress={() => void handleDesktopFollowFromPopover()}
-                      style={({ pressed }) => ({
+                      accessibilityRole="button"
+                      accessibilityLabel="切后台自动驻留手机桌面"
+                      pressedOpacity={0.78}
+                      style={{
                         flexDirection: "row",
                         alignItems: "center",
                         justifyContent: "space-between",
+                        gap: 8,
+                        minHeight: 37,
                         paddingHorizontal: 12,
-                        paddingVertical: 7.5,
-                        borderTopWidth: 0.75,
+                        paddingVertical: 8,
+                        borderTopWidth: 1,
                         borderTopColor: isDark
-                          ? "rgba(255,255,255,0.08)"
-                          : "rgba(148,163,184,0.18)",
+                          ? "rgba(186,230,253,0.12)"
+                          : "rgba(56,189,248,0.22)",
                         backgroundColor: isDark
-                          ? "rgba(15,23,42,0.22)"
-                          : "rgba(255,255,255,0.36)",
-                        opacity: pressed ? 0.78 : 1,
-                      })}
+                          ? "rgba(15,23,42,0.30)"
+                          : "rgba(255,255,255,0.52)",
+                      }}
                     >
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                      <View style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 6 }}>
                         <Ionicons
                           name="phone-portrait-outline"
-                          size={12.5}
+                          size={13}
                           color={
                             autoFollow && desktopPermission
                               ? "#38BDF8"
@@ -3063,8 +3241,10 @@ export function AssistantScreen() {
                           }
                         />
                         <Text
+                          numberOfLines={1}
                           style={{
-                            fontSize: 10.5,
+                            flex: 1,
+                            fontSize: 11,
                             fontWeight: "600",
                             color: isDark ? "#CBD5E1" : "#334155",
                           }}
@@ -3072,28 +3252,71 @@ export function AssistantScreen() {
                           切后台自动驻留手机桌面
                         </Text>
                       </View>
-                      <Text
+                      <View
                         style={{
-                          fontSize: 10,
-                          fontWeight: "700",
-                          color:
+                          flexShrink: 0,
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 4,
+                          borderRadius: 999,
+                          paddingHorizontal: 8.5,
+                          paddingVertical: 3,
+                          backgroundColor:
                             autoFollow && desktopPermission
                               ? isDark
-                                ? "#7DD3FC"
-                                : "#0284C7"
+                                ? "rgba(56,189,248,0.20)"
+                                : "rgba(14,165,233,0.14)"
                               : isDark
-                                ? "#94A3B8"
-                                : "#64748B",
+                                ? "rgba(255,255,255,0.08)"
+                                : "rgba(148,163,184,0.16)",
+                          borderWidth: 0.75,
+                          borderColor:
+                            autoFollow && desktopPermission
+                              ? isDark
+                                ? "rgba(125,211,252,0.36)"
+                                : "rgba(14,165,233,0.28)"
+                              : isDark
+                                ? "rgba(255,255,255,0.14)"
+                                : "rgba(148,163,184,0.24)",
                         }}
                       >
-                        {autoFollow && desktopPermission ? "已开启" : "去开启"}
-                      </Text>
-                    </Pressable>
+                        <View
+                          style={{
+                            width: 5,
+                            height: 5,
+                            borderRadius: 2.5,
+                            backgroundColor:
+                              autoFollow && desktopPermission
+                                ? "#10B981"
+                                : isDark
+                                  ? "#64748B"
+                                  : "#94A3B8",
+                          }}
+                        />
+                        <Text
+                          numberOfLines={1}
+                          style={{
+                            fontSize: 10,
+                            fontWeight: "700",
+                            color:
+                              autoFollow && desktopPermission
+                                ? isDark
+                                  ? "#7DD3FC"
+                                  : "#0284C7"
+                                : isDark
+                                  ? "#94A3B8"
+                                  : "#64748B",
+                          }}
+                        >
+                          {autoFollow && desktopPermission ? "已开启" : "去开启"}
+                        </Text>
+                      </View>
+                    </TactilePressable>
                   ) : null}
                 </View>
 
                 {/* 5. 底部快捷互动三键：摸摸头 / 喂白饭 / 人设记忆 */}
-                <View style={{ flexDirection: "row", gap: 7, marginTop: 10 }}>
+                <View style={{ flexDirection: "row", alignItems: "stretch", gap: 8, marginTop: 11 }}>
                   <PopoverQuickAction
                     icon="hand-left-outline"
                     label="摸摸头"
@@ -3114,7 +3337,7 @@ export function AssistantScreen() {
                     accent="#38BDF8"
                     isDark={isDark}
                     onPress={() => {
-                      closeCompanionPopover(true);
+                      closeCompanionPopover();
                       router.push("/whale-settings");
                     }}
                   />

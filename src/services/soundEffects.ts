@@ -75,8 +75,9 @@ export interface PlaySfxOptions {
   bypassToggle?: boolean;
 }
 
-const MAX_ACTIVE_PLAYERS = 8;
-const COOLDOWN_MS = 45;
+const MAX_ACTIVE_PLAYERS = 4;
+const COOLDOWN_MS = 160;
+const GLOBAL_COOLDOWN_MS = 90;
 const SAFETY_TIMEOUT_MS = 4000;
 
 interface ActiveHandle {
@@ -86,6 +87,7 @@ interface ActiveHandle {
 
 const activeHandles = new Set<ActiveHandle>();
 const lastPlayedAt = new Map<SfxId, number>();
+let lastGlobalPlayedAt = 0;
 let audioModeReady: Promise<void> | null = null;
 
 function ensureAudioMode() {
@@ -126,6 +128,8 @@ export function playSfx(id: SfxId, opts: PlaySfxOptions = {}): void {
   if (!opts.ignoreCooldown) {
     const prev = lastPlayedAt.get(id) ?? 0;
     if (now - prev < COOLDOWN_MS) return;
+    if (now - lastGlobalPlayedAt < GLOBAL_COOLDOWN_MS) return;
+    lastGlobalPlayedAt = now;
   }
   lastPlayedAt.set(id, now);
 
@@ -145,8 +149,8 @@ export function playSfx(id: SfxId, opts: PlaySfxOptions = {}): void {
         keepAudioSessionActive: false,
       });
 
-      const vol = opts.volume ?? 0.72;
-      player.volume = Math.max(0, Math.min(1, Number.isFinite(vol) ? vol : 0.72));
+      const vol = opts.volume ?? 0.58;
+      player.volume = Math.max(0, Math.min(1, Number.isFinite(vol) ? vol : 0.58));
 
       if (opts.rate && Number.isFinite(opts.rate) && Math.abs(opts.rate - 1) > 0.01) {
         const clampedRate = Math.max(0.65, Math.min(1.65, opts.rate));

@@ -1,6 +1,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { memo, useCallback, useMemo, useRef, type ComponentRef } from 'react';
-import { Pressable, ScrollView, TextInput, View } from 'react-native';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
+import { Keyboard, Platform, Pressable, ScrollView, TextInput, View, useWindowDimensions } from 'react-native';
+import Animated, { Easing, useAnimatedStyle, useReducedMotion, useSharedValue, withTiming } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChatMessageList } from '../ChatMessageList';
 import { RESIDENTS, RESIDENT_IDS, type ResidentId } from '@/utils/farmLife';
 import type { FarmGroupMessage } from '@/utils/farmGroupChat';
@@ -112,6 +114,62 @@ export function FarmGroupChatSheet({
   maxHeight: number;
 }) {
   const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const reducedMotion = useReducedMotion();
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const activeKeyboardHeight = visible ? keyboardHeight : 0;
+  const keyboardOpen = activeKeyboardHeight > 0;
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, event => {
+      setKeyboardHeight(Math.max(0, Math.round(event.endCoordinates?.height ?? 0)));
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  const bannerExpandedHeight = useMemo(() => {
+    const innerWidth = Math.min(380, Math.max(200, windowWidth - 28));
+    return Math.ceil(innerWidth * (44 / 150)) + 14;
+  }, [windowWidth]);
+
+  const bannerProgress = useSharedValue(1);
+  useEffect(() => {
+    const target = keyboardOpen ? 0 : 1;
+    if (reducedMotion) {
+      bannerProgress.set(target);
+    } else {
+      bannerProgress.set(
+        withTiming(target, {
+          duration: keyboardOpen ? 160 : 210,
+          easing: Easing.out(Easing.cubic),
+        }),
+      );
+    }
+  }, [keyboardOpen, reducedMotion, bannerProgress]);
+
+  const bannerAnimStyle = useAnimatedStyle(() => ({
+    height: bannerProgress.get() * bannerExpandedHeight,
+    opacity: bannerProgress.get(),
+  }));
+
+  const effectiveListMaxHeight = useMemo(() => {
+    if (!keyboardOpen) {
+      return Math.max(176, maxHeight - 24);
+    }
+    // 键盘弹起且顶部横幅收起后，为消息区动态保留安全最大高度，防止挤压固定操作栏
+    const availableForList = windowHeight - activeKeyboardHeight - insets.top - 244;
+    return Math.max(108, Math.min(maxHeight + 36, Math.round(availableForList)));
+  }, [keyboardOpen, maxHeight, windowHeight, activeKeyboardHeight, insets.top]);
+
   const listMessages = useMemo(
     () => messages.map(m => ({ ...m, role: (m.speaker === 'player' ? 'user' : 'assistant') as 'user' | 'assistant' })),
     [messages],
@@ -131,6 +189,9 @@ export function FarmGroupChatSheet({
     }
   };
 
+  const isPresetActive = (presetMembers: readonly ResidentId[]) =>
+    members.length === presetMembers.length && presetMembers.every(id => members.includes(id));
+
   return (
     <FarmNPCSheet visible={visible} onClose={onClose}>
       <View
@@ -142,23 +203,46 @@ export function FarmGroupChatSheet({
           overflow: 'hidden',
         }}
       >
-        <View style={{ paddingHorizontal: 14, paddingTop: 10 }}>
-          <FarmIllustration theme="group" />
-        </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingTop: 8, paddingBottom: 6, gap: 8 }}>
+        <Animated.View
+          pointerEvents={keyboardOpen ? 'none' : 'auto'}
+          style={[
+            {
+              flexShrink: 0,
+              overflow: 'hidden',
+            },
+            bannerAnimStyle,
+          ]}
+        >
+          <View style={{ paddingHorizontal: 14, paddingTop: 10 }}>
+            <FarmIllustration theme="group" />
+          </View>
+        </Animated.View>
+
+        <View
+          style={{
+            flexShrink: 0,
+            flexDirection: 'row',
+            alignItems: 'center',
+            paddingHorizontal: 14,
+            paddingTop: keyboardOpen ? 4 : 8,
+            paddingBottom: 6,
+            gap: 8,
+          }}
+        >
           <FarmSlotFrame size={34} rarity={4}>
             <FarmUiIcon name="groupChat" size={20} />
           </FarmSlotFrame>
-          <View style={{ flex: 1 }}>
+          <View style={{ flex: 1, minWidth: 0 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <FarmText variant="title" style={{ color: '#59432E', fontSize: 15, fontWeight: '800' }}>
+              <FarmText variant="title" numberOfLines={1} style={{ color: '#59432E', fontSize: 15, fontWeight: '800' }}>
                 院子家庭群聊
               </FarmText>
-              <FarmText style={{ color: '#8A785E', fontSize: 10.5 }}>
+              <FarmText numberOfLines={1} style={{ color: '#8A785E', fontSize: 10.5, flexShrink: 0 }}>
                 {members.length} 人在场
               </FarmText>
               <View
                 style={{
+                  flexShrink: 0,
                   paddingHorizontal: 6,
                   paddingVertical: 1.5,
                   borderRadius: 99,
@@ -170,7 +254,7 @@ export function FarmGroupChatSheet({
                 </FarmText>
               </View>
             </View>
-            <FarmText style={{ color: '#8A785E', fontSize: 10, marginTop: 1 }}>
+            <FarmText numberOfLines={1} style={{ color: '#8A785E', fontSize: 10, marginTop: 1 }}>
               点击头像切换在场家人，可 @某人 顺手派活或传话
             </FarmText>
           </View>
@@ -179,111 +263,161 @@ export function FarmGroupChatSheet({
             accessibilityLabel="关闭家庭群聊"
             onPress={onClose}
             hitSlop={8}
-            style={{ width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F3E6D0', borderWidth: 1, borderColor: '#DFCCA9' }}
+            style={{
+              flexShrink: 0,
+              width: 28,
+              height: 28,
+              borderRadius: 8,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: '#F3E6D0',
+              borderWidth: 1,
+              borderColor: '#DFCCA9',
+            }}
           >
             <Ionicons name="close" size={16} color="#8B7254" />
           </Pressable>
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ gap: 6, paddingHorizontal: 14, paddingBottom: 7, alignItems: 'center' }}
-        >
-          {RESIDENT_IDS.map(id => {
-            const active = members.includes(id);
-            const accent = MEMBER_COLORS[id];
-            return (
+        <View style={{ flexShrink: 0, height: 40, justifyContent: 'center' }}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            style={{ flexGrow: 0, flexShrink: 0 }}
+            contentContainerStyle={{ gap: 6, paddingHorizontal: 14, alignItems: 'center' }}
+          >
+            {RESIDENT_IDS.map(id => {
+              const active = members.includes(id);
+              const accent = MEMBER_COLORS[id];
+              return (
+                <Pressable
+                  key={id}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                  onPress={() => toggleMember(id)}
+                  style={{
+                    flexShrink: 0,
+                    height: 32,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 5,
+                    paddingLeft: 4,
+                    paddingRight: 9,
+                    borderRadius: 99,
+                    backgroundColor: active ? '#F5EAD6' : '#F6F1E7',
+                    borderWidth: 1.2,
+                    borderColor: active ? accent : '#E3D7C6',
+                    opacity: active ? 1 : 0.55,
+                  }}
+                >
+                  <FarmSlotFrame size={24} rarity={active ? 4 : 1} selected={active}>
+                    <FarmPersonSprite who={id} size={16} active={false} centered />
+                  </FarmSlotFrame>
+                  <FarmText numberOfLines={1} style={{ color: active ? '#4F3B26' : '#8C7A63', fontSize: 11, lineHeight: 15, fontWeight: active ? '800' : '500' }}>
+                    {RESIDENTS[id].name}
+                  </FarmText>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+
+        <View style={{ flexShrink: 0, height: 38, justifyContent: 'center', marginBottom: 2 }}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            style={{ flexGrow: 0, flexShrink: 0 }}
+            contentContainerStyle={{ gap: 6, paddingHorizontal: 14, alignItems: 'center' }}
+          >
+            {PRESET_GROUPS.map(preset => {
+              const matched = isPresetActive(preset.members);
+              return (
+                <Pressable
+                  key={preset.label}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: matched }}
+                  disabled={busy}
+                  onPress={() => onChangeMembers(preset.members)}
+                  style={{
+                    flexShrink: 0,
+                    height: 29,
+                    paddingHorizontal: 11,
+                    borderRadius: 99,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: matched ? '#EFE0C4' : '#F3E9D8',
+                    borderWidth: 1,
+                    borderColor: matched ? '#C7A675' : '#DFCEB5',
+                    opacity: busy ? 0.5 : 1,
+                  }}
+                >
+                  <FarmText
+                    numberOfLines={1}
+                    style={{
+                      color: matched ? '#523B22' : '#6E573D',
+                      fontSize: 11,
+                      lineHeight: 15,
+                      fontWeight: matched ? '800' : '600',
+                    }}
+                  >
+                    {preset.label}
+                  </FarmText>
+                </Pressable>
+              );
+            })}
+            <Pressable
+              accessibilityRole="button"
+              disabled={busy}
+              onPress={onBanter}
+              style={{
+                flexShrink: 0,
+                height: 29,
+                paddingHorizontal: 11,
+                borderRadius: 99,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: '#E4ECD4',
+                borderWidth: 1,
+                borderColor: '#B8C79F',
+                opacity: busy ? 0.5 : 1,
+              }}
+            >
+              <FarmText numberOfLines={1} style={{ color: '#455B32', fontSize: 11, lineHeight: 15, fontWeight: '700' }}>
+                让家人们自己聊两句
+              </FarmText>
+            </Pressable>
+            {messages.length > 0 ? (
               <Pressable
-                key={id}
                 accessibilityRole="button"
-                accessibilityState={{ selected: active }}
-                onPress={() => toggleMember(id)}
+                disabled={busy}
+                onPress={onClear}
                 style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 5,
-                  paddingLeft: 4,
-                  paddingRight: 9,
-                  paddingVertical: 3,
+                  flexShrink: 0,
+                  height: 29,
+                  paddingHorizontal: 10,
                   borderRadius: 99,
-                  backgroundColor: active ? '#F5EAD6' : '#F6F1E7',
-                  borderWidth: 1.2,
-                  borderColor: active ? accent : '#E3D7C6',
-                  opacity: active ? 1 : 0.55,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: '#F5ECE0',
+                  borderWidth: 1,
+                  borderColor: '#E2D4C0',
+                  opacity: busy ? 0.5 : 1,
                 }}
               >
-                <FarmSlotFrame size={24} rarity={active ? 4 : 1} selected={active}>
-                  <FarmPersonSprite who={id} size={16} active={false} centered />
-                </FarmSlotFrame>
-                <FarmText style={{ color: active ? '#4F3B26' : '#8C7A63', fontSize: 11, fontWeight: active ? '800' : '500' }}>
-                  {RESIDENTS[id].name}
+                <FarmText numberOfLines={1} style={{ color: '#8A755B', fontSize: 11, lineHeight: 15 }}>
+                  清空记录
                 </FarmText>
               </Pressable>
-            );
-          })}
-        </ScrollView>
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ gap: 6, paddingHorizontal: 14, paddingBottom: 8 }}
-        >
-          {PRESET_GROUPS.map(preset => (
-            <Pressable
-              key={preset.label}
-              disabled={busy}
-              onPress={() => onChangeMembers(preset.members)}
-              style={{
-                paddingHorizontal: 10,
-                paddingVertical: 4.5,
-                borderRadius: 99,
-                backgroundColor: '#F3E9D8',
-                borderWidth: 1,
-                borderColor: '#DFCEB5',
-              }}
-            >
-              <FarmText style={{ color: '#6E573D', fontSize: 10.5, fontWeight: '600' }}>{preset.label}</FarmText>
-            </Pressable>
-          ))}
-          <Pressable
-            disabled={busy}
-            onPress={onBanter}
-            style={{
-              paddingHorizontal: 10,
-              paddingVertical: 4.5,
-              borderRadius: 99,
-              backgroundColor: '#E4ECD4',
-              borderWidth: 1,
-              borderColor: '#B8C79F',
-              opacity: busy ? 0.5 : 1,
-            }}
-          >
-            <FarmText style={{ color: '#455B32', fontSize: 10.5, fontWeight: '700' }}>让家人们自己聊两句</FarmText>
-          </Pressable>
-          {messages.length > 0 ? (
-            <Pressable
-              disabled={busy}
-              onPress={onClear}
-              style={{
-                paddingHorizontal: 9,
-                paddingVertical: 4.5,
-                borderRadius: 99,
-                backgroundColor: '#F5ECE0',
-                borderWidth: 1,
-                borderColor: '#E2D4C0',
-              }}
-            >
-              <FarmText style={{ color: '#8A755B', fontSize: 10.5 }}>清空记录</FarmText>
-            </Pressable>
-          ) : null}
-        </ScrollView>
+            ) : null}
+          </ScrollView>
+        </View>
 
         <ChatMessageList
           messages={listMessages}
-          maxHeight={Math.max(170, maxHeight - 54)}
+          maxHeight={effectiveListMaxHeight}
+          style={{ flexShrink: 1, flexGrow: 0, minHeight: 72 }}
           renderMessage={renderMessage}
           header={
             typingLabel || busy ? (
@@ -303,19 +437,22 @@ export function FarmGroupChatSheet({
         />
 
         {hint ? (
-          <FarmText style={{ paddingHorizontal: 14, paddingBottom: 4, color: '#8A7459', fontSize: 10.5 }}>
-            {hint}
-          </FarmText>
+          <View style={{ flexShrink: 0, paddingHorizontal: 14, paddingBottom: 4 }}>
+            <FarmText style={{ color: '#8A7459', fontSize: 10.5 }}>
+              {hint}
+            </FarmText>
+          </View>
         ) : null}
 
         <View
           style={{
+            flexShrink: 0,
             flexDirection: 'row',
             alignItems: 'flex-end',
             gap: 8,
             paddingHorizontal: 14,
             paddingTop: 6,
-            paddingBottom: 12,
+            paddingBottom: keyboardOpen ? 8 : 12,
             borderTopWidth: 1,
             borderTopColor: '#EADBC5',
             backgroundColor: '#FBF3E5',

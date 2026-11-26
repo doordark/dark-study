@@ -20,7 +20,6 @@ import {
   triggerWhaleWave,
 } from "@/components/WhaleSummonFX";
 import { resolveTint, type BackgroundTint } from "@/constants/backgrounds";
-import { playSfx } from "@/services/soundEffects";
 import { useSettings } from "@/store/useSettings";
 import { tapHaptic } from "@/utils/haptics";
 
@@ -147,7 +146,6 @@ function TabButton({ item }: { item: ActionItem }) {
   const handlePress = () => {
     if (isWhaleDock) {
       tapHaptic();
-      playSfx("whale_dock_boop", { volume: 0.68, ignoreCooldown: true });
       if (!reduced) {
         tapRing.set(0);
         tapRing.set(

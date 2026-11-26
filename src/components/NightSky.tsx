@@ -1055,7 +1055,7 @@ export function NightSky({
             if (n >= OWL_TAPS_NEEDED) {
               thumpHaptic();
               playSfx("owl_hoot", { volume: 0.74, ignoreCooldown: true });
-              playSfx("farm_event", { volume: 0.62 });
+              // 仅保留猫头鹰呼唤音，避免叠响
               enterFarm();
               return;
             }

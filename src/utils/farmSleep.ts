@@ -10,7 +10,7 @@ export type FarmRoomId = 'master' | 'xiaoba' | 'yujie' | 'weigang';
 
 export interface FarmRoomBedSlot {
   resident: IndoorSleeperId;
-  /** 房间 240×180 逻辑坐标系下睡姿贴图中心点 */
+  /** 房间 240×180 逻辑坐标系下床头「枕头」的矩形（x/y 为左上角）；头像枕在正中，下巴塞进被单 */
   x: number;
   y: number;
   w: number;
@@ -27,8 +27,10 @@ export interface FarmRoomMeta {
   occupants: readonly IndoorSleeperId[];
   /** 房间 240×180 逻辑坐标系下的床铺点击区（主卧可点击睡觉，兄弟房可参观或午休） */
   bedRect: { x: number; y: number; w: number; h: number };
-  /** 睡姿精灵摆放槽位（主卧双人床左右并排各一格） */
+  /** 枕头槽位（主卧双人床左右并排各一个枕头） */
   sleepSlots: readonly FarmRoomBedSlot[];
+  /** 被单翻边区域：从房间原画里裁这一条重新盖在头像下巴上，营造“钻进被窝”的融合感 */
+  sheetFold: { x: number; y: number; w: number; h: number };
   /** 书桌伴读入口是否存在 */
   hasDeskFocus: boolean;
   dayFlavor: string;
@@ -48,9 +50,10 @@ export const FARM_ROOMS: Record<FarmRoomId, FarmRoomMeta> = {
     occupants: ['door', 'gu'],
     bedRect: { x: 162, y: 66, w: 72, h: 104 },
     sleepSlots: [
-      { resident: 'door', x: 166, y: 74, w: 32, h: 42 },
-      { resident: 'gu', x: 198, y: 74, w: 32, h: 42 },
+      { resident: 'door', x: 168.3, y: 81.7, w: 27.7, h: 15 },
+      { resident: 'gu', x: 199, y: 81.7, w: 27.7, h: 15 },
     ],
+    sheetFold: { x: 163.7, y: 96.7, w: 67.6, h: 10 },
     hasDeskFocus: true,
     dayFlavor: '阳光斜斜照在双人床和电脑书桌上，窗外山坡绿意盎然',
     nightFlavor: '台灯晕开温柔暖光，door 和 顾 晚上并排睡在双人床上',
@@ -64,7 +67,8 @@ export const FARM_ROOMS: Record<FarmRoomId, FarmRoomMeta> = {
     bedType: 'single',
     occupants: ['xiaoba'],
     bedRect: { x: 166, y: 66, w: 60, h: 102 },
-    sleepSlots: [{ resident: 'xiaoba', x: 175, y: 74, w: 42, h: 46 }],
+    sleepSlots: [{ resident: 'xiaoba', x: 179.3, y: 81.7, w: 30, h: 16.3 }],
+    sheetFold: { x: 174.7, y: 98, w: 39.3, h: 10 },
     hasDeskFocus: true,
     dayFlavor: '书桌上摊着刚画一半的新关卡草图，仙人掌晒得正精神',
     nightFlavor: '小台灯暗了下来，格纹被子里传来安稳匀称的呼吸声',
@@ -78,7 +82,8 @@ export const FARM_ROOMS: Record<FarmRoomId, FarmRoomMeta> = {
     bedType: 'single',
     occupants: ['yujie'],
     bedRect: { x: 166, y: 66, w: 60, h: 102 },
-    sleepSlots: [{ resident: 'yujie', x: 175, y: 74, w: 42, h: 46 }],
+    sleepSlots: [{ resident: 'yujie', x: 179, y: 80.7, w: 31, h: 16 }],
+    sheetFold: { x: 174.3, y: 96.7, w: 40.7, h: 10 },
     hasDeskFocus: false,
     dayFlavor: '午后微风吹动窗帘，木吉他和耳机在阳光里格外精致',
     nightFlavor: '摘下眼镜的校草难得乖巧，正窝在薰衣草菱格被里做美梦',
@@ -92,7 +97,8 @@ export const FARM_ROOMS: Record<FarmRoomId, FarmRoomMeta> = {
     bedType: 'single',
     occupants: ['weigang'],
     bedRect: { x: 166, y: 66, w: 60, h: 102 },
-    sleepSlots: [{ resident: 'weigang', x: 175, y: 74, w: 42, h: 46 }],
+    sleepSlots: [{ resident: 'weigang', x: 179, y: 81, w: 30.3, h: 14 }],
+    sheetFold: { x: 174.3, y: 95, w: 40.3, h: 10 },
     hasDeskFocus: true,
     dayFlavor: '桌上有算盘、数学演算纸与仙侠小说，床头金鱼转着圈游',
     nightFlavor: '鱼缸泛着淡淡柔光，青绿被窝里的钓鱼佬梦里都在守漂',

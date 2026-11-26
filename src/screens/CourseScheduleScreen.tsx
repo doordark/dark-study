@@ -597,7 +597,7 @@ export function CourseScheduleScreen({
             }
           >
             <View className="flex-row items-center justify-between">
-              <View className="flex-1 pr-2">
+              <View className="min-w-0 flex-1 pr-2">
                 {/* 课表名称 + 学期外状态标签 */}
                 <View className="flex-row items-center gap-x-2">
                   <Pressable
@@ -605,20 +605,28 @@ export function CourseScheduleScreen({
                     onLongPress={() => setAfterHours("platform")}
                     delayLongPress={1600}
                     className="flex-row items-center self-start rounded-full py-0.5 pr-1.5"
+                    style={{ flexShrink: 1 }}
                   >
-                    <Text className="text-[10.5px] font-semibold tracking-wider text-sky-600/90 dark:text-sky-300/85">
+                    <Text
+                      numberOfLines={1}
+                      className="text-[10.5px] font-semibold tracking-wider text-sky-600/90 dark:text-sky-300/85"
+                      style={{ flexShrink: 1 }}
+                    >
                       {schedule.name}
                     </Text>
                     <Ionicons
                       name="chevron-down"
                       size={11}
                       color="#38BDF8"
-                      style={{ marginLeft: 2 }}
+                      style={{ marginLeft: 2, flexShrink: 0 }}
                     />
                   </Pressable>
                   {semesterBadge ? (
-                    <View className="rounded-full bg-amber-400/20 px-2 py-0.5">
-                      <Text className="text-[9.5px] font-bold text-amber-700 dark:text-amber-300">
+                    <View className="shrink-0 rounded-full bg-amber-400/20 px-2 py-0.5">
+                      <Text
+                        numberOfLines={1}
+                        className="text-[9.5px] font-bold text-amber-700 dark:text-amber-300"
+                      >
                         {semesterBadge}
                       </Text>
                     </View>
@@ -628,18 +636,28 @@ export function CourseScheduleScreen({
                 <Pressable
                   onLongPress={handleWeekTitleLongPress}
                   delayLongPress={800}
+                  style={{ width: "100%" }}
                 >
-                  <Text className="text-[24px] font-extrabold leading-7 text-slate-800 dark:text-white">
+                  <Text
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.85}
+                    className="text-[23px] font-extrabold leading-[27px] text-slate-800 dark:text-white"
+                  >
                     第 {activeWeek} 周
-                    <Text className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
-                      {" "}
-                      {viewDateLabel} · {viewWeekdayLabel}
-                    </Text>
+                  </Text>
+                  <Text
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.85}
+                    className="mt-0.5 text-[11.5px] font-medium leading-[15px] text-slate-500 dark:text-slate-400"
+                  >
+                    {viewDateLabel} {viewWeekdayLabel}
                   </Text>
                 </Pressable>
               </View>
 
-              <View className="flex-row items-center gap-x-1.5">
+              <View className="shrink-0 flex-row items-center gap-x-1.5">
                 {/* 偏离今天/本周时出现「回今天」一键复位胶囊 */}
                 {showBackToToday ? (
                   <Animated.View
@@ -652,7 +670,10 @@ export function CourseScheduleScreen({
                       accessibilityLabel="回到今天"
                       className="rounded-[12px] border border-sky-400/45 bg-sky-500/20 px-2.5 py-1.5"
                     >
-                      <Text className="text-[11px] font-bold text-sky-700 dark:text-sky-300">
+                      <Text
+                        numberOfLines={1}
+                        className="text-[11px] font-bold text-sky-700 dark:text-sky-300"
+                      >
                         今
                       </Text>
                     </Pressable>
@@ -705,6 +726,7 @@ export function CourseScheduleScreen({
                       color={secretCharge >= 4 ? "#7DD3FC" : "#38BDF8"}
                     />
                     <Text
+                      numberOfLines={1}
                       className={`ml-1 text-[11px] font-semibold ${
                         secretCharge >= 4
                           ? "text-sky-500 dark:text-sky-300"

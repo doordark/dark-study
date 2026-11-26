@@ -2,7 +2,7 @@ import { createRequestSession, type RequestTicket } from "@/utils/requestSession
 import { foregroundStore } from "@/utils/foreground";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { LinearGradient } from "expo-linear-gradient";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AppState,
   Keyboard,
@@ -13,6 +13,9 @@ import {
   Text,
   View,
   useWindowDimensions,
+  type PressableProps,
+  type StyleProp,
+  type ViewStyle,
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -33,10 +36,10 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColorScheme } from "nativewind";
 
+import { ChatImage } from "@/components/ChatImage";
 import { ChatInputBar } from "@/components/ChatInputBar";
 import { ChatMessageList } from "@/components/ChatMessageList";
 import { PetAnimation, type PetAnimationKind } from "@/components/PetAnimation";
-import { PetChatMessage } from "@/components/PetChatMessage";
 import { PetParticles, type PetParticleItem, type PetParticleKind } from "@/components/PetParticles";
 import { ScheduleChangeDialog } from "@/components/ScheduleChangeDialog";
 import { WhaleAvatar } from "@/components/WhaleAvatar";
@@ -119,15 +122,92 @@ const ACTION_LINES: Record<PetActionKind, string> = {
   cuddle: "嘿嘿…蹭蹭{{user}}～",
 };
 
-/** 浮层里的快捷动作胶囊 */
-const PET_CHIPS: readonly { label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-  { label: "跳个舞", icon: "musical-notes-outline" },
-  { label: "转个圈", icon: "refresh-outline" },
-  { label: "抛团子", icon: "restaurant-outline" },
-  { label: "陪我学习", icon: "book-outline" },
-  { label: "摸摸头", icon: "heart-outline" },
-  { label: "打个招呼", icon: "hand-left-outline" },
+/** 浮层去重整合后的快捷互动胶囊（零重复，按高频互动排序） */
+interface PetQuickActionDef {
+  id: "feed" | "pat" | "dance" | "study" | "spin" | "wave";
+  label: string;
+  hungryLabel?: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  accent: string;
+}
+
+const PET_QUICK_ACTIONS: readonly PetQuickActionDef[] = [
+  { id: "feed", label: "抛团子", hungryLabel: "抛白饭", icon: "restaurant-outline", accent: "#F59E0B" },
+  { id: "pat", label: "摸摸头", icon: "heart-outline", accent: "#EC4899" },
+  { id: "dance", label: "跳支舞", icon: "musical-notes-outline", accent: "#0EA5E9" },
+  { id: "study", label: "陪我学习", icon: "book-outline", accent: "#6366F1" },
+  { id: "spin", label: "转个圈", icon: "refresh-outline", accent: "#10B981" },
+  { id: "wave", label: "打个招呼", icon: "hand-left-outline", accent: "#38BDF8" },
 ];
+
+interface PetTactilePressableProps
+  extends Omit<PressableProps, "style" | "children"> {
+  style?: StyleProp<ViewStyle>;
+  pressedOpacity?: number;
+  pressedScale?: number;
+  children?: React.ReactNode;
+}
+
+/** 静态数组 style 按压封装，彻底规避 NativeWind v4 + RN 0.88 丢弃函数式 style */
+function PetTactilePressable({
+  style,
+  pressedOpacity = 0.76,
+  pressedScale = 1,
+  disabled,
+  onPressIn,
+  onPressOut,
+  children,
+  ...rest
+}: PetTactilePressableProps) {
+  const [pressed, setPressed] = useState(false);
+
+  return (
+    <Pressable
+      {...rest}
+      disabled={disabled}
+      onPressIn={(event) => {
+        if (!disabled) setPressed(true);
+        onPressIn?.(event);
+      }}
+      onPressOut={(event) => {
+        setPressed(false);
+        onPressOut?.(event);
+      }}
+      style={[
+        style,
+        pressed && !disabled
+          ? {
+              opacity: pressedOpacity,
+              ...(pressedScale !== 1 ? { transform: [{ scale: pressedScale }] } : {}),
+            }
+          : null,
+      ]}
+    >
+      {children}
+    </Pressable>
+  );
+}
+
+/**
+ * 清洗并柔化桌宠对话中的括号前缀：
+ * 1. 彻底剔除生硬冗余的系统碰撞前缀（如 "(刚才撞到了屏幕下边框)"），兼容已持久化旧消息；
+ * 2. 将温和神态描写（如 "（尾巴晃了晃）"）提炼为轻盈微标签，不再硬塞进正文。
+ */
+function parsePetBubbleText(raw: string): { stageNote: string | null; body: string } {
+  const trimmed = raw.trim();
+  const withoutBump = trimmed.replace(/^[（(]\s*刚才撞到了屏幕[^）)]*[）)]\s*/u, "");
+  const stageMatch = withoutBump.match(/^[（(]([^）)]{1,18})[）)]\s*(.+)$/su);
+  if (stageMatch) {
+    return {
+      stageNote: stageMatch[1].trim(),
+      body: stageMatch[2].trim(),
+    };
+  }
+  return {
+    stageNote: null,
+    body: withoutBump || trimmed,
+  };
+}
 
 /** 本地动作口令：无 Key 时零延迟直接播 */
 const LOCAL_ACTIONS: { re: RegExp; action: PetActionKind; reply: string }[] = [
@@ -822,7 +902,6 @@ function WhalePetLayer() {
     switch (kind) {
       case "dance":
         setFrame("dance");
-        playSfx("whale_cute_excited", { volume: 0.72 });
         emitParticles("note", 4);
         tilt.value = withRepeat(
           withTiming(8, { duration: 230, easing: Easing.inOut(Easing.quad) }),
@@ -834,14 +913,13 @@ function WhalePetLayer() {
         break;
       case "spin":
         setFrame("spin");
-        playSfx("whale_cute_excited", { volume: 0.7, rate: 1.08 });
         emitParticles("sparkle", 4);
         lift.value = withSequence(withTiming(-6, { duration: 200 }), withTiming(0, { duration: 920 }));
         settle(1120);
         break;
       case "eat":
         setFrame("eat");
-        playSfx("whale_cute_happy", { volume: 0.74 });
+        playSfx("whale_cute_happy", { volume: 0.64 });
         feedPet();
         useWhaleMemory.getState().applyMood({ pleasure: 10, arousal: 4, reason: "吃到了香香的团子" });
         useWhaleMemory.getState().bumpBond("interaction");
@@ -854,12 +932,10 @@ function WhalePetLayer() {
         break;
       case "sleep":
         setFrame("sleep");
-        playSfx("whale_cute_sleepy", { volume: 0.64 });
         if (idleTimer.current) clearTimeout(idleTimer.current);
         break;
       case "jump":
         setFrame("happy");
-        playSfx("whale_cute_excited", { volume: 0.7, rate: 1.04 });
         emitParticles("sparkle", 3);
         squash(0.86);
         lift.value = withSequence(
@@ -872,14 +948,12 @@ function WhalePetLayer() {
         break;
       case "wave":
         setFrame("wave");
-        playSfx("whale_cute_comfort", { volume: 0.66 });
         emitParticles("bubble", 3);
         tilt.value = withRepeat(withTiming(6, { duration: 170 }), 5, true);
         settle(1150);
         break;
       case "cuddle":
         setFrame("cuddle");
-        playSfx("whale_cute_happy", { volume: 0.72 });
         patPet();
         useWhaleMemory.getState().applyMood({ pleasure: 11, arousal: 3, reason: "被温柔摸了摸头" });
         useWhaleMemory.getState().bumpBond("interaction");
@@ -976,7 +1050,7 @@ function WhalePetLayer() {
     say(line);
     if (!reducedMotion) bumpHaptic();
     useWhaleMemory.getState().applyMood({ pleasure: -14, arousal: 10, reason: `不小心撞到了${edge}` });
-    setChatMsgs((prev) => [...prev, petMsg("assistant", `（刚才撞到了屏幕${edge}）${line}`)]);
+    setChatMsgs((prev) => [...prev, petMsg("assistant", line)].slice(-200));
     frameTimer.current = setTimeout(() => {
       frameTimer.current = null;
       if (mountedRef.current && frameRef.current === "hurt") setFrame("idle");
@@ -1246,7 +1320,6 @@ function WhalePetLayer() {
 
     if (isHead) {
       // 上半区：温柔摸头蹭蹭
-      playSfx("whale_dock_boop", { volume: 0.72 });
       squash(0.86);
       setFrame("cuddle");
       emitParticles("heart", 4);
@@ -1290,7 +1363,6 @@ function WhalePetLayer() {
     }
 
     // 下半区：轻戳肚子弹跳反应
-    playSfx("whale_cute_tsun", { volume: 0.62, rate: 1.08 });
     squash(0.83);
     lift.value = withSequence(
       withTiming(-8, { duration: 110, easing: Easing.out(Easing.quad) }),
@@ -1353,7 +1425,6 @@ function WhalePetLayer() {
         petMsg("assistant", "{{user}}叫我？想聊什么，还是想给我抛个白饭团子呀～"),
       ]);
     }
-    playSfx("whale_popover_open", { volume: 0.68 });
     cancelAnimation(panelProgress);
     if (reducedMotion) {
       panelProgress.value = 1;
@@ -1362,15 +1433,12 @@ function WhalePetLayer() {
     }
   };
 
-  const closeChat = (silent = false) => {
+  const closeChat = () => {
     stopChatRequest();
     if (!chatOpenRef.current && !panelMounted) return;
     chatOpenRef.current = false;
     setChatOpen(false);
     Keyboard.dismiss();
-    if (!silent) {
-      playSfx("whale_popover_close", { volume: 0.52 });
-    }
     cancelAnimation(panelProgress);
     if (reducedMotion) {
       panelProgress.value = 0;
@@ -1464,7 +1532,6 @@ function WhalePetLayer() {
         showBubble(line, 2600);
       } else if (action.type === "set_background") {
         const tint = resolveTint(action.tint);
-        playSfx("whale_ui_ripple", { volume: 0.64 });
         setBackgroundTint(tint);
         if (action.effect === "aurora" || action.effect === "plain") {
           setBackgroundEffect(action.effect);
@@ -1521,9 +1588,34 @@ function WhalePetLayer() {
   }, [schedule]);
 
   const renderPetMessage = useCallback(
-    (message: ChatMessage) => <PetChatMessage message={message} isDark={isDark} onApply={applyPending} />,
+    (message: ChatMessage) => (
+      <WhalePetBubble message={message} isDark={isDark} onApply={applyPending} />
+    ),
     [isDark, applyPending],
   );
+
+  const handleQuickActionPress = (actionId: PetQuickActionDef["id"]) => {
+    switch (actionId) {
+      case "feed":
+        feedFromPanel();
+        return;
+      case "pat":
+        patHead();
+        return;
+      case "dance":
+        playAction("dance");
+        return;
+      case "spin":
+        playAction("spin");
+        return;
+      case "wave":
+        playAction("wave");
+        return;
+      case "study":
+        sendChat("陪我学习");
+        return;
+    }
+  };
 
   const sendChat = (text?: string) => {
     const content = (text ?? input).trim();
@@ -1533,7 +1625,6 @@ function WhalePetLayer() {
       throwSnack();
       return;
     }
-    playSfx("whale_chat_send", { volume: 0.5 });
     let ticket = chatSession.begin(false);
     setInput("");
     const userMsg: ChatMessage = { id: uid(), role: "user", content, timestamp: nowMs() };
@@ -1640,7 +1731,7 @@ function WhalePetLayer() {
     bumpHaptic();
     playSfx("whale_pet_dismiss", { volume: 0.64 });
     stopWhaleVoice();
-    closeChat(true);
+    closeChat();
     stopAction();
     clearBubble();
     setBubble(null);
@@ -1668,6 +1759,10 @@ function WhalePetLayer() {
     kbHeight > 0
       ? Math.max(insets.top + 8, height - kbHeight - panelH - 8)
       : panelAnchor.top;
+  const chatMaxHeight =
+    kbHeight > 0
+      ? Math.max(92, Math.min(136, height - kbHeight - insets.top - 216))
+      : 146;
 
   const hungry = care.fullness < 25;
   const lonely = care.mood < 32;
@@ -1929,14 +2024,14 @@ function WhalePetLayer() {
                   alignItems: "center",
                   justifyContent: "center",
                   overflow: "hidden",
-                  backgroundColor: isDark ? "rgba(56,189,248,0.18)" : "rgba(224,242,254,0.9)",
+                  backgroundColor: isDark ? "rgba(56,189,248,0.18)" : "rgba(224,242,254,0.92)",
                   borderWidth: 1.2,
                   borderColor: emotionDesc.color,
                 }}
               >
                 <WhaleAvatar size={36} />
               </View>
-              <View style={{ flex: 1, minWidth: 0 }}>
+              <View style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
                 <Text
                   numberOfLines={1}
                   style={{
@@ -1969,168 +2064,165 @@ function WhalePetLayer() {
                 </View>
               </View>
 
-              {Platform.OS === "android" && desktopPetAvailable ? (
-                <Pressable
-                  onPress={() => void handleQuickDesktopFollow()}
-                  hitSlop={6}
-                  accessibilityRole="button"
-                  accessibilityLabel="开启后台自动驻留桌面"
-                  style={({ pressed }) => ({
-                    height: 28,
-                    paddingHorizontal: 9,
-                    borderRadius: 14,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 3.5,
-                    backgroundColor:
-                      autoFollow && desktopPermission
-                        ? isDark
-                          ? "rgba(56,189,248,0.22)"
-                          : "rgba(14,165,233,0.14)"
-                        : isDark
-                          ? "rgba(255,255,255,0.07)"
-                          : "rgba(148,163,184,0.14)",
-                    borderWidth: 0.75,
-                    borderColor:
-                      autoFollow && desktopPermission
-                        ? "rgba(56,189,248,0.42)"
-                        : "transparent",
-                    marginRight: 5,
-                    opacity: pressed ? 0.76 : 1,
-                  })}
-                >
-                  <Ionicons
-                    name="phone-portrait-outline"
-                    size={12}
-                    color={
-                      autoFollow && desktopPermission
-                        ? isDark
-                          ? "#7DD3FC"
-                          : "#0284C7"
-                        : isDark
-                          ? "#94A3B8"
-                          : "#64748B"
-                    }
-                  />
-                  <Text
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                {Platform.OS === "android" && desktopPetAvailable ? (
+                  <PetTactilePressable
+                    onPress={() => void handleQuickDesktopFollow()}
+                    hitSlop={6}
+                    accessibilityRole="button"
+                    accessibilityLabel="开启后台自动驻留桌面"
+                    pressedOpacity={0.76}
                     style={{
-                      fontSize: 9.5,
-                      fontWeight: "700",
-                      color:
+                      height: 30,
+                      paddingHorizontal: 10,
+                      borderRadius: 15,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 4,
+                      backgroundColor:
+                        autoFollow && desktopPermission
+                          ? isDark
+                            ? "rgba(56,189,248,0.22)"
+                            : "rgba(14,165,233,0.14)"
+                          : isDark
+                            ? "rgba(255,255,255,0.08)"
+                            : "rgba(148,163,184,0.14)",
+                      borderWidth: 1,
+                      borderColor:
+                        autoFollow && desktopPermission
+                          ? isDark
+                            ? "rgba(125,211,252,0.42)"
+                            : "rgba(14,165,233,0.32)"
+                          : isDark
+                            ? "rgba(255,255,255,0.12)"
+                            : "rgba(148,163,184,0.24)",
+                    }}
+                  >
+                    <Ionicons
+                      name="phone-portrait-outline"
+                      size={12}
+                      color={
                         autoFollow && desktopPermission
                           ? isDark
                             ? "#7DD3FC"
                             : "#0284C7"
                           : isDark
                             ? "#94A3B8"
-                            : "#64748B",
-                    }}
-                  >
-                    {autoFollow && desktopPermission ? "随行中" : "去桌面"}
-                  </Text>
-                </Pressable>
-              ) : null}
+                            : "#64748B"
+                      }
+                    />
+                    <Text
+                      numberOfLines={1}
+                      style={{
+                        fontSize: 10,
+                        fontWeight: "700",
+                        color:
+                          autoFollow && desktopPermission
+                            ? isDark
+                              ? "#7DD3FC"
+                              : "#0284C7"
+                            : isDark
+                              ? "#94A3B8"
+                              : "#64748B",
+                      }}
+                    >
+                      {autoFollow && desktopPermission ? "随行中" : "去桌面"}
+                    </Text>
+                  </PetTactilePressable>
+                ) : null}
 
-              <Pressable
-                onPress={() => {
-                  const next = !voiceOn;
-                  tapHaptic();
-                  toggleVoice();
-                  if (next) speakWhale(renderPersonaText("声音开好啦，{{user}}。", useWhalePersona.getState().persona));
-                  else stopWhaleVoice();
-                }}
-                hitSlop={8}
-                accessibilityRole="button"
-                accessibilityLabel={voiceOn ? "关闭鱼语" : "开启鱼语"}
-                style={({ pressed }) => ({
-                  width: 28,
-                  height: 28,
-                  borderRadius: 14,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  backgroundColor: voiceOn
-                    ? isDark
-                      ? "rgba(56,189,248,0.18)"
-                      : "rgba(14,165,233,0.12)"
-                    : isDark
-                      ? "rgba(255,255,255,0.06)"
-                      : "rgba(148,163,184,0.12)",
-                  marginRight: 5,
-                  opacity: pressed ? 0.72 : 1,
-                })}
-              >
-                <Ionicons
-                  name={voiceOn ? "volume-high" : "volume-mute"}
-                  size={14}
-                  color={voiceOn ? (isDark ? "#7DD3FC" : "#0284C7") : isDark ? "#64748B" : "#94A3B8"}
-                />
-              </Pressable>
+                <PetTactilePressable
+                  onPress={() => {
+                    const next = !voiceOn;
+                    tapHaptic();
+                    toggleVoice();
+                    if (next) speakWhale(renderPersonaText("声音开好啦，{{user}}。", useWhalePersona.getState().persona));
+                    else stopWhaleVoice();
+                  }}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel={voiceOn ? "关闭鱼语" : "开启鱼语"}
+                  pressedOpacity={0.72}
+                  style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: 15,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: voiceOn
+                      ? isDark
+                        ? "rgba(56,189,248,0.20)"
+                        : "rgba(14,165,233,0.13)"
+                      : isDark
+                        ? "rgba(255,255,255,0.08)"
+                        : "rgba(148,163,184,0.14)",
+                    borderWidth: 0.75,
+                    borderColor: voiceOn
+                      ? isDark
+                        ? "rgba(125,211,252,0.34)"
+                        : "rgba(14,165,233,0.28)"
+                      : isDark
+                        ? "rgba(255,255,255,0.12)"
+                        : "rgba(148,163,184,0.22)",
+                  }}
+                >
+                  <Ionicons
+                    name={voiceOn ? "volume-high" : "volume-mute"}
+                    size={14}
+                    color={voiceOn ? (isDark ? "#7DD3FC" : "#0284C7") : isDark ? "#94A3B8" : "#64748B"}
+                  />
+                </PetTactilePressable>
 
-              <Pressable
-                onPress={() => closeChat()}
-                hitSlop={8}
-                accessibilityRole="button"
-                accessibilityLabel="关闭聊天"
-                style={({ pressed }) => ({
-                  width: 28,
-                  height: 28,
-                  borderRadius: 14,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  backgroundColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(148,163,184,0.14)",
-                  opacity: pressed ? 0.72 : 1,
-                })}
-              >
-                <Ionicons name="close" size={14.5} color={isDark ? "#BAE6FD" : "#0284C7"} />
-              </Pressable>
+                <PetTactilePressable
+                  onPress={() => closeChat()}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="关闭聊天"
+                  pressedOpacity={0.72}
+                  style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: 15,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: isDark ? "rgba(255,255,255,0.09)" : "rgba(148,163,184,0.15)",
+                    borderWidth: 0.75,
+                    borderColor: isDark ? "rgba(255,255,255,0.14)" : "rgba(148,163,184,0.24)",
+                  }}
+                >
+                  <Ionicons name="close" size={15} color={isDark ? "#BAE6FD" : "#0284C7"} />
+                </PetTactilePressable>
+              </View>
             </View>
 
             {/* 养护数值条（轻盈玻璃态胶囊） */}
-            <View style={{ flexDirection: "row", gap: 7, paddingHorizontal: 12, paddingTop: 11 }}>
+            <View style={{ flexDirection: "row", gap: 7, paddingHorizontal: 12, paddingTop: 10 }}>
               <CareBar label="饱食" value={care.fullness} color="#FBBF24" icon="restaurant" isDark={isDark} />
               <CareBar label="心情" value={care.mood} color="#38BDF8" icon="happy" isDark={isDark} />
               <CareBar label="好感" value={care.bond} color="#F472B6" icon="heart" isDark={isDark} />
             </View>
 
-            {/* 四大高频互动动作按钮 */}
-            <View style={{ flexDirection: "row", gap: 6, paddingHorizontal: 12, paddingTop: 8 }}>
-              <CareAction
-                icon="restaurant-outline"
-                label={hungry ? "抛白饭" : "抛团子"}
-                accent="#FBBF24"
-                onPress={feedFromPanel}
-                isDark={isDark}
-              />
-              <CareAction
-                icon="hand-left-outline"
-                label="摸摸头"
-                accent="#F472B6"
-                onPress={patHead}
-                isDark={isDark}
-              />
-              <CareAction
-                icon="musical-notes-outline"
-                label="跳支舞"
-                accent="#38BDF8"
-                onPress={() => playAction("dance")}
-                isDark={isDark}
-              />
-              <CareAction
-                icon="moon-outline"
-                label="收起来"
-                accent={isDark ? "#94A3B8" : "#64748B"}
-                onPress={dismiss}
-                isDark={isDark}
-              />
-            </View>
-
-            {/* 内嵌柔光对话区 */}
+            {/* 内嵌微冷灰蓝凹槽对话区（高对比分层，彻底告别白底配白框） */}
             <ChatMessageList
               messages={chatMsgs}
               renderMessage={renderPetMessage}
-              maxHeight={116}
-              itemGap={10}
-              contentContainerStyle={{ paddingHorizontal: 10, paddingVertical: 9 }}
+              maxHeight={chatMaxHeight}
+              itemGap={9}
+              contentContainerStyle={{ paddingHorizontal: 10, paddingVertical: 10 }}
+              emptyComponent={
+                <View style={{ alignItems: "center", paddingVertical: 18 }}>
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      fontWeight: "600",
+                      color: isDark ? "rgba(186,230,253,0.68)" : "#64748B",
+                    }}
+                  >
+                    点下方胶囊或发句话逗逗{personaName}吧～
+                  </Text>
+                </View>
+              }
               header={
                 busy ? (
                   <View style={{ alignItems: "flex-start", paddingBottom: 4 }}>
@@ -2138,11 +2230,15 @@ function WhalePetLayer() {
                       style={{
                         borderRadius: 14,
                         borderBottomLeftRadius: 4,
-                        paddingHorizontal: 10,
-                        paddingVertical: 5,
+                        paddingHorizontal: 11,
+                        paddingVertical: 6,
                         backgroundColor: isDark
-                          ? "rgba(56,189,248,0.14)"
-                          : "rgba(224,242,254,0.85)",
+                          ? "rgba(28,50,82,0.92)"
+                          : "#FFFFFF",
+                        borderWidth: 1,
+                        borderColor: isDark
+                          ? "rgba(125,211,252,0.30)"
+                          : "rgba(56,189,248,0.42)",
                       }}
                     >
                       <Text
@@ -2160,56 +2256,139 @@ function WhalePetLayer() {
               }
               style={{
                 marginTop: 10,
-                marginHorizontal: 10,
+                marginHorizontal: 12,
                 borderRadius: 18,
                 borderCurve: "continuous",
-                backgroundColor: isDark ? "rgba(6,13,26,0.34)" : "rgba(255,255,255,0.68)",
-                borderWidth: 0.75,
-                borderColor: isDark ? "rgba(186,230,253,0.12)" : "rgba(125,211,252,0.28)",
+                backgroundColor: isDark ? "rgba(6,14,28,0.66)" : "rgba(214,234,248,0.72)",
+                borderWidth: 1,
+                borderColor: isDark ? "rgba(125,211,252,0.20)" : "rgba(125,211,252,0.52)",
               }}
             />
 
-            {/* 快捷词胶囊条 */}
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ gap: 6, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 2 }}
+            {/* 统一去重后的快捷互动栏：左侧横向可滚互动胶囊 + 右侧常驻核心控制「收起」 */}
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                paddingLeft: 12,
+                paddingRight: 12,
+                paddingTop: 9,
+                paddingBottom: 2,
+                flexShrink: 0,
+              }}
             >
-              {PET_CHIPS.map((chip) => (
-                <Pressable
-                  key={chip.label}
-                  onPress={() => sendChat(chip.label)}
-                  style={({ pressed }) => ({
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 4,
-                    borderRadius: 999,
-                    borderWidth: 1,
-                    paddingHorizontal: 9.5,
-                    paddingVertical: 4.5,
-                    borderColor: isDark ? "rgba(186,230,253,0.22)" : "rgba(14,165,233,0.24)",
-                    backgroundColor: isDark ? "rgba(56,189,248,0.10)" : "rgba(255,255,255,0.78)",
-                    opacity: pressed ? 0.76 : 1,
-                    transform: [{ scale: pressed ? 0.96 : 1 }],
-                  })}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={{ flex: 1, flexGrow: 0, flexShrink: 1 }}
+                contentContainerStyle={{ gap: 6, paddingRight: 6, alignItems: "center" }}
+              >
+                {PET_QUICK_ACTIONS.map((action) => {
+                  const textLabel =
+                    action.id === "feed" && hungry && action.hungryLabel
+                      ? action.hungryLabel
+                      : action.label;
+                  return (
+                    <PetTactilePressable
+                      key={action.id}
+                      onPress={() => handleQuickActionPress(action.id)}
+                      accessibilityRole="button"
+                      accessibilityLabel={textLabel}
+                      pressedOpacity={0.78}
+                      pressedScale={0.96}
+                      style={{
+                        height: 31,
+                        flexDirection: "row",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 4.5,
+                        borderRadius: 999,
+                        borderWidth: 1,
+                        paddingHorizontal: 10.5,
+                        borderColor: isDark
+                          ? "rgba(186,230,253,0.24)"
+                          : "rgba(56,189,248,0.36)",
+                        backgroundColor: isDark
+                          ? "rgba(26,45,76,0.82)"
+                          : "rgba(255,255,255,0.94)",
+                        boxShadow: [
+                          {
+                            offsetX: 0,
+                            offsetY: 1,
+                            blurRadius: 4,
+                            color: isDark ? "rgba(2,8,20,0.28)" : "rgba(15,41,66,0.06)",
+                          },
+                        ],
+                      }}
+                    >
+                      <Ionicons name={action.icon} size={12} color={action.accent} />
+                      <Text
+                        numberOfLines={1}
+                        style={{
+                          fontSize: 10.5,
+                          fontWeight: "700",
+                          color: isDark ? "#E0F2FE" : "#0F2942",
+                        }}
+                      >
+                        {textLabel}
+                      </Text>
+                    </PetTactilePressable>
+                  );
+                })}
+              </ScrollView>
+
+              <View
+                style={{
+                  width: 1,
+                  height: 16,
+                  marginHorizontal: 6,
+                  backgroundColor: isDark
+                    ? "rgba(186,230,253,0.16)"
+                    : "rgba(148,163,184,0.32)",
+                }}
+              />
+
+              <PetTactilePressable
+                onPress={dismiss}
+                accessibilityRole="button"
+                accessibilityLabel="收起桌宠"
+                pressedOpacity={0.78}
+                pressedScale={0.96}
+                style={{
+                  flexShrink: 0,
+                  height: 31,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 4,
+                  borderRadius: 999,
+                  borderWidth: 1,
+                  paddingHorizontal: 10,
+                  borderColor: isDark
+                    ? "rgba(148,163,184,0.28)"
+                    : "rgba(148,163,184,0.38)",
+                  backgroundColor: isDark
+                    ? "rgba(30,41,59,0.78)"
+                    : "rgba(241,245,249,0.95)",
+                }}
+              >
+                <Ionicons
+                  name="moon-outline"
+                  size={11.5}
+                  color={isDark ? "#CBD5E1" : "#475569"}
+                />
+                <Text
+                  numberOfLines={1}
+                  style={{
+                    fontSize: 10.5,
+                    fontWeight: "700",
+                    color: isDark ? "#E2E8F0" : "#334155",
+                  }}
                 >
-                  <Ionicons
-                    name={chip.icon}
-                    size={11}
-                    color={isDark ? "#7DD3FC" : "#0284C7"}
-                  />
-                  <Text
-                    style={{
-                      fontSize: 10.5,
-                      fontWeight: "600",
-                      color: isDark ? "#BAE6FD" : "#0369A1",
-                    }}
-                  >
-                    {chip.label}
-                  </Text>
-                </Pressable>
-              ))}
-            </ScrollView>
+                  收起来
+                </Text>
+              </PetTactilePressable>
+            </View>
 
             {/* 紧凑模式液态玻璃输入框 */}
             <ChatInputBar
@@ -2262,23 +2441,24 @@ function CareBar({
     <View
       style={{
         flex: 1,
+        minWidth: 0,
         borderRadius: 12,
         borderCurve: "continuous",
         paddingHorizontal: 8,
-        paddingVertical: 6,
-        backgroundColor: isDark ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.64)",
-        borderWidth: 0.75,
-        borderColor: isDark ? "rgba(186,230,253,0.12)" : "rgba(148,163,184,0.2)",
+        paddingVertical: 6.5,
+        backgroundColor: isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.88)",
+        borderWidth: 1,
+        borderColor: isDark ? "rgba(186,230,253,0.14)" : "rgba(148,163,184,0.24)",
       }}
     >
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
-          <Ionicons name={icon} size={9.5} color={color} />
-          <Text style={{ fontSize: 9, fontWeight: "600", color: isDark ? "rgba(186,230,253,0.78)" : "#475569" }}>
+          <Ionicons name={icon} size={10} color={color} />
+          <Text numberOfLines={1} style={{ fontSize: 9.5, fontWeight: "600", color: isDark ? "rgba(186,230,253,0.82)" : "#475569" }}>
             {label}
           </Text>
         </View>
-        <Text style={{ fontSize: 9.5, fontWeight: "700", color: isDark ? "#F1F5F9" : "#0F172A" }}>
+        <Text style={{ fontSize: 10, fontWeight: "800", color: isDark ? "#F1F5F9" : "#0F172A" }}>
           {Math.round(value)}
         </Text>
       </View>
@@ -2303,50 +2483,173 @@ function CareBar({
   );
 }
 
-function CareAction({
-  icon,
-  label,
-  accent,
-  onPress,
+/** 桌宠浮层专属高对比度气泡：解决白底白框问题，并优雅清洗历史括号前缀 */
+const WhalePetBubble = memo(function WhalePetBubble({
+  message: m,
   isDark,
+  onApply,
 }: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  accent: string;
-  onPress: () => void;
+  message: ChatMessage;
   isDark: boolean;
+  onApply: (id: string) => void;
 }) {
+  const isUser = m.role === "user";
+  const parsed = useMemo(
+    () => (isUser ? { stageNote: null, body: m.content } : parsePetBubbleText(m.content)),
+    [isUser, m.content],
+  );
+
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => ({
-        flex: 1,
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 3.5,
-        borderRadius: 12,
-        borderCurve: "continuous",
-        borderWidth: 1,
-        paddingVertical: 7,
-        paddingHorizontal: 3,
-        borderColor: isDark ? "rgba(186,230,253,0.18)" : "rgba(14,165,233,0.22)",
-        backgroundColor: isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.78)",
-        opacity: pressed ? 0.76 : 1,
-        transform: [{ scale: pressed ? 0.96 : 1 }],
-      })}
+    <View
+      style={{
+        alignItems: isUser ? "flex-end" : "flex-start",
+      }}
     >
-      <Ionicons name={icon} size={11.5} color={accent} />
-      <Text
-        numberOfLines={1}
+      {m.imageUri ? (
+        <View
+          style={{
+            marginBottom: 6,
+            borderRadius: 14,
+            overflow: "hidden",
+            borderWidth: 1,
+            borderColor: isDark
+              ? "rgba(186,230,253,0.24)"
+              : "rgba(56,189,248,0.45)",
+          }}
+        >
+          <ChatImage uri={m.imageUri} aspectRatio={m.imageAspect} />
+        </View>
+      ) : null}
+
+      <View
         style={{
-          fontSize: 9.5,
-          fontWeight: "700",
-          color: isDark ? "#E0F2FE" : "#0F2942",
+          maxWidth: "88%",
+          borderRadius: 16,
+          borderCurve: "continuous",
+          borderBottomRightRadius: isUser ? 5 : 16,
+          borderBottomLeftRadius: isUser ? 16 : 5,
+          paddingHorizontal: 12,
+          paddingVertical: 8.5,
+          overflow: "hidden",
+          backgroundColor: isUser
+            ? "#0EA5E9"
+            : isDark
+              ? "rgba(28,50,82,0.92)"
+              : "#FFFFFF",
+          borderWidth: 1,
+          borderColor: isUser
+            ? "rgba(255,255,255,0.28)"
+            : isDark
+              ? "rgba(125,211,252,0.28)"
+              : "rgba(56,189,248,0.46)",
+          boxShadow: [
+            {
+              offsetX: 0,
+              offsetY: 2,
+              blurRadius: 7,
+              color: isUser
+                ? "rgba(14,165,233,0.26)"
+                : isDark
+                  ? "rgba(2,8,20,0.34)"
+                  : "rgba(15,41,66,0.09)",
+            },
+          ],
         }}
       >
-        {label}
-      </Text>
-    </Pressable>
+        {isUser ? (
+          <LinearGradient
+            pointerEvents="none"
+            colors={isDark ? ["#0284C7", "#3B82F6"] : ["#0EA5E9", "#2563EB"]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+        ) : null}
+
+        {parsed.stageNote ? (
+          <View
+            style={{
+              alignSelf: "flex-start",
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 3,
+              marginBottom: 4,
+              borderRadius: 999,
+              paddingHorizontal: 7,
+              paddingVertical: 2,
+              backgroundColor: isDark
+                ? "rgba(56,189,248,0.16)"
+                : "rgba(224,242,254,0.85)",
+            }}
+          >
+            <Ionicons
+              name="sparkles"
+              size={9}
+              color={isDark ? "#7DD3FC" : "#0284C7"}
+            />
+            <Text
+              style={{
+                fontSize: 9.5,
+                fontWeight: "600",
+                color: isDark ? "#BAE6FD" : "#0369A1",
+              }}
+            >
+              {parsed.stageNote}
+            </Text>
+          </View>
+        ) : null}
+
+        <Text
+          style={{
+            fontSize: 12,
+            lineHeight: 18,
+            letterSpacing: 0.1,
+            color: isUser ? "#FFFFFF" : isDark ? "#EFF8FF" : "#0F2942",
+          }}
+        >
+          {parsed.body}
+        </Text>
+
+        {m.actions?.length ? (
+          <PetTactilePressable
+            onPress={() => onApply(m.id)}
+            pressedOpacity={0.78}
+            pressedScale={0.97}
+            style={{
+              marginTop: 7,
+              alignSelf: "flex-start",
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 4,
+              borderRadius: 999,
+              paddingHorizontal: 10,
+              paddingVertical: 4.5,
+              backgroundColor: isDark
+                ? "rgba(16,185,129,0.26)"
+                : "rgba(16,185,129,0.14)",
+              borderWidth: 1,
+              borderColor: isDark
+                ? "rgba(52,211,153,0.48)"
+                : "rgba(16,185,129,0.38)",
+            }}
+          >
+            <Ionicons
+              name="calendar-outline"
+              size={11}
+              color={isDark ? "#6EE7B7" : "#047857"}
+            />
+            <Text
+              style={{
+                fontSize: 10.5,
+                fontWeight: "700",
+                color: isDark ? "#A7F3D0" : "#065F46",
+              }}
+            >
+              预览课表变更 · {m.actions.length} 项
+            </Text>
+          </PetTactilePressable>
+        ) : null}
+      </View>
+    </View>
   );
-}
+});

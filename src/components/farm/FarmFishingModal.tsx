@@ -72,11 +72,10 @@ export function FarmFishingModal({
     clearAllTimers();
     setLastOutcome(null);
     setPhase('waiting');
-    playSfx('fish_cast', { volume: 0.72 });
     const delayMs = 1200 + Math.floor(Math.random() * 1400);
     waitTimer.current = setTimeout(() => {
       setPhase('bite');
-      playSfx('fish_bite', { ignoreCooldown: true, volume: 0.8 });
+      playSfx('fish_bite', { ignoreCooldown: true, volume: 0.72 });
       let pos = 18;
       let dir = 1;
       setMarker(pos);
@@ -89,7 +88,6 @@ export function FarmFishingModal({
       biteTimer.current = setTimeout(() => {
         clearAllTimers();
         setPhase('missed');
-        playSfx('fish_miss', { volume: 0.65 });
       }, 2400);
     }, delayMs);
   };
@@ -100,7 +98,6 @@ export function FarmFishingModal({
     const inSweetSpot = marker >= 26 && marker <= 74;
     if (!inSweetSpot) {
       setPhase('missed');
-      playSfx('fish_miss', { volume: 0.65 });
       return;
     }
     const outcome = rollFishingCatch({ period, weigangNearby, book });

@@ -1,5 +1,4 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useEffect } from 'react';
 import { Modal, Pressable, View } from 'react-native';
 import { playSfx } from '@/services/soundEffects';
 import type { FarmRandomEventChoice, FarmRandomEventDef } from '@/utils/farmRandomEvents';
@@ -29,13 +28,6 @@ export function FarmRandomEventModal({
   onSelect: (choice: FarmRandomEventChoice) => void;
   onDismiss: () => void;
 }) {
-  const eventId = event?.id;
-  useEffect(() => {
-    if (visible && eventId) {
-      playSfx('farm_event', { volume: 0.7 });
-    }
-  }, [visible, eventId]);
-
   if (!event) return null;
 
   return (

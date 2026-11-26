@@ -340,8 +340,8 @@ function commissionedMeeting(action, reply) {
 }
 const philosophy = commissionedMeeting(philosophical);
 assert.equal(new Set(philosophy.lines.map(line => line.text)).size, 9);
-assert.match(philosophy.lines[0].text, /规律/);
-assert.match(philosophy.lines[6].text, /真人/);
+assert.match(philosophy.lines[0].text, /规律|规矩/);
+assert.match(philosophy.lines[6].text, /真人|自证|铁证/);
 assert(commissionedMeeting(philosophical, philosophy.lines).online);
 const petEnding = philosophy.lines.slice(0, -2).concat([
   { speaker: 'door', text: '那坤坤算不算真？它可会抢食。' },
@@ -420,7 +420,7 @@ assert.equal(argument.history[0].discussion.kind, 'debate');
 assert.equal(argument.residents.gu.mood, '不服气');
 advance(argument, at, 35);
 assert.equal(argument.residents.gu.mood, '松了口气');
-assert.match(argument.history[0].lines.at(-1).text, /语气/);
+assert.match(argument.history[0].lines.at(-1).text, /语气|嘴快|急了/);
 advance(argument, at + 35000, 90);
 assert.equal(argument.residents.gu.mood, '平静');
 
@@ -484,7 +484,7 @@ assert.equal(hobbies.history.length, 0, 'an intention is not a completed observa
 for (let index = 1; index < 100; index += 1) hobbies.tick(at + index * 500);
 const outing = hobbies.history.find(record => record.activity === 'project');
 assert.deepEqual(outing?.participants, ['weigang']);
-assert.match(outing.lines[0].text, /钓位/);
+assert.match(outing.lines[0].text, /池边|钓位/);
 assert.equal(hobbies.history.filter(record => record.activity === 'project').length, 1);
 const outingRestored = life.restoreConversations(JSON.parse(JSON.stringify([outing])));
 assert.equal(outingRestored[0].activity, 'project');

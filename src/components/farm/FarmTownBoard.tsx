@@ -25,12 +25,16 @@ import { FarmVisitorSprite } from './FarmVisitorSprite';
 import { FarmRelationGraph } from './FarmRelationGraph';
 import { FARM_BODY_FONT, FarmButton, FarmIllustration, FarmParchmentCard, FarmSlotFrame, FarmText } from './FarmSkin';
 import {
+  formatVisitorStayHint,
+  getTodayVisitorSchedule,
   NORMAL_VISITOR_IDS,
   isFarmSleepDeprived,
   resolveVisitorDisplayProfile,
   resolveVisitorEmotion,
+  resolveVisitorVisit,
   type FarmVisitorState,
   type NormalVisitorId,
+  type VisitorVisitInfo,
   type WhaleVisitorSyncContext,
 } from '@/utils/farmVisitors';
 import type { NightSoloEvent } from '@/utils/farmSleep';
@@ -71,6 +75,7 @@ export function FarmTownBoard({
   storyBadgeCount = 0,
   visitorState,
   activeVisitor,
+  activeVisit,
   whaleSync,
   activeRandomEvent,
   onTriggerRandomEvent,
@@ -79,6 +84,7 @@ export function FarmTownBoard({
   nightSoloEvent,
   onInviteVisitor,
   onTalkVisitor,
+  onDismissVisitor,
   onToggleHorror,
   onSummonHorror,
   onOpenHouseWake,
@@ -115,6 +121,7 @@ export function FarmTownBoard({
   storyBadgeCount?: number;
   visitorState?: FarmVisitorState;
   activeVisitor?: NormalVisitorId | null;
+  activeVisit?: VisitorVisitInfo | null;
   whaleSync?: WhaleVisitorSyncContext;
   activeRandomEvent?: FarmRandomEventDef | null;
   onTriggerRandomEvent?: () => void;
@@ -123,6 +130,7 @@ export function FarmTownBoard({
   nightSoloEvent?: NightSoloEvent | null;
   onInviteVisitor?: (who: NormalVisitorId) => void;
   onTalkVisitor?: (who: NormalVisitorId) => void;
+  onDismissVisitor?: () => void;
   onToggleHorror?: (enabled: boolean) => void;
   onSummonHorror?: () => void;
   onOpenHouseWake?: () => void;
@@ -753,55 +761,86 @@ export function FarmTownBoard({
                 </FarmParchmentCard>
               ) : null}
 
-              {/* 4 位常驻串门访客（含同步课表人设的大肥鱼与 door 大学室友） */}
+              {/* 4 位常驻串门访客（日内多时段轮换到访、到点自然告辞，也可随时邀请或送别） */}
               <FarmText variant="label" style={{ color: '#6E563B', fontSize: 12 }}>
-                农场串门访客（每日轮换来访，也可一键邀请）
+                农场串门访客（按时段轮流串门 · 到点自然告别，也可随时邀请或送别）
               </FarmText>
-              {NORMAL_VISITOR_IDS.map(vid => {
-                const profile = resolveVisitorDisplayProfile(vid, whaleSync);
-                const rec = visitorState.records[vid];
-                const isHere = activeVisitor === vid;
-                const vEmotion = resolveVisitorEmotion(vid, visitorState, whaleSync, at);
-                const vDesc = describeFarmEmotion(vEmotion);
-                return (
-                  <FarmParchmentCard key={vid} tone={isHere ? 'sage' : 'warm'} style={{ gap: 8, padding: 10 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                      <FarmSlotFrame size={48} rarity={vid === 'dafeiyu' ? 4 : isHere ? 4 : 2} selected={isHere}>
-                        <FarmVisitorSprite who={vid} emotionPose={vDesc.pose} size={32} active={false} centered />
-                      </FarmSlotFrame>
-                      <View style={{ flex: 1, gap: 2 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                          <FarmText style={{ color: '#4F3924', fontSize: 13.5, fontWeight: '800' }}>
-                            {profile.name}
+              {(() => {
+                const liveVisit = activeVisit ?? resolveVisitorVisit(visitorState, at);
+                const todaySlots = getTodayVisitorSchedule(visitorState, at);
+                return NORMAL_VISITOR_IDS.map(vid => {
+                  const profile = resolveVisitorDisplayProfile(vid, whaleSync);
+                  const rec = visitorState.records[vid];
+                  const isHere = activeVisitor === vid;
+                  const vEmotion = resolveVisitorEmotion(vid, visitorState, whaleSync, at);
+                  const vDesc = describeFarmEmotion(vEmotion);
+                  const activePausedSlot = !isHere ? todaySlots.find(s => s.who === vid && s.status === 'active') : undefined;
+                  const nextSlot = todaySlots.find(s => s.who === vid && s.status === 'upcoming');
+                  const pastSlot = todaySlots.find(s => s.who === vid && (s.status === 'past' || s.status === 'dismissed'));
+                  const scheduleSubtext = isHere && liveVisit
+                    ? `${liveVisit.slotLabel} · ${formatVisitorStayHint(liveVisit)}`
+                    : activePausedSlot
+                      ? `本时段串门档期（${activePausedSlot.timeRangeText} · 邀约结束后继续来访）`
+                      : nextSlot
+                        ? `预计今日 ${nextSlot.timeRangeText} 来串门`
+                        : pastSlot
+                          ? `今日已来串过门（${pastSlot.timeRangeText}）`
+                          : '可随时邀来限时串门 45 分钟';
+                  return (
+                    <FarmParchmentCard key={vid} tone={isHere ? 'sage' : 'warm'} style={{ gap: 8, padding: 10 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                        <FarmSlotFrame size={48} rarity={vid === 'dafeiyu' ? 4 : isHere ? 4 : 2} selected={isHere}>
+                          <FarmVisitorSprite who={vid} emotionPose={vDesc.pose} size={32} active={false} centered />
+                        </FarmSlotFrame>
+                        <View style={{ flex: 1, gap: 2 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            <FarmText style={{ color: '#4F3924', fontSize: 13.5, fontWeight: '800' }}>
+                              {profile.name}
+                            </FarmText>
+                            <FarmText style={{ color: '#7D684E', fontSize: 10 }}>
+                              好感 {rec?.affinity ?? 18}/100{isHere ? ' · 正在院子里' : ''}
+                            </FarmText>
+                          </View>
+                          <FarmText style={{ color: '#6E5840', fontSize: 11, lineHeight: 16 }} numberOfLines={2}>
+                            {profile.title}
                           </FarmText>
-                          <FarmText style={{ color: '#7D684E', fontSize: 10 }}>
-                            好感 {rec?.affinity ?? 18}/100{isHere ? ' · 正在院子里' : ''}
+                          <FarmText style={{ color: isHere ? '#496B2F' : '#8E785D', fontSize: 10, fontWeight: isHere ? '700' : '500' }}>
+                            {scheduleSubtext}
                           </FarmText>
                         </View>
-                        <FarmText style={{ color: '#6E5840', fontSize: 11, lineHeight: 16 }} numberOfLines={2}>
-                          {profile.title}
-                        </FarmText>
+                        {isHere ? (
+                          <View style={{ gap: 5, alignItems: 'flex-end' }}>
+                            {onTalkVisitor ? (
+                              <Pressable
+                                onPress={() => onTalkVisitor(vid)}
+                                style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 99, backgroundColor: '#7B9657' }}
+                              >
+                                <FarmText style={{ color: '#FFFDF7', fontSize: 10.5, fontWeight: '800' }}>去聊聊</FarmText>
+                              </Pressable>
+                            ) : null}
+                            {onDismissVisitor ? (
+                              <Pressable
+                                onPress={onDismissVisitor}
+                                style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 99, backgroundColor: '#F2E5CF', borderWidth: 1, borderColor: '#D8C2A2' }}
+                              >
+                                <FarmText style={{ color: '#7A5D3B', fontSize: 10, fontWeight: '700' }}>送别</FarmText>
+                              </Pressable>
+                            ) : null}
+                          </View>
+                        ) : onInviteVisitor ? (
+                          <Pressable
+                            onPress={() => onInviteVisitor(vid)}
+                            style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 99, backgroundColor: '#EFE4CE', borderWidth: 1, borderColor: '#D6C2A3' }}
+                          >
+                            <FarmText style={{ color: '#61482D', fontSize: 10.5, fontWeight: '700' }}>邀来串门</FarmText>
+                          </Pressable>
+                        ) : null}
                       </View>
-                      {isHere && onTalkVisitor ? (
-                        <Pressable
-                          onPress={() => onTalkVisitor(vid)}
-                          style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 99, backgroundColor: '#7B9657' }}
-                        >
-                          <FarmText style={{ color: '#FFFDF7', fontSize: 10.5, fontWeight: '800' }}>去聊聊</FarmText>
-                        </Pressable>
-                      ) : onInviteVisitor ? (
-                        <Pressable
-                          onPress={() => onInviteVisitor(vid)}
-                          style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 99, backgroundColor: '#EFE4CE', borderWidth: 1, borderColor: '#D6C2A3' }}
-                        >
-                          <FarmText style={{ color: '#61482D', fontSize: 10.5, fontWeight: '700' }}>邀来串门</FarmText>
-                        </Pressable>
-                      ) : null}
-                    </View>
-                    <FarmEmotionMeter emotion={vEmotion} compact />
-                  </FarmParchmentCard>
-                );
-              })}
+                      <FarmEmotionMeter emotion={vEmotion} compact />
+                    </FarmParchmentCard>
+                  );
+                });
+              })()}
 
               {/* 深夜恐怖徐睡阴彩蛋控制台 */}
               <View

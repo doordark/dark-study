@@ -135,6 +135,7 @@ const newAtlases = [
   ['assets/images/farm-runtime/visitors-emotions-pos.png', 8, 5, 112, 112],
   ['assets/images/farm-runtime/visitors-emotions-neg.png', 8, 5, 112, 112],
   ['assets/images/farm-runtime/farm-sleep-sprites.png', 4, 6, 112, 128],
+  ['assets/images/farm-runtime/farm-sleep-heads-night.png', 4, 5, 112, 128],
 ];
 let totalNewCells = 0;
 for (const [rel, cols, rows, cw, ch] of newAtlases) {

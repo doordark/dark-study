@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Keyboard, Pressable, ScrollView, View } from 'react-native';
 import {
   CROP_KINDS,
@@ -16,6 +16,7 @@ import {
 } from '@/utils/farmEmotion';
 import {
   resolveVisitorDisplayProfile,
+  sanitizeVisitorMessages,
   visitorWeatherBehavior,
   type HorrorBanishMethod,
   type NormalVisitorId,
@@ -47,6 +48,8 @@ export function FarmVisitorSheet({
   onGiveCrop,
   onGiveDish,
   onBanishHorror,
+  onDismissVisitor,
+  stayHint,
   onClose,
   maxHeight,
   weather = 'clear',
@@ -69,6 +72,8 @@ export function FarmVisitorSheet({
   onGiveCrop: (who: NormalVisitorId, crop: CropKind) => void;
   onGiveDish: (who: NormalVisitorId, recipe: Recipe) => void;
   onBanishHorror: (method: HorrorBanishMethod) => void;
+  onDismissVisitor?: () => void;
+  stayHint?: string;
   onClose: () => void;
   maxHeight: number;
   weather?: FarmWeather;
@@ -77,12 +82,15 @@ export function FarmVisitorSheet({
   whaleSync?: WhaleVisitorSyncContext;
 }) {
   const [giftOpen, setGiftOpen] = useState(false);
+  const [selectedGiftKey, setSelectedGiftKey] = useState<string | null>(null);
+  const [lastVisitorGift, setLastVisitorGift] = useState<{ who: VisitorId; label: string } | null>(null);
   const currentId: VisitorId = who ?? 'huboqi';
   const profile = resolveVisitorDisplayProfile(currentId, whaleSync);
   const isHorror = currentId === 'dark_xushuiyin';
   const isDafeiyu = currentId === 'dafeiyu';
   const weatherBehavior = visitorWeatherBehavior(currentId, weather, rainbow, whaleSync);
   const emotionPose = emotion ? describeFarmEmotion(emotion).pose : 'neutral';
+  const cleanedMessages = useMemo(() => sanitizeVisitorMessages(messages), [messages]);
 
   const availableCrops = !isHorror
     ? CROP_KINDS.filter(k => stockCount(economy.inventory[k]) > 0).sort((a, b) => {
@@ -95,14 +103,47 @@ export function FarmVisitorSheet({
     ? RECIPES.filter(r =>
         coins >= r.fee &&
         (Object.entries(r.inputs) as [CropKind, number][]).every(([k, n]) => stockCount(economy.inventory[k]) >= n),
-      )
+      ).sort((a, b) => {
+        const la = profile.lovedGifts.includes(a.id) ? 0 : 1;
+        const lb = profile.lovedGifts.includes(b.id) ? 0 : 1;
+        return la - lb;
+      })
     : [];
+
+  const giftOptions: ({ key: string; kind: 'dish'; recipe: Recipe; loved: boolean } | { key: string; kind: 'crop'; crop: CropKind; loved: boolean })[] = [
+    ...craftableDishes.map(recipe => ({
+      key: `dish:${recipe.id}`,
+      kind: 'dish' as const,
+      recipe,
+      loved: profile.lovedGifts.includes(recipe.id),
+    })),
+    ...availableCrops.map(crop => ({
+      key: `crop:${crop}`,
+      kind: 'crop' as const,
+      crop,
+      loved: profile.lovedGifts.includes(crop),
+    })),
+  ];
+  const activeGift = giftOptions.find(opt => opt.key === selectedGiftKey) ?? giftOptions[0] ?? null;
+  const recentVisitorReceipt = lastVisitorGift && lastVisitorGift.who === currentId ? lastVisitorGift.label : null;
+
+  const handleConfirmVisitorGift = () => {
+    if (isHorror || !activeGift) return;
+    if (activeGift.kind === 'dish') {
+      onGiveDish(currentId as NormalVisitorId, activeGift.recipe);
+      setLastVisitorGift({ who: currentId, label: `${activeGift.recipe.label}（现做）` });
+    } else {
+      onGiveCrop(currentId as NormalVisitorId, activeGift.crop);
+      setLastVisitorGift({ who: currentId, label: `${CROP_LABELS[activeGift.crop]} ×1` });
+    }
+  };
 
   return (
     <FarmNPCSheet
       visible={visible && who !== null}
       onClose={() => {
         setGiftOpen(false);
+        setLastVisitorGift(null);
         Keyboard.dismiss();
         onClose();
       }}
@@ -195,33 +236,62 @@ export function FarmVisitorSheet({
             </View>
             <FarmText style={{ color: isHorror ? '#BCA2C9' : '#857056', fontSize: 10.5, marginTop: 2 }}>
               {profile.title}
+              {!isHorror && stayHint ? ` · ${stayHint}` : ''}
             </FarmText>
           </View>
 
           {!isHorror ? (
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => {
-                Keyboard.dismiss();
-                setGiftOpen(p => !p);
-              }}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 4,
-                paddingHorizontal: 9,
-                height: 28,
-                borderRadius: 99,
-                backgroundColor: giftOpen ? '#F8E6CC' : '#F4EAD7',
-                borderWidth: 1,
-                borderColor: giftOpen ? '#D59D53' : '#DFCFAF',
-              }}
-            >
-              <FarmUiIcon name="gift" size={14} />
-              <FarmText style={{ color: '#7D5224', fontSize: 10.5, fontWeight: '700' }}>
-                {giftOpen ? '收礼盒' : '送礼'}
-              </FarmText>
-            </Pressable>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setGiftOpen(p => !p);
+                }}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4,
+                  paddingHorizontal: 9,
+                  height: 28,
+                  borderRadius: 99,
+                  backgroundColor: giftOpen ? '#F8E6CC' : '#F4EAD7',
+                  borderWidth: 1,
+                  borderColor: giftOpen ? '#D59D53' : '#DFCFAF',
+                }}
+              >
+                <FarmUiIcon name="gift" size={14} />
+                <FarmText style={{ color: '#7D5224', fontSize: 10.5, fontWeight: '700' }}>
+                  {giftOpen ? '收礼盒' : '送礼'}
+                </FarmText>
+              </Pressable>
+              {onDismissVisitor ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="礼貌送别访客"
+                  onPress={() => {
+                    setGiftOpen(false);
+                    setLastVisitorGift(null);
+                    Keyboard.dismiss();
+                    onDismissVisitor();
+                  }}
+                  style={{
+                    paddingHorizontal: 8,
+                    height: 28,
+                    borderRadius: 99,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: '#F3E8D4',
+                    borderWidth: 1,
+                    borderColor: '#DCC8A7',
+                  }}
+                >
+                  <FarmText style={{ color: '#7B5F3E', fontSize: 10.5, fontWeight: '700' }}>
+                    送别
+                  </FarmText>
+                </Pressable>
+              ) : null}
+            </View>
           ) : null}
 
           <Pressable
@@ -229,6 +299,7 @@ export function FarmVisitorSheet({
             accessibilityLabel="关闭访客互动"
             onPress={() => {
               setGiftOpen(false);
+              setLastVisitorGift(null);
               Keyboard.dismiss();
               onClose();
             }}
@@ -319,54 +390,203 @@ export function FarmVisitorSheet({
               ))}
             </ScrollView>
 
-            {/* 访客送礼托盘 */}
+            {/* 访客真实送礼托盘 */}
             {giftOpen ? (
-              <FarmParchmentCard tone="warm" style={{ marginHorizontal: 14, marginBottom: 8, padding: 10, gap: 7 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                  <FarmUiIcon name="gift" size={15} />
-                  <FarmText style={{ color: '#63492D', fontSize: 11, fontWeight: '800' }}>
-                    招待来串门的{profile.name}（金框 ★ 为对方最爱）
-                  </FarmText>
+              <FarmParchmentCard tone="warm" style={{ marginHorizontal: 14, marginBottom: 8, padding: 10, gap: 8 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6, flexWrap: 'wrap' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                    <FarmUiIcon name="gift" size={15} />
+                    <FarmText style={{ color: '#63492D', fontSize: 11, fontWeight: '800' }}>
+                      背包真实招待 · 给{profile.name}
+                    </FarmText>
+                  </View>
+                  <View
+                    style={{
+                      paddingHorizontal: 7,
+                      paddingVertical: 1.5,
+                      borderRadius: 99,
+                      backgroundColor: '#EAF0DD',
+                      borderWidth: 1,
+                      borderColor: '#C5D5AA',
+                    }}
+                  >
+                    <FarmText style={{ color: '#4A6332', fontSize: 9, fontWeight: '700' }}>
+                      扣减背包库存
+                    </FarmText>
+                  </View>
                 </View>
-                {!availableCrops.length && !craftableDishes.length ? (
-                  <FarmText style={{ color: '#8C775D', fontSize: 11 }}>仓库里暂时还没有可招待的收获作物。</FarmText>
+
+                {!giftOptions.length ? (
+                  <FarmText style={{ color: '#8C775D', fontSize: 11, lineHeight: 16 }}>
+                    仓库里暂时还没有可招待的收获作物。聊天里嘴上说说不算真招待，先去田里收几株吧！
+                  </FarmText>
                 ) : (
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-                    {craftableDishes.map(recipe => {
-                      const loved = profile.lovedGifts.includes(recipe.id);
-                      return (
-                        <Pressable key={recipe.id} onPress={() => onGiveDish(currentId as NormalVisitorId, recipe)} style={{ width: 64, alignItems: 'center', gap: 2 }}>
-                          <FarmSlotFrame size={46} rarity={loved ? 4 : 3} selected={loved}>
-                            <FarmDishSprite kind={recipe.id} size={32} />
-                          </FarmSlotFrame>
-                          <FarmText numberOfLines={1} style={{ color: '#584027', fontSize: 10, fontWeight: '700' }}>
-                            {loved ? '★' : ''}{recipe.label}
+                  <>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 7, paddingVertical: 2 }}>
+                      {craftableDishes.map(recipe => {
+                        const key = `dish:${recipe.id}`;
+                        const loved = profile.lovedGifts.includes(recipe.id);
+                        const selected = activeGift?.key === key;
+                        return (
+                          <Pressable
+                            key={key}
+                            accessibilityRole="button"
+                            onPress={() => {
+                              setSelectedGiftKey(key);
+                              setLastVisitorGift(null);
+                            }}
+                            style={{
+                              width: 68,
+                              alignItems: 'center',
+                              gap: 2,
+                              paddingVertical: 4,
+                              paddingHorizontal: 3,
+                              borderRadius: 11,
+                              backgroundColor: selected ? '#FFF8E8' : 'transparent',
+                              borderWidth: 1.2,
+                              borderColor: selected ? '#D28E36' : 'transparent',
+                            }}
+                          >
+                            <FarmSlotFrame size={46} rarity={loved ? 4 : 3} selected={selected || loved}>
+                              <FarmDishSprite kind={recipe.id} size={32} />
+                            </FarmSlotFrame>
+                            <FarmText numberOfLines={1} style={{ color: '#584027', fontSize: 10, fontWeight: selected || loved ? '800' : '700' }}>
+                              {loved ? '★' : ''}{recipe.label}
+                            </FarmText>
+                            <FarmText style={{ color: '#8A6A42', fontSize: 8.5 }}>现做 {recipe.fee}币</FarmText>
+                          </Pressable>
+                        );
+                      })}
+                      {availableCrops.map(crop => {
+                        const key = `crop:${crop}`;
+                        const count = stockCount(economy.inventory[crop]);
+                        const loved = profile.lovedGifts.includes(crop);
+                        const selected = activeGift?.key === key;
+                        return (
+                          <Pressable
+                            key={key}
+                            accessibilityRole="button"
+                            onPress={() => {
+                              setSelectedGiftKey(key);
+                              setLastVisitorGift(null);
+                            }}
+                            style={{
+                              width: 62,
+                              alignItems: 'center',
+                              gap: 2,
+                              paddingVertical: 4,
+                              paddingHorizontal: 3,
+                              borderRadius: 11,
+                              backgroundColor: selected ? '#FFF8E8' : 'transparent',
+                              borderWidth: 1.2,
+                              borderColor: selected ? '#D28E36' : 'transparent',
+                            }}
+                          >
+                            <FarmSlotFrame size={46} rarity={loved ? 4 : 1} selected={selected || loved}>
+                              <CropSprite kind={crop} size={30} />
+                            </FarmSlotFrame>
+                            <FarmText numberOfLines={1} style={{ color: '#584027', fontSize: 10, fontWeight: selected || loved ? '800' : '600' }}>
+                              {loved ? '★' : ''}{CROP_LABELS[crop]}
+                            </FarmText>
+                            <FarmText style={{ color: '#8A755B', fontSize: 8.5 }}>余 ×{count}</FarmText>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+
+                    {activeGift ? (
+                      <View
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 8,
+                          padding: 7.5,
+                          borderRadius: 11,
+                          backgroundColor: '#FCF5E6',
+                          borderWidth: 1,
+                          borderColor: '#E1C598',
+                        }}
+                      >
+                        <View style={{ flex: 1, gap: 2 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+                            <FarmText style={{ color: '#533B22', fontSize: 11, fontWeight: '800' }}>
+                              {activeGift.kind === 'dish' ? activeGift.recipe.label : CROP_LABELS[activeGift.crop]}
+                            </FarmText>
+                            <View
+                              style={{
+                                paddingHorizontal: 5,
+                                paddingVertical: 1,
+                                borderRadius: 99,
+                                backgroundColor: activeGift.loved ? '#FBE5BE' : '#EFE3CE',
+                              }}
+                            >
+                              <FarmText style={{ color: activeGift.loved ? '#995712' : '#755B3D', fontSize: 8.5, fontWeight: '800' }}>
+                                {activeGift.loved ? '★ 最爱 · +7好感' : '心意 · +3好感'}
+                              </FarmText>
+                            </View>
+                          </View>
+                          <FarmText style={{ color: '#7D6344', fontSize: 9.5 }} numberOfLines={1}>
+                            {activeGift.kind === 'dish'
+                              ? `消耗 ${(Object.entries(activeGift.recipe.inputs) as [CropKind, number][]).map(([k, n]) => `${CROP_LABELS[k]}×${n}`).join(' + ')} + ${activeGift.recipe.fee}币`
+                              : (() => {
+                                  const cur = stockCount(economy.inventory[activeGift.crop]);
+                                  return `扣除背包 ${CROP_LABELS[activeGift.crop]} ×1（余 ${cur} → ${Math.max(0, cur - 1)}）`;
+                                })()}
+                          </FarmText>
+                        </View>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`招待${profile.name}真实礼物`}
+                          onPress={handleConfirmVisitorGift}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 4,
+                            paddingHorizontal: 10,
+                            paddingVertical: 7,
+                            borderRadius: 99,
+                            backgroundColor: '#C57B2B',
+                            borderWidth: 1,
+                            borderColor: '#A7631C',
+                          }}
+                        >
+                          <Ionicons name="gift-outline" size={12.5} color="#FFFDF7" />
+                          <FarmText style={{ color: '#FFFDF7', fontSize: 10.5, fontWeight: '800' }}>
+                            递出招待
                           </FarmText>
                         </Pressable>
-                      );
-                    })}
-                    {availableCrops.map(crop => {
-                      const loved = profile.lovedGifts.includes(crop);
-                      return (
-                        <Pressable key={crop} onPress={() => onGiveCrop(currentId as NormalVisitorId, crop)} style={{ width: 58, alignItems: 'center', gap: 2 }}>
-                          <FarmSlotFrame size={46} rarity={loved ? 4 : 1} selected={loved}>
-                            <CropSprite kind={crop} size={30} />
-                          </FarmSlotFrame>
-                          <FarmText numberOfLines={1} style={{ color: '#584027', fontSize: 10 }}>
-                            {loved ? '★' : ''}{CROP_LABELS[crop]}×{stockCount(economy.inventory[crop])}
-                          </FarmText>
-                        </Pressable>
-                      );
-                    })}
-                  </ScrollView>
+                      </View>
+                    ) : null}
+                  </>
                 )}
+
+                {recentVisitorReceipt ? (
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 5,
+                      paddingHorizontal: 8,
+                      paddingVertical: 4.5,
+                      borderRadius: 8,
+                      backgroundColor: '#E9F2DC',
+                      borderWidth: 1,
+                      borderColor: '#C1D5A3',
+                    }}
+                  >
+                    <Ionicons name="checkmark-circle" size={12.5} color="#4F7332" />
+                    <FarmText style={{ color: '#455F2E', fontSize: 9.5, fontWeight: '700', flex: 1 }}>
+                      已从背包扣减并招待{profile.name}「{recentVisitorReceipt}」
+                    </FarmText>
+                  </View>
+                ) : null}
               </FarmParchmentCard>
             ) : null}
           </>
         )}
 
         <FarmChatConversation
-          messages={messages}
+          messages={cleanedMessages}
           busy={busy}
           value={draft}
           onChange={onChangeDraft}

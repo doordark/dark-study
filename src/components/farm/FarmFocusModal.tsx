@@ -82,7 +82,6 @@ export function FarmFocusModal({
     setRemainingSec(preset * 60);
     setSettledNote(null);
     setPhase('running');
-    playSfx('farm_event', { volume: 0.68 });
   };
 
   const finishEarly = () => {

@@ -6,6 +6,7 @@ import React, {
   useContext,
   useId,
   useMemo,
+  useState,
 } from "react";
 import {
   Platform,
@@ -136,6 +137,7 @@ export function GlassContainer({
     [effectiveTint, darkGlass, hasWallpaper],
   );
   const rimId = useId().replace(/[^\w-]/g, "");
+  const [rimSize, setRimSize] = useState<{ w: number; h: number } | null>(null);
 
   // Dialogs/Modals on Android live in a separate native window without a valid blur target.
   const canBlur = glass && (!isAndroid || (androidVersion >= 31 && !!glassTarget));
@@ -291,11 +293,25 @@ export function GlassContainer({
       ) : null}
       {children}
       {showJsSpecular && edge > 0 ? (
-        <Svg
+        // Measure in px: react-native-svg resolves "%"/rx against the wrong box on Android,
+        // which drew a second, offset rounded rim inside headers and the composer.
+        <RNView
           pointerEvents="none"
           style={StyleSheet.absoluteFill}
-          width="100%"
-          height="100%"
+          onLayout={(event) => {
+            const { width, height } = event.nativeEvent.layout;
+            setRimSize((prev) =>
+              prev && Math.abs(prev.w - width) < 0.5 && Math.abs(prev.h - height) < 0.5
+                ? prev
+                : { w: width, h: height },
+            );
+          }}
+        >
+          {rimSize && rimSize.w > 3 && rimSize.h > 3 ? (
+        <Svg
+          pointerEvents="none"
+          width={rimSize.w}
+          height={rimSize.h}
         >
           <Defs>
             <SvgGradient id={rimId} x1="0%" y1="0%" x2="88%" y2="100%">
@@ -322,16 +338,18 @@ export function GlassContainer({
             </SvgGradient>
           </Defs>
           <Rect
-            x="0.75"
-            y="0.75"
-            width="99%"
-            height="99%"
-            rx={innerRadius}
+            x={0.75}
+            y={0.75}
+            width={rimSize.w - 1.5}
+            height={rimSize.h - 1.5}
+            rx={Math.min(innerRadius, (rimSize.h - 1.5) / 2, (rimSize.w - 1.5) / 2)}
             fill="none"
             stroke={`url(#${rimId})`}
             strokeWidth={1.5}
           />
         </Svg>
+          ) : null}
+        </RNView>
       ) : null}
     </RNView>
   );

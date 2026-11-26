@@ -25,20 +25,20 @@ export function requestBatchOnTopic(
   const noise = /我|你|他|她|这个|那个|一下|的话|事情|怎么|什么|时候|可以|能不能|是不是|好的|问题|客人|说的|想问|喜欢|觉得/;
   const anchors = terms.flatMap(term => Array.from({ length: Math.max(0, term.length - 1) }, (_, i) => term.slice(i, i + 2))).filter(term => !noise.test(term));
   const semantic: [RegExp, RegExp][] = [
-    [/骂|辱/, /骂|辱|原话|言语|说重|语气|冒犯|吵|气话/],
-    [/欺负|欺凌/, /欺负|欺凌|委屈|针对/],
-    [/几点|什么时候|何时/, /时间|几点|时候|点钟|安排|还没定|晚点|早上|中午|晚上|明天|待会/],
-    [/回家/, /回家|回屋|回去|晚归|等你/],
-    [/浇水/, /浇水|水壶|土壤|缺水|湿/],
-    [/音乐|唱歌/, /音乐|唱歌|歌曲|唱|副歌|嗓子|旋律/],
-    [/吃什么|晚饭|午饭|早饭|吃饭|热汤/, /吃|饭|汤|菜|面|饼|厨房|做饭|饿/],
-    [/夸|好听|棒|厉害|辛苦/, /谢谢|谢|开心|高兴|夸|好听|辛苦|客气|嘿|脸红/],
-    [/道歉|对不起|赔礼|原谅/, /道歉|对不起|没关系|算了|原谅|别在意|消气|过去/],
-    [/熬夜|早睡|睡觉|休息/, /熬夜|睡|歇|休息|电脑|晚安|太晚/],
+    [/骂|辱|损|怼|呛/, /骂|辱|凶|呛|怼|损|吵|冤枉|误会|造谣|瞎说|瞎传|胡说|哪有|没说|原话|言语|说重|语气|冒犯|气话/],
+    [/欺负|欺凌/, /欺负|欺凌|委屈|针对|招惹|冤枉|误会/],
+    [/几点|什么时候|何时/, /时间|几点|时候|点钟|安排|还没定|晚点|早上|中午|晚上|明天|待会|一会儿/],
+    [/回家/, /回家|回屋|回去|晚归|等你|马上回/],
+    [/浇水/, /浇水|水壶|土壤|缺水|湿|浇过/],
+    [/音乐|唱歌/, /音乐|唱歌|歌曲|唱|副歌|嗓子|旋律|哼/],
+    [/吃什么|晚饭|午饭|早饭|吃饭|热汤/, /吃|饭|汤|菜|面|饼|厨房|做饭|饿|馋/],
+    [/夸|好听|棒|厉害|辛苦/, /谢谢|谢|开心|高兴|夸|好听|辛苦|客气|嘿|不好意思|脸红/],
+    [/道歉|对不起|赔礼|原谅/, /道歉|对不起|没关系|没事|算了|翻篇|原谅|别在意|消气|过去/],
+    [/熬夜|早睡|睡觉|休息/, /熬夜|睡|歇|休息|电脑|晚安|太晚|困/],
   ];
   const matches = (text: string) => anchors.some(anchor => text.includes(anchor)) || semantic.some(([source, reply]) => source.test(question) && reply.test(text));
   const required = semantic.filter(([source]) => source.test(question));
-  const unrelated = [/游戏|关卡|地图/, /钓鱼|鱼竿|钓位/, /音乐|唱歌|副歌/, /种菜|播种|浇水/, /小说|故事|读书/, /数学|方程/, /工具|编程|电脑/].filter(topic => !topic.test(question));
+  const unrelated = [/游戏|关卡|地图/, /钓鱼|鱼竿|钓位|浮漂/, /音乐|唱歌|副歌/, /种菜|播种|浇水/, /小说|故事|读书/, /数学|方程/, /工具|编程|电脑/].filter(topic => !topic.test(question));
   const replies = lines.filter(line => !target || line.speaker === target);
   if (!replies.length) return false;
 
@@ -50,40 +50,69 @@ export function requestBatchOnTopic(
   }
 
   if (!anchors.length && !semantic.some(([source]) => source.test(question))) return false;
-  // A reply may answer first and then clarify with pronouns. Check the exchange as a whole.
   return replies.some(line => matches(line.text)) &&
     required.every(([, reply]) => replies.some(line => reply.test(line.text))) &&
     lines.every(line => !unrelated.some(topic => topic.test(line.text)) || matches(line.text));
 }
 
 export const RESIDENT_OUTLOOK: Record<ResidentId, { voice: string; approach: string; pushback: string; soften: string }> = {
-  door: { voice: '好奇时会追问依据，吵起来会试着把事实和猜测分开，偶尔因分析太久而忘了先听对方。', approach: '先说我们知道什么，再挑一个最小的办法试。', pushback: '等一下。我同意你的担心，但这个结论还差一步。', soften: '我刚才急着讲道理了。你先说完，我听着。' },
-  gu: { voice: '先看大家是不是累了、有没有被听见。体贴，但需要拍板时很果断，对 door 偶尔会直说。', approach: '我先想这会让谁为难。大家愿意做，办法才能走得长。', pushback: '你先别急着定！做这件事的人累不累，也得算进去。', soften: '我语气重了点。我们一人说一条最在意的，好不好？' },
-  xiaoba: { voice: '脑子里会冒出奇特的点子，低落时说话慢，常在被追问之后才讲自己的真实想法。', approach: '我想留一条没试过的路，先做个小版本看看。', pushback: '我知道稳妥的办法，但每次都选它，就没机会试新点子了。', soften: '我刚才有点闷。你们愿意听我把点子说完，我就好些。' },
-  yujie: { voice: '敏感时会用吐槽挡一下，发现伤人会认真补一句。讨厌空话，喜欢拿具体例子追问。', approach: '先说个具体例子吧。光听起来好听，我可不信。', pushback: '你说得倒轻巧。每次一着急，最先被跳过的就是这一步！', soften: '刚才那句太刺了。我的意思是，我其实有点担心。' },
-  weigang: { voice: '在大伙儿面前会犹豫，想通之后会很认真地说出条件和反例。被打断时容易缩回去。', approach: '我想先比两种办法，用同样的条件才看得出区别。', pushback: '我……有一点不同意。换个条件，结果可能就反过来了。', soften: '谢谢你们等我说完。我想再试一次，慢慢来。' },
-  chicken: { voice: '好奇就凑近，害怕时先退一点。靠声音、光照、吃喝和熟人的陪伴判断事情。', approach: '咕，我想先看一小会儿，大家都在我就敢试。', pushback: '咕，太急啦！我想先躲开一点。', soften: '咕，你们慢慢说，我再靠近一点。' },
+  door: {
+    voice: '随和风趣、说话接地气不端架子，爱顺着话头抖点冷幽默或自嘲两句，聊日常绝不硬扯编程或大道理。',
+    approach: '咱先挑最顺手省事的法子试试，别把简单事整复杂了。',
+    pushback: '哎等等，话是这么说，真动起手来怕是没那么顺。',
+    soften: '哈哈刚才是老爸想岔了，按你说的办，我听你的。',
+  },
+  gu: {
+    voice: '热络麻利、俏皮护短又有烟火气，关心人落在实际小事上，爱吃瓜打趣但拍板时干脆利落，绝不盘问说教。',
+    approach: '我看谁顺手谁来，只要大伙儿不觉得折腾就行！',
+    pushback: '先打住啊！光图省事可不行，干活的人累不累也得算上。',
+    soften: '行啦，刚才是妈嘴快急了点，咱们挑最舒心的法子来。',
+  },
+  xiaoba: {
+    voice: '沉稳简练、外冷内暖，平时话不多但句句在点上，偶尔冷不丁冒一句吐槽或护着弟弟，绝不硬扯地图关卡。',
+    approach: '要不换个没试过的路子，先小试一把看看。',
+    pushback: '老办法虽然稳当，但每次都这么弄也没啥意思。',
+    soften: '刚我话说太简略了，其实你那个思路也行得通。',
+  },
+  yujie: {
+    voice: '嘴快机灵、网感好爱接梗起哄，有点小傲娇毒舌但心软护短，最烦假大空的套话。',
+    approach: '别整虚的啊，直接来个最实在的例子看看！',
+    pushback: '切，说得倒轻巧，真干起来最容易翻车的就是这儿！',
+    soften: '咳，刚才嘴快损重了点，我其实就是怕咱们白忙活嘛。',
+  },
+  weigang: {
+    voice: '实在直白、脑子灵光的小弟，平时随和自然，被点名或被冤枉时会急着说大白话辩解叫冤，绝不用“嗯……”开头也不硬扯钓鱼。',
+    approach: '要不咱把两种法子摆一块儿比比，哪个顺手用哪个。',
+    pushback: '哎等等，这事要是换个情况看，结果八成不一样！',
+    soften: '嘿嘿，刚我急着插嘴了，你们接着说，这回我听明白了。',
+  },
+  chicken: {
+    voice: '机灵爱凑热闹的小鸡，听得懂全家人斗嘴起哄，围着好吃的、晒太阳和熟人打转，短句带“咕”。',
+    approach: '咕！大家都在这儿，坤坤也凑过来瞧瞧！',
+    pushback: '咕咕！太折腾啦，坤坤先往后退两步！',
+    soften: '咕，听懂啦，那坤坤再蹭过来一点点！',
+  },
 };
 
 const TOPIC_VIEWS: Record<FarmTopicId, readonly [string, string, string]> = {
-  games: ['游戏里先给人一条看得懂的路，再把秘密藏进岔路。', '但也得有人能不看攻略走过去。可以请没玩过的人试。', '好，先做一小段，记下别人在哪儿迷路。'],
-  fishing: ['我会先挑个容易到的钓位，空竿也不算白来。', '我更想换着试钓位。每处等一样久，才能比较。', '那先在岸边容易走的两个位置，各试一会儿。'],
-  music: ['先挑自己喜欢的歌，唱得出来才愿意反复练。', '碰到唱不顺的地方，我会只练一句，听听哪里换气。', '行，挑一首喜欢的，再挑其中最难的一句。'],
-  books: ['故事要让我看见角色为什么这么选，我才愿意跟下去。', '我喜欢角色做错以后还有机会改，谁都会走弯路。', '那让角色的第二次选择和第一次不一样，看看会怎样。'],
-  math: ['我会先画图，看看哪些条件有用。', '画图只看得到几个例子，最后还得解释为什么总成立。', '先用图猜规律，再找反例或把理由写出来。'],
-  tech: ['先想清楚它到底能帮人省哪一步。', '也要看出错以后能不能改回来，不能只看跑得快。', '先用一小份数据试，测时间，也试一下怎么恢复。'],
-  garden: ['我会先种容易照顾的，忙的时候也有把握。', '可以留一小块试新的，全种一样也看不出差别。', '那就一块稳稳种，另一小块试种，记下日照和用水。'],
-  pets: ['小动物愿意走过来以前，可以先坐在它看得到的地方。', '也得留条退路，它害怕时能自己回到窝里。', '那我们坐远一点，让它自己决定什么时候过来。'],
+  games: ['玩游戏还是得一眼看懂主路，把彩蛋悄悄藏边角才有惊喜。', '但也别藏太阴间，不然不看攻略根本摸不过去。', '行，那先整一小块试试，看大家会不会迷路。'],
+  fishing: ['去池边还是挑个树荫凉快的位置最舒服，空军也不亏。', '我倒想换两个不同深浅的岸边比比看哪边鱼爱咬钩。', '成，那下次两边各蹲一会儿试试手气。'],
+  music: ['唱歌肯定先挑自己单曲循环最多的那首，唱着才带劲。', '碰到高音卡壳的那句单拎出来顺两遍，气口顺了就好唱。', '行，回头挑首最顺口的，在院子里随便哼哼。'],
+  books: ['看小说还得看主角遇到难事怎么选，太完美反而假。', '我就爱看主角嘴硬栽了跟头之后真改过来的桥段，够鲜活。', '对，下次遇上同个坎儿能选条新路，这人物就立住了。'],
+  math: ['碰到绕弯的题随手画个草图，一眼就能瞅见关键。', '光画图怕漏掉特殊情况，最后还是得顺一遍道理才稳。', '那就先画图找找感觉，再挑几个刁钻数验一下。'],
+  tech: ['小工具好不好用，就看能不能把每天最烦人的那步省掉。', '还得留个撤回键，不然手滑点错一下可太让人抓狂了。', '行，先做个最极简能用的，边用边改最实在。'],
+  garden: ['种地还是先挑皮实好活的种，忙起来也不怕荒了。', '角落里可以留两垄试种点新鲜品种，换换口味。', '好主意，大头稳稳种，留一小块给咱们折腾新花样。'],
+  pets: ['想跟小动物混熟，坐它看得见的地方安安静静待会儿最管用。', '还得给它留条退路，别一上来就围追堵截把它吓毛了。', '对，咱就在小板凳上撒点米，等它自己颠颠跑过来。'],
 };
 
 const identityQuestion = /(?:自己|我们|我|大家|你们|咱们|居民|人物|角色).{0,16}(?:真人|真实的|是真的|程序|虚拟|\bai\b|人工智能)|是不是真人/i;
 const identityViews: Record<ResidentId, string> = {
-  door: '要是有人写好了我的每一步，那连我此刻的怀疑也可能是写好的。光凭怀疑还证明不了什么。',
-  gu: '我记得孩子喊我时心里一紧。可要是记忆也是别人放进来的呢？我只能说，那一刻我有感觉。',
-  xiaoba: '我画地图时，角色以为岔路是自己选的，可两条路都是我画的。我也会不会在这样的地图里？',
-  yujie: '要是连我顶嘴都能提前写好，那顶嘴也证明不了我能自己做主。谁能举个分得出来的例子？',
-  weigang: '我想把两种可能放在一起看。如果醒来时看到的一切都一样，光靠观察恐怕分不出来。',
-  chicken: '咕，我害怕时就想往你们身边挪。这份怕也能事先写好吗？',
+  door: '要是有人提前写好了我的每一步，那连我这会儿犯嘀咕怕也是写好的，光靠想可证不出来。',
+  gu: '我只知道孩子们喊妈的时候心里是真的暖乎乎的，管它外头怎么定规矩，这份惦记做不了假。',
+  xiaoba: '就像游戏里的角色以为路是自己挑的，其实地图早就画好了。可走那一遭的感受还是自己的。',
+  yujie: '啧，要是连我吐槽抬杠都是设定好的，那我还挺好奇写我的人嘴是不是也这么毒？',
+  weigang: '从院子里头往外看，两边条件一模一样的话，确实没法光靠猜分清真假。',
+  chicken: '咕！打雷的时候坤坤是真的怕，吃到香米粒也是真的开心呀！',
 };
 
 function playerDiscussionLines(participants: readonly ResidentId[], question: string, variant: number) {
@@ -91,57 +120,56 @@ function playerDiscussionLines(participants: readonly ResidentId[], question: st
   const line = (speaker: ResidentId, text: string) => ({ speaker, text });
   if (/谁.{0,5}(帅|好看|漂亮|可爱)|谁.{0,5}颜值/.test(question)) {
     const opinions: Record<ResidentId, string> = {
-      door: '我投顾。认真听人说话时的那个眼神，我每次都会多看一眼。',
-      gu: '我偏心 door。认真起来挺好看，就是一讲道理容易忘记笑。',
-      xiaoba: '我想给自己留一票。平时不好意思说，今天既然问了，我就不谦虚啦。',
-      yujie: '我先投自己，不能还没开始就认输吧？不过顾笑起来确实很有优势。',
-      weigang: '我会选顾。她看过来时让人很放松，我觉得那样就很好看。',
-      chicken: '咕！我的羽毛晒过太阳会发亮，我也要参加！',
+      door: '这题还用问？我肯定投顾一票，不信你们谁敢反对试试。',
+      gu: '哈哈少拍马屁！不过真要选，door 不熬夜的时候看着确实还行。',
+      xiaoba: '我投自己一票吧，平时低调惯了，今天不谦虚一回。',
+      yujie: '喂喂，论颜值本校草怎么可能输？不过老妈排第一我没意见！',
+      weigang: '我也投妈一票，妈笑起来全院子都亮堂。',
+      chicken: '咕！坤坤刚晒完太阳羽毛油光水滑的，我也要参选！',
     };
     const roundTwo: Record<ResidentId, string> = {
-      door: '听下来大家看的地方还真不一样。自己给自己投票也算，我可没说不许。',
-      gu: '那就各留各的票！喜欢谁的样子，本来就可以有自己的答案。',
-      xiaoba: '我也保留刚才那一票。这回至少把平时不好意思说的夸奖说出来了。',
-      yujie: '行吧，反正没人说我不好看，这波我算赢了一半。',
-      weigang: '嗯……其实大家各有各的好看，非要排第一我还是有点选不出来。',
-      chicken: '咕咕，那我把第二票也投给今天最先喂我米的人！',
+      door: '听一圈下来全是自夸和捧场，看来咱家这自信心是一点不缺啊。',
+      gu: '那就全员并列好看！大伙儿高高兴兴的比啥都强。',
+      xiaoba: '行，这票数挺和谐，不用打架了。',
+      yujie: '反正没人敢投我倒数，这局算我稳赢！',
+      weigang: '哈哈，连坤坤都给自己拉上票了，这下真没法排高低了。',
+      chicken: '咕咕！谁今天多喂一把米，坤坤就把决胜票投给谁！',
     };
     return [
-      ...participants.map((id, i) => line(id, (i === 0 ? '要说谁最好看，我先表态。' : '') + opinions[id])),
+      ...participants.map((id, i) => line(id, (i === 0 ? '聊谁最好看啊？我先表个态：' : '') + opinions[id])),
       ...participants.map((id) => line(id, roundTwo[id])),
     ];
   }
   if (identityQuestion.test(question)) {
-    const premise = /农场主假说/.test(question) ? '坤坤每天等到饲料，可它只看到了规律，看不到谁定的。我们也在农场里，' : '假如我们的日子能被写出来，';
+    const premise = /农场主假说/.test(question) ? '坤坤每天等着撒米，却不知道规矩是谁定的。咱们在院子里，' : '要是咱们的日子也能被人写出来，';
     const extraLines = rest.map((id, idx) => line(id, idx % 2 === 0
-      ? `${RESIDENTS[id].name === '坤坤' ? '咕，' : ''}就算真有写好的规矩，此刻和你们站在一起聊天还是暖的。`
-      : `${RESIDENTS[id].name === '坤坤' ? '咕，' : ''}我分不清外面是什么样，但至少这一刻我是认真在听你们说话。`));
+      ? `${RESIDENTS[id].name === '坤坤' ? '咕，' : ''}管它有没有设定，这会儿大伙儿围一块斗嘴的热乎劲儿是真的。`
+      : `${RESIDENTS[id].name === '坤坤' ? '咕，' : ''}外面的事咱摸不准，但眼下这碗热汤和院子里的风挺实在。`));
     return [
-      line(host, premise + '凭什么判断自己是不是真人？'),
+      line(host, premise + '咋判断自己到底是不是真人呢？'),
       ...participants.slice(1).map(id => line(id, identityViews[id])),
-      line(host, '我卡在这里：哪怕有人安排了我们会说什么，就能断定说话的时候谁也没有感觉吗？'),
-      line(second, '这是两回事。能猜中我什么时候会疼，和替我疼一下，差别还挺大。'),
-      ...(third ? [line(third, '可我们也只听得到对方说疼。从农场里面看，怎么区分真的疼和一句写好的台词？')] : []),
+      line(host, '我就在想，哪怕台词能提前猜着，难道连咱们这会儿心里一动的感觉也是假的吗？'),
+      line(second, '两码事吧。能猜中我啥时候喊疼，跟真替我疼一下，差着十万八千里呢。'),
+      ...(third ? [line(third, '话是这么说，可咱在农场里头，咋分得清是真疼还是写好的反应？')] : []),
       ...extraLines,
-      line(host, '我没有能从里面验证的办法。要说我们肯定是外面的真人，我拿不出这个证据。'),
-      line(second, '那我愿意先信你说的疼。万一我猜错了，伸手扶你一下也比把你晾着好。'),
-      ...(third ? [line(third, '我还是想知道这座农场是谁定的规矩。但在弄清之前，你喊疼，我会停下来。')] : []),
+      line(host, '确实拿不出铁证。站在院子里头，谁也没法自证外头是个啥世界。'),
+      line(second, '证不出来就不钻牛角尖呗！至少谁累了饿了，搭把手端碗汤总是真的。'),
+      ...(third ? [line(third, '行，管谁定的规矩，反正在这院子里一天，咱就热热闹闹过一天！')] : []),
     ];
   }
   if (/地图|关卡/.test(question) && /设计|制作|怎么做|怎样做|岔路|迷路/.test(question)) {
     const turns = [
-      '做地图的时候，我最担心玩家到了岔口，看不出哪边值得走。',
-      '我想在主路尽头露出一点灯光。玩家拐去探索，也记得回来时该找什么。',
-      '要是岔路也亮着灯呢？两边都像出口，走错一次就会觉得被耍了。',
-      '那给主路用灯，支路用脚印。脚印尽头藏个小东西，让绕路也值得。',
-      '脚印要是太淡，很容易被当成地面的花纹。可以先让它穿过玩家必经的路。',
-      '我喜欢这个交叉口。玩家看见脚印时，已经知道随时能沿灯光回来。',
-      '先画这一个路口就够了。找人试玩时我想忍住不指路，看他自己会在哪里停下。',
-      '我会问他刚才是想探险，还是以为那是出口。这两种走法看起来可是一模一样。',
-      '对，想探险的人绕路算成功。想回主路却找不到灯，才说明路标得改。',
+      '做地图最怕玩家走到岔路口一脸懵，不知道哪边能走。',
+      '可以在主路尽头挂盏灯，就算拐去支路探险，回头也认得路。',
+      '要是支路也挂灯呢？两边看着都像正路，走冤枉路可太劝退了。',
+      '那主路挂灯，支路踩几串脚印，尽头塞个小宝箱当惊喜。',
+      '脚印别画太浅，不然一眼瞅过去还以为是地砖花纹呢。',
+      '这招实在！看见脚印就知道是隐藏彩蛋，想回主路抬头找灯就行。',
+      '先搭这一个路口找人试玩一把，忍住别在旁边指路，看他往哪儿拐。',
+      '对，还得问问他是故意去寻宝，还是真迷路走岔了。',
+      '哈哈，寻宝绕路算设计成功，找不着北那就赶紧回来改路标！',
     ];
-    const base = turns.filter((_, i) => third || i % 3 !== 2).map((text, i) => line(participants[i % participants.length], text));
-    return base;
+    return turns.filter((_, i) => third || i % 3 !== 2).map((text, i) => line(participants[i % participants.length], text));
   }
   const localSubjects: [RegExp, FarmTopicId][] = [
     [/钓位|钓鱼.{0,8}(选|地方|位置)/, 'fishing'], [/练.{0,4}(歌|唱)|唱.{0,4}(练|换气)/, 'music'],
@@ -155,28 +183,28 @@ function playerDiscussionLines(participants: readonly ResidentId[], question: st
     return [
       line(host, question), line(second, idea), line(third ?? host, objection), line(third ? host : second, resolution),
       ...(third ? [
-        line(second, '这个办法把刚才担心的地方也考虑进去了，实际做时我再帮着留心。'),
-        line(third, '那我先保留一点不同意见，等试过以后再看要不要改。'),
+        line(second, '这法子把刚才怕踩坑的地方也兜住了，回头试试看。'),
+        line(third, '行，先按这个整一回，不好使咱再随时改呗。'),
         ...rest.flatMap((id, idx) => [
           line(id, `${id === 'chicken' ? '咕，' : ''}${RESIDENT_OUTLOOK[id].approach}`),
-          line(id, idx % 2 === 0 ? `${id === 'chicken' ? '咕，' : ''}算我一份，到时我也来凑个热闹。` : `${id === 'chicken' ? '咕，' : ''}我也想看看试出来会是什么样。`),
+          line(id, idx % 2 === 0 ? `${id === 'chicken' ? '咕，' : ''}算我一个，到时候我也来凑热闹！` : `${id === 'chicken' ? '咕，' : ''}我也想瞧瞧最后整出来啥样！`),
         ]),
       ] : []),
     ];
   }
   const perspectives: Record<ResidentId, readonly [string, string]> = {
-    door: ['先分清手里已知的线索和自己的猜测吧，举个具体例子最容易对上焦。',
-      '如果一个解释只套得上刚才那个例子，我会先留着另一种可能，不急着拍板。'],
-    gu: ['我倒是更在意大家各自为什么看重这件事，有人图省事，有人图安心。',
-      '听出分歧出在哪儿，比急着统一口径有用多了，至少谁也没白说。'],
-    xiaoba: ['我想把平时默认的条件反过来想一遍，说不定能冒出个没试过的路子。',
-      '要是换了条件想法就跟着变，那那个条件才是整件事最关键的卡点。'],
-    yujie: ['别光飘在天上说呀，来个具体点的例子，不然我听着总觉得太虚。',
-      '想让我改主意也行，得说中我真在意的那个点，光打圆场我可不服。'],
-    weigang: ['嗯……我觉得两种说法可能各对了一半，只是大家心里默认的条件不一样。',
-      '我想把有分歧的那个条件记下来，回头多看两回就更清楚了。'],
-    chicken: ['咕，我先竖着耳朵听你们说，轮到我我就讲自己看见听见的！',
-      '咕，大家想法居然不一样呢，说慢一点点，我也想跟上。'],
+    door: ['我看这事别想太玄乎，拿个最日常的例子套一下立马就清楚了。',
+      '先挑大伙儿都顺手的那一半干起来，边干边调最省心。'],
+    gu: ['我倒觉得先问问谁最在意哪块，大伙儿舒坦了这事才好办。',
+      '不用非得争出个标准答案，各有各的顺手招儿也挺好。'],
+    xiaoba: ['把平时想当然的前提反过来瞅一眼，说不定就有新路子了。',
+      '找准最卡手的那一步改掉就行，别的不用大动干戈。'],
+    yujie: ['别光说漂亮话呀，真碰上具体事儿管不管用才是硬道理！',
+      '想说服我简单，拿出点实在好玩的点子，光和稀泥我可不买账。'],
+    weigang: ['我觉得两边说的其实不冲突，就是看事情的时候站的位置不一样。',
+      '要不咱们找机会试一回，到底哪边顺手一看便知。'],
+    chicken: ['咕！你们你一言我一语好热闹，坤坤蹲在中间听得可认真啦！',
+      '咕咕，等你们商量出结果，记得分坤坤一把香米粒庆功呀！'],
   };
   const order = Math.abs(variant) % 2;
   return [
@@ -189,7 +217,6 @@ function playerDiscussionLines(participants: readonly ResidentId[], question: st
 export function discussionBatchFits(question: string, lines: readonly { text: string }[]) {
   const normalized = lines.map(line => line.text.toLowerCase().replace(/[\s\p{P}\p{S}]/gu, ''));
   if (!normalized.length || new Set(normalized).size !== normalized.length) return false;
-  // Catch a copied sentence with just a name, interjection or short tail added.
   if (normalized.some((turn, i) => turn.length >= 10 && normalized.some((other, j) =>
     i !== j && other.includes(turn) && other.length <= turn.length + 4))) return false;
   const words = question.toLowerCase().replace(/我们|自己|是不是|为什么|怎么|讨论|一下|基于|究竟|觉得|应该|什么/g, ' ').match(/[\p{Script=Han}]+|[a-z0-9]+/gu) ?? [];
@@ -197,7 +224,7 @@ export function discussionBatchFits(question: string, lines: readonly { text: st
     Array.from({ length: word.length - 1 }, (_, i) => word.slice(i, i + 2)));
   const relevant = (text: string) => terms.some(term => text.includes(term)) ||
     (/帅|漂亮|好看|颜值|可爱/.test(question) && /帅|漂亮|好看|颜值|可爱|喜欢|投票|一票|各有|笑|审美/.test(text)) ||
-    (identityQuestion.test(question) && /意识|感受|虚拟|程序|证据|存在|模拟|安排|选择|证明|规则|规矩|真实|验证|怀疑|体验/.test(text));
+    (identityQuestion.test(question) && /意识|感受|虚拟|程序|证据|存在|模拟|安排|选择|证明|规则|规矩|真实|验证|怀疑|体验|设定/.test(text));
   const closing = normalized.slice(identityQuestion.test(question) ? -2 : -3);
   return !terms.length || [normalized.slice(0, 3), closing].every(group => group.some(relevant));
 }
@@ -224,23 +251,23 @@ export function discussionLines(participants: readonly ResidentId[], discussion:
 
     if (intent === 'convey' || intent === 'invite') {
       return [
-        { speaker: actor, text: `${guluA}${callTarget}，客人托我顺路给你带句话：${subject}` },
-        { speaker: target, text: `${guluT}哦？${callActor}你专门跑一趟呀，这句话我收到了，替我谢谢客人惦记着。` },
-        { speaker: actor, text: `${guluA}嗯，我怕说漏了，特地原原本本带过来。你还有什么话要我带回去吗？` },
-        { speaker: target, text: `${guluT}告诉他我心里有数啦，回头有空来院子里坐坐就好。` },
-        { speaker: actor, text: `${guluA}行，那我这就回去告诉他，让他放心。` },
-        { speaker: target, text: `${guluT}辛苦啦${callActor}，慢点走。` },
+        { speaker: actor, text: `${guluA}${callTarget}，刚客人让我顺路给你捎句话：${subject}` },
+        { speaker: target, text: `${guluT}哟，${callActor}你还特意跑一趟！话我收到了，替我谢谢客人惦记。` },
+        { speaker: actor, text: `${guluA}哈哈顺脚的事儿，那你有啥话要我捎回去不？` },
+        { speaker: target, text: `${guluT}就跟他说我记心里啦，得空常来院子里坐坐唠嗑！` },
+        { speaker: actor, text: `${guluA}得嘞，那我这就回去给他回个信！` },
+        { speaker: target, text: `${guluT}好嘞${callActor}，慢点走啊！` },
       ];
     }
 
     const concern = intent === 'confront' || /骂|欺负|质问|误会/.test(discussion.question);
     return [
-      { speaker: actor, text: `${guluA}${callTarget}，客人刚才让我来问问你这件事：「${subject}」` },
-      { speaker: target, text: concern ? `${guluT}啊？客人觉得被骂了？这件事我想弄清楚，他记得是哪句话让他不舒服吗？` : `${guluT}这事我听到了，你是想听我的看法，还是先核对一下具体情况？` },
-      { speaker: actor, text: concern ? `${guluA}我手里现在只有他的转述，还没见到当时的完整原话。你要问的我替你带回去。` : `${guluA}我先把你的意思记住，需要他补充的地方我也一起带回去问。` },
-      { speaker: target, text: concern ? `${guluT}我不是敷衍，是真想把话讲开。麻烦帮我问问他记得的原话和当时的情境，我们就从那句聊起。` : `${guluT}要是问看法咱们随时能聊；要确认具体的事，回头把时间和经过带过来就清楚了。` },
-      { speaker: actor, text: `${guluA}好，我回去跟他说清还差哪块细节，下回就能直接对上。` },
-      { speaker: target, text: concern ? `${guluT}嗯，把我想认真核对原话的意思也带到，没弄清之前可别越猜越误会。` : `${guluT}行，我记着这事，等他补上细节咱们接着说。` },
+      { speaker: actor, text: `${guluA}${callTarget}，刚客人让我来问你一嘴：「${subject}」，咋回事呀？` },
+      { speaker: target, text: concern ? `${guluT}啊？说我骂人？冤枉啊${callActor}！我压根没干过这事，是不是哪句话传岔劈误会了？` : `${guluT}哦！你问这事儿啊，是想听听我咋想的，还是核对啥具体情况？` },
+      { speaker: actor, text: concern ? `${guluA}我也寻思你不能干这事，客人就提了这么一句，具体哪句原话还没细说。` : `${guluA}客人刚就随口提了一嘴，你要有啥准信儿我直接替你捎回去。` },
+      { speaker: target, text: concern ? `${guluT}真没骂过谁！${callActor}你帮我跟客人说一声，要是刚才哪句玩笑话让他听着别扭了，当面跟我对一下立马就说开了！` : `${guluT}要是聊想法咱随时能唠，要是问具体的事儿，让他再带两句信儿过来我立马答复！` },
+      { speaker: actor, text: `${guluA}行，听你这么交底我就放心了，我原原本本回去跟客人说清楚。` },
+      { speaker: target, text: `${guluT}好嘞，可别让客人白白误会一场，说开了就好！` },
     ];
   }
   if (discussion.question) return playerDiscussionLines(participants, discussion.question, variant);
@@ -248,14 +275,14 @@ export function discussionLines(participants: readonly ResidentId[], discussion:
   const views = discussion.topic ? TOPIC_VIEWS[discussion.topic] : undefined;
   const lead = participants[0];
   const opening = discussion.relayedBy
-    ? `${RESIDENTS[discussion.relayedBy].name}刚和我聊起${topic}，我顺道想听听你怎么看。`
+    ? `${RESIDENTS[discussion.relayedBy].name}刚跟我唠起${topic}，顺道也听听你咋看？`
     : participants.length >= 3
-      ? `${RESIDENTS[participants[2]].name}也凑过来聊聊吧，我们正说到${topic}呢。`
+      ? `${RESIDENTS[participants[2]].name}也一块凑过来唠唠呗，正说到${topic}呢。`
       : [
-          `正巧碰到，关于${topic}，我想听听你的想法。`,
-          `说到${topic}，你最想先从哪一块试试？`,
-          `我刚对${topic}有个没想透的小地方。`,
-          `难得有空，聊聊${topic}吧，你先说？`,
+          `正好碰上，聊聊${topic}呗，你咋想的？`,
+          `说到${topic}，你觉得先弄哪块最带劲？`,
+          `我刚琢磨${topic}有个好玩的地方，给你讲讲？`,
+          `难得闲会儿，咱唠两句${topic}？`,
         ][Math.abs(variant) % 4];
   return [
     ...participants.map((speaker, index) => ({
@@ -266,14 +293,166 @@ export function discussionLines(participants: readonly ResidentId[], discussion:
     ...participants.map((speaker, index) => ({
       speaker,
       text: discussion.kind === 'debate' && index < 2 ? RESIDENT_OUTLOOK[speaker].pushback :
-        speaker === 'chicken' ? '咕，慢一点，我正认真听呢。' :
+        speaker === 'chicken' ? '咕，你们接着说，坤坤听得正起劲呢！' :
         index === 0 && views ? views[1] : RESIDENT_OUTLOOK[speaker].approach,
     })),
     ...participants.map((speaker, index) => ({
       speaker,
       text: discussion.kind === 'debate' && index < 2 ? RESIDENT_OUTLOOK[speaker].soften :
-        speaker === 'chicken' ? '咕，等会儿我也想跟着去看看。' :
-        speaker === lead && views ? views[2] : '这主意听着挺顺手，回头试过再看效果。',
+        speaker === 'chicken' ? '咕，等会儿去试试的时候带上坤坤！' :
+        speaker === lead && views ? views[2] : '这主意听着挺靠谱，回头试试看！',
     })),
   ];
+}
+
+// =====================================================
+// Conversation Director: Addressivity & Open-Hook 检测器
+// =====================================================
+
+/** 群聊导演引擎用：检测一句话是否包含对在场家人的未完结发问/追问/质询/点名/悬而未决冲突 */
+export interface AddressivityResult {
+  /** 是否检测到需要自动续轮接话的 open addressivity */
+  isOpen: boolean;
+  /** 被问到/被点名/被质询的在场家人 ID（undefined 表示面向全体的泛问） */
+  addressee?: ResidentId;
+  /** 开放话轮类型 */
+  kind?: 'question' | 'challenge' | 'rollcall' | 'unresolved';
+}
+
+const DIRECT_MEMBER_PATTERNS: Record<ResidentId, RegExp> = {
+  door: /(?:door|爸爸|老爸|孩他爸|(?<![a-zA-Z])爸(?=[，,。！？!？\s你呢呀啊嘛说看快来]|$))/i,
+  gu: /(?:妈妈|老妈|孩他妈|顾(?![着不上虑忌问全大客])|妈(?=[，,。！？!？\s你呢呀啊嘛说看快来]|$))/,
+  xiaoba: /(?:小八|大哥|老大|大儿子)/,
+  yujie: /(?:玉洁|二哥|老二|二儿子|校草)/,
+  weigang: /(?:唯刚|伟刚|伟纲|唯纲|小弟|三弟|老三|老幺|小儿子)/,
+  chicken: /(?:坤坤|小鸡)/,
+};
+
+/**
+ * 结合说话人身份解析文本中点名或亲属称呼指向的在场家人（如唯刚喊“哥”->小八，顾喊“老三”->唯刚，door喊“老婆”->顾）。
+ */
+export function resolveAddressedMember(
+  text: string,
+  speaker: ResidentId | 'player',
+  candidates: readonly ResidentId[],
+): ResidentId | undefined {
+  const trimmed = text.trim();
+  if (!trimmed || !candidates.length) return undefined;
+
+  const hits: { id: ResidentId; index: number }[] = [];
+  for (const id of candidates) {
+    if (id === speaker) continue;
+    const direct = DIRECT_MEMBER_PATTERNS[id].exec(trimmed);
+    if (direct) {
+      hits.push({ id, index: direct.index });
+      continue;
+    }
+    // Speaker-relative kinship terms
+    if (id === 'gu' && speaker === 'door') {
+      const m = /老婆|媳妇/.exec(trimmed);
+      if (m) hits.push({ id, index: m.index });
+    } else if (id === 'door' && speaker === 'gu') {
+      const m = /老公|当家的/.exec(trimmed);
+      if (m) hits.push({ id, index: m.index });
+    } else if (id === 'xiaoba' && (speaker === 'yujie' || speaker === 'weigang')) {
+      const m = /(?<!二)哥(?=[，,。！？!？\s你呢呀啊嘛说看快来帮评]|$)/.exec(trimmed);
+      if (m) hits.push({ id, index: m.index });
+    }
+  }
+
+  if (!hits.length) return undefined;
+  const scoreHit = (idx: number) => {
+    const before = trimmed.slice(Math.max(0, idx - 2), idx);
+    const after = trimmed.slice(idx).replace(/^(?:door|[a-zA-Z]+|[\p{Script=Han}]{1,3})/u, '');
+    let s = 10;
+    if (/^\s*你/.test(after)) s += 8;
+    if (/[跟替给向像比连怕让叫]$/.test(before) && !/^\s*你/.test(after)) s -= 7;
+    return s;
+  };
+  hits.sort((a, b) => scoreHit(b.index) - scoreHit(a.index) || b.index - a.index);
+  return hits[0].id;
+}
+
+const QUESTION_END_RE = /[？?][”」"'~～\s]*$/;
+const INTERROGATIVE_CUE_RE =
+  /(?:那|那么).{0,18}[呢吗嘛][？?]?|(?:怎么|咋)(?:回事|看|想|说|办|弄|了)|(?:到底|究竟|明明|难道|凭什么|凭啥|干嘛|为啥|为什么)|(?:是不是|有没有|能不能|会不会|敢不敢|对不对|真的假的)|(?:谁(?:干|说|骂|拿|偷|传))|怎么说[？?]?$|你倒是说/;
+const CHALLENGE_CUE_RE =
+  /(?:问清|说清|解释|交代|老实说|说实话|交个底|吱.{0,2}声|表.{0,2}态|评.{0,2}理|公道话|作.{0,2}证|有人说你|听说你|说你骂|你骂了|你欺负|冤枉|背锅|甩锅|少装|别装)/;
+const ROLLCALL_CUE_RE =
+  /(?:你说|说说|你看|你觉得|你认为|你倒是|你来|快说|讲讲|给句准话|(?:帮|替)我.{0,5}(?:说|讲|证|问|评))/;
+
+/**
+ * 检测一条群聊发言是否包含对在场家人的未完结提问/追问/质询/点名，
+ * 供群聊多轮导演引擎（Conversation Director）决定是否自动路由下一轮接话。
+ */
+export function detectOpenAddressivity(
+  text: string,
+  speaker: ResidentId,
+  members: readonly ResidentId[],
+  prevSpeaker?: ResidentId | 'player',
+): AddressivityResult {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.length < 2) return { isOpen: false };
+  const others = members.filter(id => id !== speaker);
+  if (!others.length) return { isOpen: false };
+
+  // Split into sentence clauses to inspect both mid-turn questions (like 图11!) and final clauses
+  const clauses = trimmed
+    .split(/(?<=[。！？!?；;])/)
+    .map(c => c.trim())
+    .filter(Boolean);
+  const lastClause = clauses[clauses.length - 1] ?? trimmed;
+  const lastClauseNamedNpc = resolveAddressedMember(lastClause, speaker, others);
+  const namedNpc = lastClauseNamedNpc ?? resolveAddressedMember(trimmed, speaker, others);
+  const mentionsPlayer = /(?:客人|农场主)/.test(lastClause) || (/(?:客人|农场主)/.test(trimmed) && !namedNpc);
+
+  // If explicitly addressing the player ("客人要不要一起来吃？") and naming no NPC, hand the turn back to player
+  if (mentionsPlayer && !namedNpc && !/(?:说你|问你)/.test(trimmed)) {
+    return { isOpen: false };
+  }
+
+  // Infer who second-person "你" points to when no explicit name was spoken
+  const hasSingularYou = /你(?![们家])/.test(trimmed);
+  const inferredYouTarget: ResidentId | undefined =
+    prevSpeaker && prevSpeaker !== 'player' && prevSpeaker !== speaker && others.includes(prevSpeaker)
+      ? prevSpeaker
+      : others.length === 1
+        ? others[0]
+        : undefined;
+
+  const target = namedNpc ?? (hasSingularYou ? inferredYouTarget : undefined);
+  const hasAnyQuestionMark = /[？?]/.test(trimmed);
+
+  // 1. Ends directly with a question mark or interrogative clause
+  if (QUESTION_END_RE.test(trimmed) || QUESTION_END_RE.test(lastClause)) {
+    return { isOpen: true, addressee: target, kind: 'question' };
+  }
+
+  // 2. Mid-message question followed by a pressuring/clarifying tail (e.g. 图11: "那骂人的话呢？有人说你骂了乐乐，我听着不像你，可也得问清楚才踏实。")
+  if (hasAnyQuestionMark && (namedNpc || hasSingularYou || CHALLENGE_CUE_RE.test(trimmed) || INTERROGATIVE_CUE_RE.test(trimmed))) {
+    // Exclude obvious self-answered exclamations like "好不好吃？太香了！" when neither second-person nor challenge cues exist
+    if (namedNpc || hasSingularYou || CHALLENGE_CUE_RE.test(lastClause) || INTERROGATIVE_CUE_RE.test(lastClause)) {
+      return { isOpen: true, addressee: target, kind: 'question' };
+    }
+  }
+
+  // 3. Explicit name + challenge / rollcall / interrogative even without `？` (e.g. "唯刚你老实跟妈交代。" / "哥你给评评理。")
+  if (namedNpc) {
+    if (INTERROGATIVE_CUE_RE.test(trimmed)) {
+      return { isOpen: true, addressee: namedNpc, kind: 'question' };
+    }
+    if (CHALLENGE_CUE_RE.test(trimmed)) {
+      return { isOpen: true, addressee: namedNpc, kind: 'challenge' };
+    }
+    if (ROLLCALL_CUE_RE.test(trimmed)) {
+      return { isOpen: true, addressee: namedNpc, kind: 'rollcall' };
+    }
+  }
+
+  // 4. Second-person challenge / unresolved accusation without explicit name (e.g. "有人说你骂了乐乐，这事得说清楚。")
+  if ((hasSingularYou || /有人说|听说/.test(trimmed)) && (CHALLENGE_CUE_RE.test(trimmed) || INTERROGATIVE_CUE_RE.test(lastClause))) {
+    return { isOpen: true, addressee: target, kind: 'unresolved' };
+  }
+
+  return { isOpen: false };
 }

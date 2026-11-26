@@ -40,11 +40,15 @@ export function ChatMessageList<T extends { id: string; role: 'user' | 'assistan
     [renderMessage, itemGap],
   );
 
+  // Avoid inverted FlatList flipping ListEmptyComponent 180° on RN 0.88 / Fabric.
+  const hasMessages = data.length > 0;
+
   return (
     <FlatList
+      key={hasMessages ? 'inverted' : 'empty'}
       ref={list}
       data={data}
-      inverted
+      inverted={hasMessages}
       keyExtractor={messageKey}
       renderItem={renderItem}
       style={[{ maxHeight, flexGrow: 0, flexShrink: 1 }, style]}
@@ -63,7 +67,7 @@ export function ChatMessageList<T extends { id: string; role: 'user' | 'assistan
       }}
       scrollEventThrottle={100}
       onContentSizeChange={() => {
-        if (follow.current) list.current?.scrollToOffset({ offset: 0, animated: false });
+        if (follow.current && hasMessages) list.current?.scrollToOffset({ offset: 0, animated: false });
       }}
     />
   );

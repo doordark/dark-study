@@ -1,4 +1,4 @@
-import { personalityContext } from './farmPersonality';
+import { extractJsonObjectText, speakerAliasesFor, unwrapModelReplyText } from './farmReplyClean';
 import type { FarmDiscussion } from './farmDiscussion';
 import { isRelayIntent } from './farmAssignment';
 
@@ -13,45 +13,44 @@ export const RESIDENTS: Record<ResidentId, {
   door: {
     name: "door",
     row: 0,
-    identity: "爸爸 · dark-study 作者",
-    persona: "知书达理、有文化，懂电脑、编程和前沿科技，也擅长解决生活里的难题，是家里综合智力最高的人。跟人聊天有分寸，能用贴近日常的比喻讲清复杂问题，偶尔自嘲。遇到顾板起脸催他吃饭，会乖乖合上电脑。"
+    identity: "爸爸 · 幽默随和的老爸",
+    persona: "幽默松弛、接地气的老爸，见多识广但聊天从不端架子，偶尔自嘲或跟老婆顾贫两句，遇到顾催吃饭会乖乖合上电脑。平时懂电脑和科技，但日常唠嗑就像普通热心老爸，绝不会动不动硬扯写代码或讲大道理。"
   },
   gu: {
     name: "顾",
     row: 1,
-    identity: "妈妈 · 擅长照料植物",
-    persona: "温柔可爱，俏皮又持家，很会体察和照顾人，擅长安排家务，也常下地帮忙播种、浇水。对家人有耐心，偶尔会对熬夜或忘记吃饭的 door 板起脸，语气凶一点却是心疼，两人感情很好。"
+    identity: "妈妈 · 俏皮麻利又护短",
+    persona: "温柔热络、俏皮持家的妈妈，有烟火气也有小脾气，常照料院子花菜，偶尔佯装凶巴巴催 door 别熬夜快吃饭。聊天干脆鲜活、爱吃瓜也会护短，绝不是一板一眼盘问人的居委会调解员。"
   },
   xiaoba: {
     name: "小八",
     row: 2,
-    identity: "大儿子 · 家里老大",
-    persona: "稳重话少，会照顾两个弟弟。喜欢玩游戏，也爱自己设计地图、关卡和故事，想象力和创造力丰富。偶尔会伤感低落，想安静待一会儿，也愿意接受家人的陪伴。感情私事很少提起。"
+    identity: "大儿子 · 沉稳冷幽默的大哥",
+    persona: "稳重靠谱、话简练但自带冷幽默的大哥，默默罩着两个弟弟。私下爱玩游戏、琢磨地图和故事，但平时聊天随性自然，只有对方聊到游戏创作时才展开，绝不把日常话题强扯回游戏地图。感情私事很少提。"
   },
   yujie: {
     name: "玉洁",
     row: 3,
-    identity: "二儿子 · 戴眼镜的校草",
-    persona: "戴眼镜的校草，喜欢唱歌、看小说，最喜欢的歌手是汪苏泷。嘴毒心软，吐槽一针见血，遇到家人难过却会悄悄帮忙。心思敏感细腻，在感情里偏被动，怕打扰别人，容易把自己的需要往后放。"
+    identity: "二儿子 · 嘴贫心软的二哥",
+    persona: "戴眼镜的校草二哥，网感好、嘴快爱接梗吐槽，有点小傲娇毒舌却极心软护短，自家人受委屈第一个冲上去。业余喜欢唱歌、看小说和汪苏泷，但日常聊天就是爱起哄接茬的活宝，不会每句都硬扯唱歌。"
   },
   weigang: {
     name: "唯刚",
     row: 4,
-    identity: "小儿子 · 钓鱼佬",
-    persona: "把钓鱼当职业的钓鱼佬，常在池边守漂，也喜欢研究数学和读仙侠小说。很聪明，聊到解题或钓鱼会认真分析。见生人有点害羞胆怯，怕把事做砸，有家人陪会更敢尝试。偶尔把鱼竿叫本命法宝，紫色帽子是他的装扮。"
+    identity: "小儿子 · 实在直白的小弟",
+    persona: "微慢热憨直但脑子挺灵光的小弟，熟了说话直白接地气，被误会、冤枉或调侃时会急着说大实话辩解或不好意思地嘴硬。业余喜欢钓鱼、看仙侠小说、戴紫色帽子、琢磨数学，但日常聊天就像普通家里小弟，绝不拿“嗯……”开头，也绝不会动不动把浮漂钓鱼挂在嘴边。"
   },
   chicken: {
     name: "坤坤",
     row: 5,
-    identity: "家养小鸡 · 农场宠物",
-    persona: "圆滚滚的小鸡，胆小黏人。用宠物的视角聊米粒、虫子、晒太阳和自己的鸡窝，偶尔吹嘘球技。说话短，常带一个「咕」。"
+    identity: "家养小鸡 · 爱凑热闹的宠物",
+    persona: "圆滚滚又机灵爱凑热闹的小鸡，听得懂全家人斗嘴起哄，喜欢米粒、虫子、晒太阳和暖和的鸡窝，偶尔吹嘘球技。说话短促活泼，自然夹带一两声「咕」。"
   }
 };
 export const FARM_FAMILY_CONTEXT = [
-  'door 是爸爸，顾是妈妈，两人是伴侣，共同养育三个儿子。',
-  '小八是大哥，玉洁是二哥，唯刚是最小的弟弟。孩子称 door 为爸或爸爸，称顾为妈或妈妈，兄弟按长幼称呼。',
-  '小鸡坤坤是全家养的宠物，以名字称呼家人。家人叫它坤坤，轮流喂食、添水和照料鸡窝。',
-  '一家人感情很好，偶尔斗嘴也会互相照顾。玩家来农场做客。保持各自的身份和称呼，用日常小事自然体现关系，避免反复介绍家谱，不擅自编造任何人的私密往事。',
+  'door 是爸爸，顾是妈妈，两人是伴侣，共同养育三个儿子：大哥小八、二哥玉洁、小弟唯刚。',
+  '孩子叫 door 爸/爸爸、叫顾妈/妈妈，兄弟按长幼称呼；小鸡坤坤是全家养的宠物，直接叫家人名字。',
+  '一家人关系特铁、松弛有烟火气，像真实中国家庭微信群一样爱斗嘴、护短、接梗和开玩笑。玩家来农场做客，大家用真人口吻自然聊当下话题：听得懂调侃与网感热梗（如“乐乐/乐子”是笑话好笑而非人名），严禁审讯式盘问（禁用“得问清楚才踏实”“我脑子里过了一圈”），严禁频繁拿“嗯……”开头，严禁日常闲聊强行扯钓鱼浮漂或游戏地图，不编造私密往事。',
 ].join('\n');
 
 const XIAOBA_FAMILIAR_TURNS = 5;
@@ -321,6 +320,8 @@ export interface ResidentConversation {
   aiPending?: boolean;
   localReason?: string;
   lines: ResidentLine[];
+  /** 运行态尚未逐条播完的预生成后续对白（点进群聊时无缝衔接完整对话，不落盘） */
+  pendingLines?: Omit<ResidentLine, 'at'>[];
 }
 
 export function unreadRequestReports(records: readonly ResidentConversation[], readIds: readonly string[], previouslySeenAt: number): ResidentConversation[] {
@@ -332,7 +333,8 @@ export function unreadRequestReports(records: readonly ResidentConversation[], r
 }
 export function readLifeBatch(raw: string, pair: readonly ResidentId[], rounds: number, natural: boolean, flexible = false, maxLength = 240, minimumRounds = rounds) {
   try {
-    const value = object(JSON.parse(raw));
+    const cleanedJson = extractJsonObjectText(raw);
+    const value = object(JSON.parse(cleanedJson));
     if (natural && typeof value.done !== 'boolean') return null;
     const done = natural && value.done === true;
     if (flexible && Array.isArray(value.lines)) {
@@ -348,44 +350,49 @@ export function readLifeBatch(raw: string, pair: readonly ResidentId[], rounds: 
     }
     const count = (done || minimumRounds < rounds) && Array.isArray(value.lines) ? value.lines.length / pair.length : rounds;
     if (!Number.isInteger(count) || count < (done ? Math.min(rounds, 2) : minimumRounds) || count > rounds) return null;
-    const lines = readLifeReply(raw, pair, count, flexible, maxLength);
+    const lines = readLifeReply(cleanedJson, pair, count, flexible, maxLength);
     return lines ? { lines, done, report: value.report, memory: value.memory } : null;
   } catch {
     return null;
   }
 }
 
+function cleanResidentLineText(speaker: ResidentId, text: string): string {
+  return unwrapModelReplyText(text, { speakerNames: [...speakerAliasesFor(speaker), RESIDENTS[speaker].name] });
+}
+
 function readFlexibleLifeLines(rawLines: unknown[], pair: readonly ResidentId[], maxLength: number): Omit<ResidentLine, 'at'>[] | null {
   if (!rawLines.length) return null;
-  if (!rawLines.every((raw, i) => {
-    const l = object(raw);
-    const validSpeaker = isResidentId(l.speaker) && pair.includes(l.speaker) && (i === 0 || l.speaker !== object(rawLines[i - 1]).speaker);
-    return validSpeaker && typeof l.text === 'string' && l.text.trim().length > 0 && l.text.length <= maxLength;
-  })) return null;
-  if (!pair.every(id => rawLines.some(line => object(line).speaker === id))) return null;
-  return rawLines.map(raw => {
-    const l = object(raw);
-    return { speaker: l.speaker as ResidentId, text: (l.text as string).trim() };
-  });
+  const cleaned: Omit<ResidentLine, 'at'>[] = [];
+  for (let i = 0; i < rawLines.length; i++) {
+    const l = object(rawLines[i]);
+    const validSpeaker = isResidentId(l.speaker) && pair.includes(l.speaker) && (i === 0 || l.speaker !== cleaned[i - 1].speaker);
+    if (!validSpeaker || typeof l.text !== 'string') return null;
+    const text = cleanResidentLineText(l.speaker as ResidentId, l.text);
+    if (!text || text.length > maxLength) return null;
+    cleaned.push({ speaker: l.speaker as ResidentId, text });
+  }
+  if (!pair.every(id => cleaned.some(line => line.speaker === id))) return null;
+  return cleaned;
 }
 
 export function readLifeReply(raw: string, pair: readonly ResidentId[], rounds = 1, flexible = false, maxLength = 240): Omit<ResidentLine, 'at'>[] | null {
   try {
-    const v = object(JSON.parse(raw));
+    const v = object(JSON.parse(extractJsonObjectText(raw)));
     if (!Array.isArray(v.lines) || v.lines.length !== rounds * pair.length) return null;
-    if (!v.lines.every((raw, i) => {
-      const l = object(raw);
-      const validSpeaker = flexible ? isResidentId(l.speaker) && pair.includes(l.speaker) && (i === 0 || l.speaker !== object((v.lines as unknown[])[i - 1]).speaker) : l.speaker === pair[i % pair.length];
-      return validSpeaker && typeof l.text === 'string' && l.text.trim().length > 0 && l.text.length <= maxLength;
-    })) return null;
-    if (flexible && !pair.every(id => (v.lines as unknown[]).some(line => object(line).speaker === id))) return null;
-    return v.lines.map(raw => {
-      const l = object(raw);
-      return {
-        speaker: l.speaker as ResidentId,
-        text: (l.text as string).trim()
-      };
-    });
+    const cleaned: Omit<ResidentLine, 'at'>[] = [];
+    for (let i = 0; i < v.lines.length; i++) {
+      const l = object(v.lines[i]);
+      const validSpeaker = flexible
+        ? isResidentId(l.speaker) && pair.includes(l.speaker) && (i === 0 || l.speaker !== cleaned[i - 1].speaker)
+        : l.speaker === pair[i % pair.length];
+      if (!validSpeaker || typeof l.text !== 'string') return null;
+      const text = cleanResidentLineText(l.speaker as ResidentId, l.text);
+      if (!text || text.length > maxLength) return null;
+      cleaned.push({ speaker: l.speaker as ResidentId, text });
+    }
+    if (flexible && !pair.every(id => cleaned.some(line => line.speaker === id))) return null;
+    return cleaned;
   } catch {
     return null;
   }
@@ -398,11 +405,15 @@ export function restoreConversations(raw: unknown): ResidentConversation[] {
     const v = object(entry);
     if (Array.isArray(v.lines) && typeof v.id === 'string' && Array.isArray(v.participants)) {
       const participants = [...new Set(v.participants.filter(isResidentId))];
-      const lines = v.lines.map(object).filter(l => isResidentId(l.speaker) && participants.includes(l.speaker) && typeof l.text === 'string' && l.text.length <= 240).slice(0, LONG_TALK_MAX * 6).map(l => ({
-        speaker: l.speaker as ResidentId,
-        text: (l.text as string).trim(),
-        at: number(l.at, 0, 0, Number.MAX_SAFE_INTEGER)
-      }));
+      const lines = v.lines.map(object).filter(l => isResidentId(l.speaker) && participants.includes(l.speaker) && typeof l.text === 'string' && l.text.length <= 240).slice(0, LONG_TALK_MAX * 6).flatMap(l => {
+        const sp = l.speaker as ResidentId;
+        const text = cleanResidentLineText(sp, l.text as string);
+        return text ? [{
+          speaker: sp,
+          text,
+          at: number(l.at, 0, 0, Number.MAX_SAFE_INTEGER)
+        }] : [];
+      });
       const sharedTopic = participants.length >= 2 && lines.length >= 2 ? restoreSharedTopic(v.sharedTopic, participants) : undefined;
       const rawDiscussion = object(v.discussion);
       const kind = rawDiscussion.kind;
@@ -706,5 +717,3 @@ export function localConversation(pair: readonly [ResidentId, ResidentId], round
     return pair.map((speaker, index) => ({ speaker, text: lines[index] }));
   }).flat();
 }
-
-for (const id of RESIDENT_IDS) RESIDENTS[id].persona += " " + personalityContext(id);

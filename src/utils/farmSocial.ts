@@ -2,7 +2,7 @@ import { CROP_LABELS, RECIPES, type CropKind, type Recipe } from './farmEconomy'
 import { RESIDENTS, RESIDENT_IDS, type ResidentId } from './farmLife';
 import { realDate } from './farmProgress';
 import type { ResidentMemory } from './farmMemory';
-import { appendEpisode } from './farmPersonaMemory';
+import { recordVerifiedGiftMemory } from './farmPersonaMemory';
 import type { TownEvent } from './farmTown';
 
 export type GiftItemId = CropKind | Recipe['id'];
@@ -85,21 +85,21 @@ function giftReactionLine(who: ResidentId, label: string, tier: GiftTier, wasAng
   const tail = rewardLabel ? ` 这个${rewardLabel}顺手给你留着！` : '';
   if (wasAngry) {
     return ({
-      door: `……谢谢你的${label}。我还在缓情绪，不过领你这份心意。`,
-      gu: `哼，拿${label}哄我呀？好吧，气消了一半，下次好好说话。`,
-      xiaoba: `……收下了，${label}挺不错的。刚才的事算翻篇一点吧。`,
-      yujie: `切，送个${label}就想收买我？……算了，看在你亲自拿来的份上，少生点气。`,
-      weigang: `嗯……谢谢你送的${label}，我心里好受多了。`,
-      chicken: `咕……闻到${label}这么香，坤坤原谅你一半啦。`,
+      door: `……行吧，看你专门拎着${label}来哄我，这口气算顺一半了。`,
+      gu: `哼，拿${label}收买我呀？算啦，看你诚意还行，下回好好说话。`,
+      xiaoba: `收下了，${label}挺不错的。刚才那事翻篇吧。`,
+      yujie: `切，送个${label}就想蒙混过关？……行吧，看在你亲自拿来的份上，不跟你较劲了。`,
+      weigang: `谢谢你专门送的${label}，我没真生气，就是刚有点懵。`,
+      chicken: `咕……闻到${label}这么香，坤坤立马原谅你一大半啦！`,
     } as Record<ResidentId, string>)[who];
   }
   if (tier === 'loved') {
     return ({
-      door: `居然是${label}！写代码熬思绪时最合胃口了，太懂我了。${tail}`,
-      gu: `哇，新鲜的${label}！正想着拿它给家里添道拿手菜呢，谢谢你呀。${tail}`,
-      xiaoba: `这正是我最喜欢的${label}，收好了。等我画完新地图第一个请你试。${tail}`,
-      yujie: `天哪竟然是${label}！润完嗓子感觉今天高音都能多冲两句，算你有眼光！${tail}`,
-      weigang: `嗯……是我最喜欢的${label}！带去池边守漂正好，真的很谢谢你。${tail}`,
+      door: `哇，竟然是${label}！这可是我心头好，太懂我了。${tail}`,
+      gu: `哎呀，这么新鲜的${label}！正合我胃口，谢谢你专门想着我呀。${tail}`,
+      xiaoba: `是我最喜欢的${label}，收好了，谢啦！${tail}`,
+      yujie: `哇塞居然是${label}！今天眼光可以啊，这份礼我必须给满分！${tail}`,
+      weigang: `哇，是我最喜欢的${label}！太谢谢你了，我可得好好收着！${tail}`,
       chicken: `咕咕咕！是最香的${label}！坤坤高兴得转了两圈！${tail}`,
     } as Record<ResidentId, string>)[who];
   }
@@ -107,18 +107,18 @@ function giftReactionLine(who: ResidentId, label: string, tier: GiftTier, wasAng
     return ({
       door: `${label}看着品相真好，谢谢你惦记着我。`,
       gu: `好水灵的${label}，留着晚饭一块儿做给大伙儿尝。`,
-      xiaoba: `谢谢，${label}我挺喜欢的，放桌边慢慢吃。`,
+      xiaoba: `谢了，${label}我挺喜欢的，放桌边慢慢吃。`,
       yujie: `哟，带了${label}来呀，勉强给你打个高分，谢啦！`,
-      weigang: `谢谢你的${label}，我会好好收着的。`,
+      weigang: `谢谢你的${label}，正好合我口味！`,
       chicken: `咕！${label}闻起来很不错，坤坤喜欢！`,
     } as Record<ResidentId, string>)[who];
   }
   return ({
     door: `谢谢你的${label}，这份心意我收下啦。`,
     gu: `你还专门带了${label}来，客气啦，快坐下喝口茶。`,
-    xiaoba: `嗯，收到了，谢谢你想着我。`,
+    xiaoba: `收到了，谢你想着我。`,
     yujie: `行吧，虽然不是我头号心头好，但${label}我也收下啦，谢了。`,
-    weigang: `嗯……谢谢你送我${label}，辛苦种出来的吧。`,
+    weigang: `谢谢你送我${label}，辛苦啦！`,
     chicken: `咕，谢谢客人给坤坤带${label}！`,
   } as Record<ResidentId, string>)[who];
 }
@@ -146,15 +146,14 @@ export function evaluateResidentGift(
     affinity: Math.min(100, Math.max(0, memory.affinity + affinityDelta)),
     mood: nextMood,
   };
-  nextMemory = appendEpisode(nextMemory, {
-    id: `gift-${at}-${who}-${item}`,
-    kind: 'chat',
-    text: `客人专门送了我${label}，${tier === 'loved' ? '正好是我最喜欢的，特别开心' : '心里挺暖的'}。`,
-    actors: ['player'],
-    tags: [label, '送礼', '心意'],
-    importance: tier === 'loved' ? 8 : 6,
-    emotion: wasAngry ? '缓和' : '开心',
-    privacy: 'public',
+  nextMemory = recordVerifiedGiftMemory(nextMemory, {
+    who,
+    itemId: item,
+    itemLabel: label,
+    quantity: 1,
+    tier,
+    wasAngry,
+    source: 'gift',
     at,
   });
 

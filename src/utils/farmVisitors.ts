@@ -13,7 +13,7 @@ import {
   type FarmEmotionState,
 } from './farmEmotion';
 import { RESIDENT_IDS, type ResidentId } from './farmLife';
-import { shiftResidentMemoryEmotion, type FarmMemories } from './farmMemory';
+import { shiftResidentMemoryEmotion, unwrapFarmReplyText, type FarmMemories } from './farmMemory';
 import { appendEpisode, isSensitiveFarmText } from './farmPersonaMemory';
 import { realDate } from './farmProgress';
 import type { FarmPeriod, FarmWeather, TownEvent } from './farmTown';
@@ -38,6 +38,25 @@ import {
   normalizeWhalePersona,
   type WhalePersona,
 } from './whalePersona';
+
+export { unwrapFarmReplyText } from './farmMemory';
+
+/** 清洗访客对话历史中的脏 JSON 外壳（如历史本地缓存里的 `{"response":"..."}` 或截断 `..."}`）。 */
+export function sanitizeVisitorMessages<T extends { role: 'user' | 'assistant'; text: string }>(
+  messages: readonly T[],
+): T[] {
+  let changed = false;
+  const next = messages.map(msg => {
+    if (msg.role !== 'assistant') return msg;
+    const cleaned = unwrapFarmReplyText(msg.text);
+    if (cleaned && cleaned !== msg.text) {
+      changed = true;
+      return { ...msg, text: cleaned };
+    }
+    return msg;
+  });
+  return changed ? next : (messages as T[]);
+}
 
 export type NormalVisitorId = 'huboqi' | 'xushuiyin' | 'huangbingqi' | 'dafeiyu';
 export type VisitorId = NormalVisitorId | 'dark_xushuiyin';
@@ -275,9 +294,19 @@ export interface VisitorMemory {
 }
 
 export interface FarmVisitorState {
-  /** 今日常规到访访客（按真实日期轮换，也可手动邀请切换） */
+  /** 最近一次主动邀请或记录的访客（兼容旧存档字段） */
   activeVisitor: NormalVisitorId | null;
   activeDate: string;
+  /** 手动邀请来串门的访客（限时停留，到期自动告辞，不再锁死全天） */
+  manualVisitor?: NormalVisitorId | null;
+  /** 手动邀请开始时间戳 */
+  manualInvitedAt?: number;
+  /** 手动邀请到期时间戳 */
+  manualExpiresAt?: number;
+  /** 本档期已被主动送别的档期键（YYYY-MM-DD#slotIndex），避免原地复活 */
+  dismissedSlotKey?: string;
+  /** 最近一次已播报到访/计次的档期键 */
+  lastGreetedSlotKey?: string;
   /** 是否允许夜晚随机触发「恐怖徐睡阴」彩蛋（默认开启） */
   horrorEnabled: boolean;
   /** 恐怖徐睡阴当前是否正在闹觉 */
@@ -308,6 +337,11 @@ export function emptyVisitorState(): FarmVisitorState {
   return {
     activeVisitor: null,
     activeDate: '',
+    manualVisitor: null,
+    manualInvitedAt: 0,
+    manualExpiresAt: 0,
+    dismissedSlotKey: '',
+    lastGreetedSlotKey: '',
     horrorEnabled: true,
     horrorActive: false,
     sleepDeprivedDay: 0,
@@ -365,13 +399,285 @@ export function shiftVisitorEmotion(
   };
 }
 
-/** 按真实日期稳定轮换来访访客（约 80% 日子有访客登门拜访，也可随时在公告板手动邀请）。 */
-export function resolveDailyVisitor(state: FarmVisitorState, at: number): NormalVisitorId | null {
+/** 手动邀请访客的默认停留时长（45 分钟后自然告辞，不会锁死全天） */
+export const MANUAL_INVITE_DURATION_MS = 45 * 60 * 1000;
+
+interface VisitorSlotDef {
+  label: string;
+  startMin: number;
+  endMin: number;
+}
+
+/** 每日 5 个自然串门档期（档期之间留有清净空窗，深夜 23:00–07:30 无人打扰） */
+const VISITOR_SLOTS: readonly VisitorSlotDef[] = [
+  { label: '早间串门', startMin: 7 * 60 + 30, endMin: 9 * 60 + 45 },
+  { label: '午间串门', startMin: 11 * 60, endMin: 13 * 60 + 15 },
+  { label: '下午茶', startMin: 14 * 60 + 30, endMin: 16 * 60 + 45 },
+  { label: '傍晚串门', startMin: 18 * 60 + 15, endMin: 20 * 60 + 30 },
+  { label: '夜游串门', startMin: 21 * 60 + 15, endMin: 23 * 60 },
+];
+
+export interface VisitorVisitInfo {
+  who: NormalVisitorId;
+  source: 'scheduled' | 'invited';
+  slotKey: string;
+  slotLabel: string;
+  startsAt: number;
+  leavesAt: number;
+  remainingMinutes: number;
+}
+
+export interface VisitorScheduleSlot {
+  slotIndex: number;
+  slotKey: string;
+  slotLabel: string;
+  who: NormalVisitorId;
+  startsAt: number;
+  leavesAt: number;
+  timeRangeText: string;
+  status: 'past' | 'active' | 'upcoming' | 'dismissed';
+}
+
+function hashSeed(str: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h >>> 0;
+}
+
+function formatClockMin(totalMin: number): string {
+  const h = Math.floor(totalMin / 60) % 24;
+  const m = totalMin % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+/** 为指定日期生成 5 个档期的无连续重复访客排班（保证 4 位访客每日都会轮流登场） */
+function buildDailyVisitorOrder(date: string): NormalVisitorId[] {
+  let seed = hashSeed(`farm-visitors:${date}`);
+  const nextUint = () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed;
+  };
+  const pool: NormalVisitorId[] = [...NORMAL_VISITOR_IDS];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = nextUint() % (i + 1);
+    const tmp = pool[i];
+    pool[i] = pool[j];
+    pool[j] = tmp;
+  }
+  // 第 5 档从前 3 位里选，确保绝不与第 4 档（pool[3]）连续重复
+  const fifth = pool[nextUint() % 3];
+  return [pool[0], pool[1], pool[2], pool[3], fifth];
+}
+
+/** 获取今日全部自然串门档期与状态，供小镇公告板展示与倒计时计算 */
+export function getTodayVisitorSchedule(state: FarmVisitorState, at: number): VisitorScheduleSlot[] {
   const date = realDate(at);
-  if (state.activeDate === date) return state.activeVisitor;
-  const hash = [...date].reduce((acc, ch) => (acc * 37 + ch.charCodeAt(0)) >>> 0, 29);
-  if (hash % 5 === 4) return null; // 留一天清净
-  return NORMAL_VISITOR_IDS[hash % NORMAL_VISITOR_IDS.length];
+  const order = buildDailyVisitorOrder(date);
+  const local = new Date(at);
+  const dayStart = new Date(local.getFullYear(), local.getMonth(), local.getDate(), 0, 0, 0, 0).getTime();
+
+  return VISITOR_SLOTS.map((slot, idx) => {
+    const startsAt = dayStart + slot.startMin * 60_000;
+    const leavesAt = dayStart + slot.endMin * 60_000;
+    const slotKey = `${date}#${idx}`;
+    const dismissed = state.dismissedSlotKey === slotKey;
+    const status: VisitorScheduleSlot['status'] = dismissed
+      ? 'dismissed'
+      : at < startsAt
+        ? 'upcoming'
+        : at < leavesAt
+          ? 'active'
+          : 'past';
+    return {
+      slotIndex: idx,
+      slotKey,
+      slotLabel: slot.label,
+      who: order[idx],
+      startsAt,
+      leavesAt,
+      timeRangeText: `${formatClockMin(slot.startMin)}-${formatClockMin(slot.endMin)}`,
+      status,
+    };
+  });
+}
+
+/** 解析当前正在农场串门的访客及剩余停留信息（支持手动限时邀请与日内多时段轮换，到点自然离场） */
+export function resolveVisitorVisit(state: FarmVisitorState, at: number): VisitorVisitInfo | null {
+  if (state.manualVisitor && state.manualExpiresAt && at < state.manualExpiresAt) {
+    const startsAt = state.manualInvitedAt || state.manualExpiresAt - MANUAL_INVITE_DURATION_MS;
+    const maxMins = Math.max(1, Math.round((state.manualExpiresAt - startsAt) / 60_000));
+    const remainingMinutes = Math.min(maxMins, Math.max(1, Math.ceil((state.manualExpiresAt - at) / 60_000)));
+    return {
+      who: state.manualVisitor,
+      source: 'invited',
+      slotKey: `invite:${startsAt}`,
+      slotLabel: '应邀串门',
+      startsAt,
+      leavesAt: state.manualExpiresAt,
+      remainingMinutes,
+    };
+  }
+  const activeSlot = getTodayVisitorSchedule(state, at).find(s => s.status === 'active');
+  if (!activeSlot) return null;
+  const maxMins = Math.max(1, Math.round((activeSlot.leavesAt - activeSlot.startsAt) / 60_000));
+  return {
+    who: activeSlot.who,
+    source: 'scheduled',
+    slotKey: activeSlot.slotKey,
+    slotLabel: activeSlot.slotLabel,
+    startsAt: activeSlot.startsAt,
+    leavesAt: activeSlot.leavesAt,
+    remainingMinutes: Math.min(maxMins, Math.max(1, Math.ceil((activeSlot.leavesAt - at) / 60_000))),
+  };
+}
+
+/** 解析当前在场的常规访客 ID（兼容既有调用点） */
+export function resolveDailyVisitor(state: FarmVisitorState, at: number): NormalVisitorId | null {
+  return resolveVisitorVisit(state, at)?.who ?? null;
+}
+
+/** 格式化访客剩余停留时间提示 */
+export function formatVisitorStayHint(visit: VisitorVisitInfo): string {
+  const mins = Math.max(1, visit.remainingMinutes);
+  if (mins >= 60) {
+    const h = Math.floor(mins / 60);
+    const rem = mins % 60;
+    return rem > 0 ? `约 ${h} 小时 ${rem} 分钟后告别` : `约 ${h} 小时后告别`;
+  }
+  return `约 ${mins} 分钟后告别`;
+}
+
+/** 手动邀请某位访客来农场限时串门 */
+export function inviteVisitorToFarm(
+  state: FarmVisitorState,
+  who: NormalVisitorId,
+  at: number,
+  durationMs = MANUAL_INVITE_DURATION_MS,
+): FarmVisitorState {
+  const today = realDate(at);
+  const rec = state.records[who] ?? emptyVisitorMemory(who, at);
+  return {
+    ...state,
+    activeVisitor: who,
+    activeDate: today,
+    manualVisitor: who,
+    manualInvitedAt: at,
+    manualExpiresAt: at + durationMs,
+    horrorActive: false,
+    records: {
+      ...state.records,
+      [who]: {
+        ...rec,
+        visits: rec.visits + 1,
+        lastVisitDate: today,
+      },
+    },
+  };
+}
+
+/** 礼貌送别当前在场访客（手动邀请立即结束；自然档期或同人重叠档期标记为已送别，等下一档换新访客） */
+export function dismissActiveVisitor(
+  state: FarmVisitorState,
+  at: number,
+): { nextState: FarmVisitorState; departed: NormalVisitorId | null } {
+  const visit = resolveVisitorVisit(state, at);
+  if (!visit) {
+    return { nextState: state, departed: null };
+  }
+  const currentScheduled = getTodayVisitorSchedule(state, at).find(
+    s => at >= s.startsAt && at < s.leavesAt,
+  );
+  const shouldDismissScheduledSlot =
+    currentScheduled !== undefined &&
+    (visit.source === 'scheduled' || currentScheduled.who === visit.who);
+  return {
+    departed: visit.who,
+    nextState: {
+      ...state,
+      activeVisitor: null,
+      manualVisitor: null,
+      manualInvitedAt: 0,
+      manualExpiresAt: 0,
+      dismissedSlotKey: shouldDismissScheduledSlot ? currentScheduled.slotKey : state.dismissedSlotKey,
+    },
+  };
+}
+
+/** 记录自然档期到访（每个新档期仅计次一次；无缝衔接同人邀请时可跳过重复计次） */
+export function markVisitorSlotGreeted(
+  state: FarmVisitorState,
+  visit: VisitorVisitInfo,
+  at: number,
+  countVisit = true,
+): FarmVisitorState {
+  if (state.lastGreetedSlotKey === visit.slotKey) return state;
+  const today = realDate(at);
+  const rec = state.records[visit.who] ?? emptyVisitorMemory(visit.who, at);
+  return {
+    ...state,
+    activeVisitor: visit.who,
+    activeDate: today,
+    lastGreetedSlotKey: visit.slotKey,
+    records: countVisit
+      ? {
+          ...state.records,
+          [visit.who]: {
+            ...rec,
+            visits: rec.visits + 1,
+            lastVisitDate: today,
+          },
+        }
+      : state.records,
+  };
+}
+
+function resolveSyncedUserName(whaleSync?: WhaleVisitorSyncContext): string {
+  if (whaleSync?.enabled === false || !whaleSync?.persona) {
+    return DEFAULT_WHALE_PERSONA.userName;
+  }
+  const normalized = normalizeWhalePersona(whaleSync.persona).userName.trim();
+  return normalized || DEFAULT_WHALE_PERSONA.userName;
+}
+
+/** 访客自然来访时的轻提示文案 */
+export function visitorArrivalLine(
+  who: NormalVisitorId,
+  whaleSync?: WhaleVisitorSyncContext,
+): string {
+  const profile = resolveVisitorDisplayProfile(who, whaleSync);
+  const u = resolveSyncedUserName(whaleSync);
+  switch (who) {
+    case 'huboqi':
+      return '胡波奇晃晃悠悠溜达进院子来串门啦，快去聊聊近况！';
+    case 'xushuiyin':
+      return '徐睡阴摘下耳机推门来院子里透气串门啦！';
+    case 'huangbingqi':
+      return '黄冰骑抱着篮球、举着手机逛进农场来拍照串门啦！';
+    case 'dafeiyu':
+      return `${profile.name}从课表那边游过来找${u}串门啦～`;
+  }
+}
+
+/** 访客到点自然告别或被礼貌送别时的告别文案 */
+export function visitorFarewellLine(
+  who: NormalVisitorId,
+  whaleSync?: WhaleVisitorSyncContext,
+): string {
+  const profile = resolveVisitorDisplayProfile(who, whaleSync);
+  const u = resolveSyncedUserName(whaleSync);
+  switch (who) {
+    case 'huboqi':
+      return '胡波奇伸了个懒腰告辞回去上分了，下个时段再有新朋友来串门～';
+    case 'xushuiyin':
+      return '徐睡阴挥挥手回屋休息去了，晚点会有其他朋友过来串门～';
+    case 'huangbingqi':
+      return '黄冰骑心满意足地收好照片告辞去打球了，过会儿再迎新客人～';
+    case 'dafeiyu':
+      return `${profile.name}摇摇尾巴告别，先游回课表那边陪${u}啦，想它随时可以再邀请～`;
+  }
 }
 
 /** 判断农场夜晚是否应自然触发「恐怖徐睡阴」彩蛋。 */
@@ -778,12 +1084,13 @@ export async function runVisitorChatTurn(options: {
         ? '夜空晴朗，晚风微凉'
         : '天气晴朗微风舒适';
 
+  const sanitizedHistory = sanitizeVisitorMessages(history);
   let system: string;
   if (who === 'dafeiyu' && whaleSync?.enabled !== false && whaleSync?.persona) {
     const persona = normalizeWhalePersona(whaleSync.persona);
     const now = Date.now();
     const whaleHistory = [
-      ...history.slice(-8).map(m => ({ role: m.role, content: m.text })),
+      ...sanitizedHistory.slice(-8).map(m => ({ role: m.role, content: m.text })),
       { role: 'user' as const, content: clean },
     ];
     const memoryPrompt = buildWhaleMemoryPrompt(
@@ -816,7 +1123,8 @@ ${memoryPrompt}
 当前：农场第 ${scene.day} 天（${scene.season}季，${scene.night ? '夜晚' : '白天'}），实时天气：${weatherDesc}。${
       sleepDeprived ? '昨晚恐怖徐睡阴扛电脑来农场疯狂打瓦吵得大家睡眠不足。' : ''
     }
-要求：保持你在课表里一贯的称呼、性格参数与共同记忆，自然融入农场场景与实时天气，用 1～3 句鲜活口语直接输出纯文本回复（不超过 120 字），不输出 JSON。`;
+事实边界：只有系统真实递出礼物的记录才算真的收到礼物；若对方只在聊天里嘴上说“送你某某”但未实际送礼，不要当真道谢，自然打趣提醒点右上角「送礼」递过来即可。
+输出格式：保持你在课表里一贯的称呼、性格参数与共同记忆，自然融入农场场景与实时天气，用 1～3 句鲜活口语直接输出纯文本对白（不超过 120 字），严禁包裹任何花括号、键值对或代码块。`;
   } else {
     const emotionNote = emotion ? `\n当前心情状态：${formatFarmEmotionForPrompt(emotion)}` : '';
     system = `你是像素农场「doordoor农场」的来访角色「${profile.name}」（${profile.title}）。
@@ -825,20 +1133,21 @@ ${memoryPrompt}
 当前场景：农场第 ${scene.day} 天（${scene.season}季，${scene.night ? '夜晚' : '白天'}），实时天气：${weatherDesc}。${
       sleepDeprived ? '昨晚恐怖徐睡阴扛电脑来农场疯狂打瓦，吵得全农场睡眠不足。' : ''
     }
-要求：用鲜活自然的中文口语回复，1～3 句话（不超过 110 字），能自然感知当下天气与环境，贴合人设，不要自称 AI，不要使用括号旁白过多（最多一句简短动作描写），直接输出纯文本回复。`;
+事实边界：只有系统真实递出礼物的记录才算真的收到礼物；若对方只是嘴上说“送你某某”却没点右上角「送礼」实际递过来，不要当真道谢，自然调侃即可。
+输出格式：用鲜活自然的中文口语回复，1～3 句话（不超过 110 字），能自然感知当下天气与环境，贴合人设，不要自称 AI，不要使用括号旁白过多（最多一句简短动作描写），直接输出纯文本对白，严禁包裹任何花括号、键值对或代码块。`;
   }
 
   try {
     const raw = await farmChat(
       [
         { role: 'system', content: system },
-        ...history.slice(-8).map(m => ({ role: m.role, content: m.text })),
+        ...sanitizedHistory.slice(-8).map(m => ({ role: m.role, content: m.text })),
         { role: 'user', content: clean },
       ],
       apiKey,
-      { signal, priority: 'interactive', timeoutMs: 14000, maxTokens: 240, retries: 1 },
+      { signal, priority: 'interactive', timeoutMs: 14000, maxTokens: 240, retries: 1, jsonMode: false },
     );
-    const trimmed = raw.trim().slice(0, 180);
+    const trimmed = unwrapFarmReplyText(raw).slice(0, 180).trim();
     if (!trimmed) throw new FarmChatError('回复为空');
     return { reply: trimmed, online: true };
   } catch (error) {
@@ -928,16 +1237,28 @@ export function restoreVisitorState(raw: unknown): FarmVisitorState {
         lastVisitDate: typeof r.lastVisitDate === 'string' ? r.lastVisitDate.slice(0, 20) : '',
         giftedDate: typeof r.giftedDate === 'string' ? r.giftedDate.slice(0, 20) : '',
         notes: Array.isArray(r.notes)
-          ? r.notes.filter((s): s is string => typeof s === 'string' && s.trim().length > 0).map(s => s.slice(0, 60)).slice(-8)
+          ? r.notes
+              .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+              .map(s => unwrapFarmReplyText(s).slice(0, 60))
+              .filter(Boolean)
+              .slice(-8)
           : [],
         emotion: normalizeFarmEmotion(r.emotion, id),
       };
     }
   }
 
+  const tsNum = (x: unknown) =>
+    typeof x === 'number' && Number.isFinite(x) && x > 0 ? Math.round(x) : 0;
+
   return {
     activeVisitor: isNormal(v.activeVisitor) ? v.activeVisitor : null,
     activeDate: typeof v.activeDate === 'string' ? v.activeDate.slice(0, 20) : '',
+    manualVisitor: isNormal(v.manualVisitor) ? v.manualVisitor : null,
+    manualInvitedAt: tsNum(v.manualInvitedAt),
+    manualExpiresAt: tsNum(v.manualExpiresAt),
+    dismissedSlotKey: typeof v.dismissedSlotKey === 'string' ? v.dismissedSlotKey.slice(0, 32) : '',
+    lastGreetedSlotKey: typeof v.lastGreetedSlotKey === 'string' ? v.lastGreetedSlotKey.slice(0, 32) : '',
     horrorEnabled: v.horrorEnabled !== false,
     horrorActive: v.horrorActive === true,
     sleepDeprivedDay: num(v.sleepDeprivedDay),
