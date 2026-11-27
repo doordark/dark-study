@@ -5,7 +5,6 @@ import {
   Keyboard,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -37,12 +36,19 @@ import { renderPersonaText } from "@/utils/whalePersona";
 
 import {
   PET_QUICK_ACTIONS,
+  POPOVER_CHROME_H,
   clampNumber,
   parsePetBubbleText,
+  tintHex,
   whalePetStyles as styles,
   type PanelAnchor,
   type PetQuickActionDef,
 } from "./whalePetHelpers";
+
+const QUICK_ACTION_ROWS: readonly (readonly PetQuickActionDef[])[] = [
+  PET_QUICK_ACTIONS.slice(0, 3),
+  PET_QUICK_ACTIONS.slice(3, 6),
+];
 
 interface PetTactilePressableProps
   extends Omit<PressableProps, "style" | "children"> {
@@ -98,31 +104,77 @@ function CareBar({
   color,
   icon,
   isDark,
+  highlight = false,
+  onPress,
+  accessibilityLabel,
 }: {
   label: string;
   value: number;
   color: string;
   icon: keyof typeof Ionicons.glyphMap;
   isDark: boolean;
+  highlight?: boolean;
+  onPress: () => void;
+  accessibilityLabel: string;
 }) {
+  const rounded = Math.round(clampNumber(value, 0, 100));
+  const isZero = rounded <= 0;
+
   return (
-    <View
+    <PetTactilePressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      pressedOpacity={0.78}
+      pressedScale={0.97}
       style={[
         styles.careCard,
         {
-          backgroundColor: isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.88)",
-          borderColor: isDark ? "rgba(186,230,253,0.14)" : "rgba(148,163,184,0.24)",
+          backgroundColor: highlight
+            ? isDark
+              ? "rgba(245,158,11,0.18)"
+              : "rgba(254,243,199,0.80)"
+            : isZero
+              ? isDark
+                ? tintHex(color, 0.11)
+                : tintHex(color, 0.08)
+              : isDark
+                ? "rgba(255,255,255,0.06)"
+                : "rgba(255,255,255,0.88)",
+          borderColor: highlight
+            ? isDark
+              ? "rgba(251,191,36,0.58)"
+              : "rgba(245,158,11,0.54)"
+            : isZero
+              ? isDark
+                ? tintHex(color, 0.36)
+                : tintHex(color, 0.4)
+              : isDark
+                ? "rgba(186,230,253,0.16)"
+                : "rgba(148,163,184,0.24)",
         },
       ]}
     >
       <View style={styles.careCardHeader}>
         <View style={styles.careLabelGroup}>
-          <Ionicons name={icon} size={10} color={color} />
+          <Ionicons
+            name={icon}
+            size={10.5}
+            color={highlight ? (isDark ? "#FBBF24" : "#D97706") : color}
+          />
           <Text
             numberOfLines={1}
             style={[
               styles.careLabel,
-              { color: isDark ? "rgba(186,230,253,0.82)" : "#475569" },
+              {
+                color: highlight
+                  ? isDark
+                    ? "#FDE68A"
+                    : "#92400E"
+                  : isDark
+                    ? "rgba(186,230,253,0.84)"
+                    : "#475569",
+              },
             ]}
           >
             {label}
@@ -131,26 +183,52 @@ function CareBar({
         <Text
           style={[
             styles.careValue,
-            { color: isDark ? "#F1F5F9" : "#0F172A" },
+            {
+              color: highlight
+                ? isDark
+                  ? "#FDE68A"
+                  : "#B45309"
+                : isZero
+                  ? isDark
+                    ? "rgba(226,232,240,0.78)"
+                    : "#64748B"
+                  : isDark
+                    ? "#F1F5F9"
+                    : "#0F172A",
+            },
           ]}
         >
-          {Math.round(value)}
+          {rounded}
         </Text>
       </View>
       <View
         style={[
           styles.careTrack,
-          { backgroundColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(148,163,184,0.22)" },
+          {
+            backgroundColor: highlight
+              ? isDark
+                ? "rgba(251,191,36,0.22)"
+                : "rgba(245,158,11,0.20)"
+              : isZero
+                ? isDark
+                  ? tintHex(color, 0.16)
+                  : tintHex(color, 0.14)
+                : isDark
+                  ? "rgba(255,255,255,0.11)"
+                  : "rgba(148,163,184,0.22)",
+          },
         ]}
       >
         <View
           style={[
             styles.careFill,
-            { width: `${clampNumber(value, 4, 100)}%`, backgroundColor: color },
+            isZero
+              ? { width: 8, backgroundColor: color, opacity: 0.52 }
+              : { width: `${clampNumber(value, 6, 100)}%`, backgroundColor: color },
           ]}
         />
       </View>
-    </View>
+    </PetTactilePressable>
   );
 }
 
@@ -427,14 +505,42 @@ export function WhalePetPopover({
     [isDark, applyPending],
   );
 
-  const panelTop =
-    kbHeight > 0
-      ? Math.max(insetTop + 8, height - kbHeight - panelH - 8)
-      : panelAnchor.top;
+  const kbAvailableH =
+    kbHeight > 0 ? Math.max(320, height - kbHeight - insetTop - 16) : panelH;
   const chatMaxHeight =
     kbHeight > 0
-      ? Math.max(92, Math.min(136, height - kbHeight - insetTop - 216))
-      : 146;
+      ? clampNumber(Math.min(panelH, kbAvailableH) - POPOVER_CHROME_H, 76, 136)
+      : clampNumber(panelH - POPOVER_CHROME_H, 92, 150);
+  const effectivePanelH =
+    kbHeight > 0 ? Math.min(panelH, POPOVER_CHROME_H + chatMaxHeight) : panelH;
+  const panelTop =
+    kbHeight > 0
+      ? Math.max(insetTop + 8, height - kbHeight - effectivePanelH - 8)
+      : panelAnchor.top;
+
+  const footerHint = hungry
+    ? {
+        icon: "restaurant-outline" as const,
+        text: "肚子饿啦，点「抛白饭」喂喂她～",
+        iconColor: isDark ? "#FBBF24" : "#D97706",
+        textColor: isDark ? "#FDE68A" : "#B45309",
+      }
+    : care.mood < 35
+      ? {
+          icon: "heart-outline" as const,
+          text: "心情有点低落，摸摸头哄哄她吧～",
+          iconColor: isDark ? "#F472B6" : "#DB2777",
+          textColor: isDark ? "#FBCFE8" : "#BE185D",
+        }
+      : {
+          icon: "sparkles-outline" as const,
+          text: "轻点上方状态卡也能直接互动哦",
+          iconColor: isDark ? "#7DD3FC" : "#0284C7",
+          textColor: isDark ? "rgba(186,230,253,0.76)" : "#475569",
+        };
+
+  const chatEdgeColor = isDark ? "rgba(6,14,28,0.58)" : "rgba(214,234,248,0.68)";
+  const chatEdgeTransparent = isDark ? "rgba(6,14,28,0)" : "rgba(214,234,248,0)";
 
   return (
     <>
@@ -688,136 +794,217 @@ export function WhalePetPopover({
             </View>
           </View>
 
-          {/* 养护数值条（轻盈玻璃态胶囊） */}
+          {/* 养护数值条（轻盈玻璃态交互卡：轻点直接喂食 / 摸头 / 打招呼） */}
           <View style={styles.careRow}>
-            <CareBar label="饱食" value={care.fullness} color="#FBBF24" icon="restaurant" isDark={isDark} />
-            <CareBar label="心情" value={care.mood} color="#38BDF8" icon="happy" isDark={isDark} />
-            <CareBar label="好感" value={care.bond} color="#F472B6" icon="heart" isDark={isDark} />
+            <CareBar
+              label="饱食"
+              value={care.fullness}
+              color="#FBBF24"
+              icon="restaurant"
+              isDark={isDark}
+              highlight={hungry}
+              onPress={() => {
+                tapHaptic();
+                onQuickAction("feed");
+              }}
+              accessibilityLabel={`饱食度 ${Math.round(care.fullness)}，轻点${hungry ? "抛白饭" : "抛团子"}喂食`}
+            />
+            <CareBar
+              label="心情"
+              value={care.mood}
+              color="#38BDF8"
+              icon="happy"
+              isDark={isDark}
+              onPress={() => {
+                tapHaptic();
+                onQuickAction("pat");
+              }}
+              accessibilityLabel={`心情 ${Math.round(care.mood)}，轻点摸摸头`}
+            />
+            <CareBar
+              label="好感"
+              value={care.bond}
+              color="#F472B6"
+              icon="heart"
+              isDark={isDark}
+              onPress={() => {
+                tapHaptic();
+                onQuickAction("wave");
+              }}
+              accessibilityLabel={`好感 ${Math.round(care.bond)}，轻点打个招呼`}
+            />
           </View>
 
-          {/* 内嵌微冷灰蓝凹槽对话区（高对比分层，彻底告别白底配白框） */}
-          <ChatMessageList
-            messages={chatMsgs}
-            renderMessage={renderPetMessage}
-            maxHeight={chatMaxHeight}
-            itemGap={9}
-            contentContainerStyle={styles.chatListContent}
-            emptyComponent={
-              <View style={styles.emptyBox}>
-                <Text
-                  style={[
-                    styles.emptyText,
-                    { color: isDark ? "rgba(186,230,253,0.68)" : "#64748B" },
-                  ]}
-                >
-                  点下方胶囊或发句话逗逗{personaName}吧～
-                </Text>
-              </View>
-            }
-            header={
-              busy ? (
-                <View style={styles.busyWrap}>
-                  <View
-                    style={[
-                      styles.busyPill,
-                      {
-                        backgroundColor: isDark ? "rgba(28,50,82,0.92)" : "#FFFFFF",
-                        borderColor: isDark
-                          ? "rgba(125,211,252,0.30)"
-                          : "rgba(56,189,248,0.42)",
-                      },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.busyText,
-                        { color: isDark ? "#BAE6FD" : "#0369A1" },
-                      ]}
-                    >
-                      {personaName}正在想回复…
-                    </Text>
-                  </View>
-                </View>
-              ) : null
-            }
+          {/* 内嵌微冷灰蓝凹槽对话区（柔和上下缓冲 + 高对比分层） */}
+          <View
             style={[
-              styles.chatListBox,
+              styles.chatListFrame,
               {
                 backgroundColor: isDark ? "rgba(6,14,28,0.66)" : "rgba(214,234,248,0.72)",
                 borderColor: isDark ? "rgba(125,211,252,0.20)" : "rgba(125,211,252,0.52)",
               },
             ]}
-          />
-
-          {/* 统一去重后的快捷互动栏：左侧横向可滚互动胶囊 + 右侧常驻核心控制「收起」 */}
-          <View style={styles.quickBar}>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.quickScroll}
-              contentContainerStyle={styles.quickScrollContent}
-            >
-              {PET_QUICK_ACTIONS.map((action) => {
-                const textLabel =
-                  action.id === "feed" && hungry && action.hungryLabel
-                    ? action.hungryLabel
-                    : action.label;
-                return (
-                  <PetTactilePressable
-                    key={action.id}
-                    onPress={() => onQuickAction(action.id)}
-                    accessibilityRole="button"
-                    accessibilityLabel={textLabel}
-                    pressedOpacity={0.78}
-                    pressedScale={0.96}
+          >
+            <ChatMessageList
+              messages={chatMsgs}
+              renderMessage={renderPetMessage}
+              maxHeight={chatMaxHeight}
+              itemGap={9}
+              contentContainerStyle={styles.chatListContent}
+              emptyComponent={
+                <View style={styles.emptyBox}>
+                  <Text
                     style={[
-                      styles.quickPill,
-                      {
-                        borderColor: isDark
-                          ? "rgba(186,230,253,0.24)"
-                          : "rgba(56,189,248,0.36)",
-                        backgroundColor: isDark
-                          ? "rgba(26,45,76,0.82)"
-                          : "rgba(255,255,255,0.94)",
-                        boxShadow: [
-                          {
-                            offsetX: 0,
-                            offsetY: 1,
-                            blurRadius: 4,
-                            color: isDark ? "rgba(2,8,20,0.28)" : "rgba(15,41,66,0.06)",
-                          },
-                        ],
-                      },
+                      styles.emptyText,
+                      { color: isDark ? "rgba(186,230,253,0.68)" : "#64748B" },
                     ]}
                   >
-                    <Ionicons name={action.icon} size={12} color={action.accent} />
-                    <Text
-                      numberOfLines={1}
+                    点下方互动或发句话逗逗{personaName}吧～
+                  </Text>
+                </View>
+              }
+              header={
+                busy ? (
+                  <View style={styles.busyWrap}>
+                    <View
                       style={[
-                        styles.quickPillText,
-                        { color: isDark ? "#E0F2FE" : "#0F2942" },
+                        styles.busyPill,
+                        {
+                          backgroundColor: isDark ? "rgba(28,50,82,0.92)" : "#FFFFFF",
+                          borderColor: isDark
+                            ? "rgba(125,211,252,0.30)"
+                            : "rgba(56,189,248,0.42)",
+                        },
                       ]}
                     >
-                      {textLabel}
-                    </Text>
-                  </PetTactilePressable>
-                );
-              })}
-            </ScrollView>
-
-            <View
-              style={[
-                styles.quickDivider,
-                {
-                  backgroundColor: isDark
-                    ? "rgba(186,230,253,0.16)"
-                    : "rgba(148,163,184,0.32)",
-                },
-              ]}
+                      <Text
+                        style={[
+                          styles.busyText,
+                          { color: isDark ? "#BAE6FD" : "#0369A1" },
+                        ]}
+                      >
+                        {personaName}正在想回复…
+                      </Text>
+                    </View>
+                  </View>
+                ) : null
+              }
             />
+            <LinearGradient
+              pointerEvents="none"
+              colors={[chatEdgeColor, chatEdgeTransparent]}
+              style={styles.chatEdgeFadeTop}
+            />
+            <LinearGradient
+              pointerEvents="none"
+              colors={[chatEdgeTransparent, chatEdgeColor]}
+              style={styles.chatEdgeFadeBottom}
+            />
+          </View>
+
+          {/* 3×2 对称快捷互动网格（零盲划、零 flex 塌陷，高频互动一目了然） */}
+          <View style={styles.quickGrid}>
+            {QUICK_ACTION_ROWS.map((row, rowIndex) => (
+              <View key={rowIndex} style={styles.quickGridRow}>
+                {row.map((action) => {
+                  const isHungryFeed = action.id === "feed" && hungry;
+                  const textLabel =
+                    isHungryFeed && action.hungryLabel ? action.hungryLabel : action.label;
+                  return (
+                    <PetTactilePressable
+                      key={action.id}
+                      onPress={() => {
+                        tapHaptic();
+                        onQuickAction(action.id);
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel={textLabel}
+                      pressedOpacity={0.78}
+                      pressedScale={0.96}
+                      style={[
+                        styles.quickPill,
+                        {
+                          borderColor: isHungryFeed
+                            ? isDark
+                              ? "rgba(251,191,36,0.72)"
+                              : "rgba(245,158,11,0.68)"
+                            : isDark
+                              ? tintHex(action.accent, 0.34)
+                              : tintHex(action.accent, 0.32),
+                          backgroundColor: isHungryFeed
+                            ? isDark
+                              ? "rgba(245,158,11,0.26)"
+                              : "rgba(254,243,199,0.96)"
+                            : isDark
+                              ? tintHex(action.accent, 0.14)
+                              : tintHex(action.accent, 0.1),
+                          boxShadow: [
+                            {
+                              offsetX: 0,
+                              offsetY: 1,
+                              blurRadius: isHungryFeed ? 6 : 4,
+                              color: isHungryFeed
+                                ? isDark
+                                  ? "rgba(245,158,11,0.24)"
+                                  : "rgba(245,158,11,0.18)"
+                                : isDark
+                                  ? "rgba(2,8,20,0.24)"
+                                  : "rgba(15,41,66,0.05)",
+                            },
+                          ],
+                        },
+                      ]}
+                    >
+                      <Ionicons
+                        name={action.icon}
+                        size={12}
+                        color={
+                          isHungryFeed
+                            ? isDark
+                              ? "#FBBF24"
+                              : "#D97706"
+                            : action.accent
+                        }
+                      />
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.quickPillText,
+                          {
+                            color: isHungryFeed
+                              ? isDark
+                                ? "#FDE68A"
+                                : "#92400E"
+                              : isDark
+                                ? "#E8F5FF"
+                                : "#0F2942",
+                          },
+                        ]}
+                      >
+                        {textLabel}
+                      </Text>
+                    </PetTactilePressable>
+                  );
+                })}
+              </View>
+            ))}
+          </View>
+
+          {/* 轻盈底栏：左侧情境照料提示 + 右侧常驻「收起来」控制 */}
+          <View style={styles.utilityRow}>
+            <View style={styles.utilityHintWrap}>
+              <Ionicons name={footerHint.icon} size={11.5} color={footerHint.iconColor} />
+              <Text
+                numberOfLines={1}
+                style={[styles.utilityHintText, { color: footerHint.textColor }]}
+              >
+                {footerHint.text}
+              </Text>
+            </View>
 
             <PetTactilePressable
               onPress={onDismiss}
+              hitSlop={4}
               accessibilityRole="button"
               accessibilityLabel="收起桌宠"
               pressedOpacity={0.78}
@@ -827,7 +1014,7 @@ export function WhalePetPopover({
                 {
                   borderColor: isDark
                     ? "rgba(148,163,184,0.28)"
-                    : "rgba(148,163,184,0.38)",
+                    : "rgba(148,163,184,0.36)",
                   backgroundColor: isDark
                     ? "rgba(30,41,59,0.78)"
                     : "rgba(241,245,249,0.95)",
@@ -861,7 +1048,7 @@ export function WhalePetPopover({
             whaleTheme
             compact
             placeholder="跟她说点什么…"
-            bottomInset={6}
+            bottomInset={5}
           />
 
           {scheduleChange ? (

@@ -146,8 +146,8 @@ export function WhalePetStage() {
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme !== "light";
 
-  const panelW = Math.min(width - 24, 316);
-  const panelH = Math.min(392, Math.max(300, height - insets.top - insets.bottom - 108));
+  const panelW = Math.min(width - 24, 324);
+  const panelH = Math.min(436, Math.max(348, height - insets.top - insets.bottom - 92));
   const glassProfile = useMemo(
     () => resolveGlassOpticalProfile(backgroundTint, isDark, hasWallpaper),
     [backgroundTint, isDark, hasWallpaper],
