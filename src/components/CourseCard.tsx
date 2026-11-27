@@ -1,7 +1,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { LinearGradient } from "expo-linear-gradient";
-import React, { useEffect, useMemo } from "react";
-import { Text, View } from "react-native";
+import React, { useEffect, useMemo, useState } from "react";
+import { Pressable, Text, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   cancelAnimation,
@@ -17,11 +17,14 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 
+import { AmbientCraftModal } from "@/components/AmbientCraft";
 import { GlassContainer } from "@/components/GlassContainer";
 import { coursePalette } from "@/constants/palette";
 import { useAnimationActive } from "@/hooks/useAnimationActive";
+import { playSfx } from "@/services/soundEffects";
 import { useSettings } from "@/store/useSettings";
 import type { Course, Period } from "@/types";
+import { thumpHaptic } from "@/utils/haptics";
 import { renderQuality } from "@/utils/renderQuality";
 import { formatWeeksCompact, getCourseTime } from "@/utils/time";
 
@@ -440,11 +443,30 @@ export const CourseCard = React.memo(function CourseCard({
 
 /** 极简占位卡片（空闲时段） */
 export const EmptySlotCard = React.memo(function EmptySlotCard({ label }: { label: string }) {
+  const [ambientOpen, setAmbientOpen] = useState(false);
+
   return (
-    <View className="items-center justify-center rounded-[24px] border border-dashed border-slate-300/60 bg-white/25 px-3 py-4 dark:border-slate-600/50 dark:bg-white/[0.03]">
-      <Text className="text-[10.5px] text-slate-400 dark:text-slate-500">
-        {label}
-      </Text>
-    </View>
+    <>
+      <Pressable
+        delayLongPress={720}
+        onLongPress={() => {
+          thumpHaptic();
+          playSfx("owl_hoot", { volume: 0.52 });
+          setAmbientOpen(true);
+        }}
+        className="items-center justify-center rounded-[24px] border border-dashed border-slate-300/60 bg-white/25 px-3 py-4 dark:border-slate-600/50 dark:bg-white/[0.03]"
+      >
+        <Text className="text-[10.5px] text-slate-400 dark:text-slate-500">
+          {label}
+        </Text>
+      </Pressable>
+      {ambientOpen ? (
+        <AmbientCraftModal
+          visible
+          kind="lantern"
+          onClose={() => setAmbientOpen(false)}
+        />
+      ) : null}
+    </>
   );
 });

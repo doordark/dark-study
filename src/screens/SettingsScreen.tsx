@@ -26,6 +26,7 @@ import Animated, {
   useReducedMotion,
 } from "react-native-reanimated";
 
+import { AmbientCraftModal } from "@/components/AmbientCraft";
 import { Backdrop } from "@/components/Backdrop";
 import { BackupSettings } from "@/components/BackupSettings";
 import { CourseReminderSettings } from "@/components/CourseReminderSettings";
@@ -53,6 +54,7 @@ import { useForegroundClock } from "@/hooks/useForegroundClock";
 import { ensureReminderPermission } from "@/services/courseReminders";
 import { testDeepSeekConnection } from "@/services/deepseek";
 import { pickImageForBackground } from "@/services/fileImport";
+import { playSfx, playStarScaleNote } from "@/services/soundEffects";
 import {
   currentVersion,
   formatBytes,
@@ -65,6 +67,11 @@ import { useUpdateTask } from "@/store/useUpdateTask";
 import { useWhaleMemory } from "@/store/useWhaleMemory";
 import { useWhalePersona } from "@/store/useWhalePersona";
 import type { Schedule } from "@/types";
+import {
+  advanceTapSequence,
+  INITIAL_TAP_SEQUENCE,
+} from "@/utils/ambientCraft";
+import { selectHaptic, thumpHaptic } from "@/utils/haptics";
 import {
   addDays,
   countDistinctCourses,
@@ -2162,6 +2169,26 @@ function SettingsPage({
 
 export function SettingsScreen() {
   const enterList = useCardEnter(50);
+  const [ambientOpen, setAmbientOpen] = useState(false);
+  const versionTapRef = useRef(INITIAL_TAP_SEQUENCE);
+  const appVersion = currentVersion();
+
+  const handleVersionTap = () => {
+    const res = advanceTapSequence(versionTapRef.current, Date.now(), {
+      targetCount: 5,
+      windowMs: 2400,
+    });
+    versionTapRef.current = res.next;
+    if (res.triggered) {
+      thumpHaptic();
+      playSfx("star_constellation", { volume: 0.66 });
+      setAmbientOpen(true);
+    } else if (res.next.count >= 3) {
+      selectHaptic();
+      playStarScaleNote(res.next.count - 3, { volume: 0.34 });
+    }
+  };
+
   return (
     <SettingsPage
       title="设置"
@@ -2208,9 +2235,19 @@ export function SettingsScreen() {
         </GlassContainer>
       </Animated.View>
       <UpdateCard />
-      <Text className="mt-5 text-center text-[11px] text-slate-500 dark:text-slate-400">
-        Dark Study v{currentVersion()}
-      </Text>
+      <Pressable onPress={handleVersionTap}>
+        <Text className="mt-5 text-center text-[11px] text-slate-500 dark:text-slate-400">
+          Dark Study v{appVersion}
+        </Text>
+      </Pressable>
+      {ambientOpen ? (
+        <AmbientCraftModal
+          visible
+          kind="musicbox"
+          context={{ version: appVersion }}
+          onClose={() => setAmbientOpen(false)}
+        />
+      ) : null}
     </SettingsPage>
   );
 }

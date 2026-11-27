@@ -13,7 +13,9 @@ import Svg, {
   Text as SvgText,
 } from "react-native-svg";
 
+import { AmbientCraftModal } from "@/components/AmbientCraft";
 import { GlassContainer } from "@/components/GlassContainer";
+import { playSfx } from "@/services/soundEffects";
 import type {
   GpaScaleId,
   GradeRecord,
@@ -29,6 +31,7 @@ import {
   getGpaScaleMeta,
   semesterLabel,
 } from "@/utils/grades";
+import { thumpHaptic } from "@/utils/haptics";
 
 const BUCKET_COLORS = [
   "#38BDF8",
@@ -78,6 +81,7 @@ export function GradeAnalyticsCard({
   const [editingTarget, setEditingTarget] = useState(false);
   const [targetInput, setTargetInput] = useState("160");
   const [applyRuleToAudit, setApplyRuleToAudit] = useState(false);
+  const [ambientOpen, setAmbientOpen] = useState(false);
 
   const scaleMeta = getGpaScaleMeta(scale);
   const maxGpa = scaleMeta.maxGpa || 5;
@@ -191,6 +195,7 @@ export function GradeAnalyticsCard({
   };
 
   return (
+    <>
     <GlassContainer
       radius={24}
       intensity={44}
@@ -200,12 +205,20 @@ export function GradeAnalyticsCard({
       <View className="px-4 py-4">
         {/* 顶栏 */}
         <View className="flex-row items-center justify-between">
-          <View className="flex-row items-center">
+          <Pressable
+            delayLongPress={750}
+            onLongPress={() => {
+              thumpHaptic();
+              playSfx("whale_popover_open", { volume: 0.54 });
+              setAmbientOpen(true);
+            }}
+            className="flex-row items-center"
+          >
             <Ionicons name="stats-chart" size={14} color="#38BDF8" />
             <Text className="ml-1.5 text-[13.5px] font-bold text-slate-800 dark:text-white">
               趋势与学分统计
             </Text>
-          </View>
+          </Pressable>
           {onCollapse ? (
             <Pressable
               accessibilityRole="button"
@@ -693,5 +706,17 @@ export function GradeAnalyticsCard({
         </View>
       </View>
     </GlassContainer>
+    {ambientOpen ? (
+      <AmbientCraftModal
+        visible
+        kind="fortune"
+        context={{
+          earnedCredits: distribution.totalEarnedCredits,
+          termCount: trend.length,
+        }}
+        onClose={() => setAmbientOpen(false)}
+      />
+    ) : null}
+    </>
   );
 }
