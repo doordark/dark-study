@@ -638,10 +638,18 @@ async function testVerifyAndDownloadAndStore() {
   assert.deepEqual(recordedCalls.verifyArgs, ['file:///cache/downloaded.apk', validSha256]);
 
   // Verify SettingsScreen UpdateCard removes manual mirror selector and uses automatic route hint
-  const settingsSrc = fs.readFileSync(path.join(root, 'src', 'screens', 'SettingsScreen.tsx'), 'utf8');
-  assert.ok(!settingsSrc.includes('下载线路（国内网络可切换镜像加速）'), 'SettingsScreen must remove manual mirror selector title');
-  assert.ok(!settingsSrc.includes('UPDATE_MIRRORS'), 'SettingsScreen must remove UPDATE_MIRRORS references');
-  assert.ok(settingsSrc.includes('自动择优选择最快线路检查与下载'), 'SettingsScreen must show automatic route hint');
+  const settingsRootSrc = fs.readFileSync(path.join(root, 'src', 'screens', 'SettingsScreen.tsx'), 'utf8');
+  const settingsSrc = fs.readFileSync(path.join(root, 'src', 'screens', 'settings', 'SettingsShared.tsx'), 'utf8');
+  assert.ok(
+    !settingsSrc.includes('下载线路（国内网络可切换镜像加速）') &&
+      !settingsRootSrc.includes('下载线路（国内网络可切换镜像加速）'),
+    'SettingsScreen/SettingsShared must remove manual mirror selector title',
+  );
+  assert.ok(
+    !settingsSrc.includes('UPDATE_MIRRORS') && !settingsRootSrc.includes('UPDATE_MIRRORS'),
+    'SettingsScreen/SettingsShared must remove UPDATE_MIRRORS references',
+  );
+  assert.ok(settingsSrc.includes('自动择优选择最快线路检查与下载'), 'SettingsShared UpdateCard must show automatic route hint');
 }
 
 async function testErrorBoundaryAndLayout() {

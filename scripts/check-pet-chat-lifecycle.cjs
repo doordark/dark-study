@@ -30,11 +30,11 @@ async function main() {
 
   // Static lifecycle hygiene checks on pet, popover & particle components
   const root = path.resolve(__dirname, '..');
-  const petSource = fs.readFileSync(path.join(root, 'src/components/WhalePet.tsx'), 'utf8');
-  assert(petSource.includes('foregroundStore.getSnapshot()'), 'WhalePet care heartbeat must check foreground state');
-  assert(petSource.includes('cancelAnimation(panelProgress)'), 'WhalePet must cancel popover animation on unmount');
-  assert(petSource.includes('hasMountedBounds'), 'WhalePet must separate mount intro from boundary resize clamping');
-  assert(petSource.includes('whale_pet_summon') && petSource.includes('whale_pet_dismiss'), 'WhalePet must keep single-source summon/dismiss SFX');
+  const petSource = fs.readFileSync(path.join(root, 'src/components/whale/WhalePetStage.tsx'), 'utf8');
+  assert(petSource.includes('foregroundStore.getSnapshot()'), 'WhalePetStage care heartbeat must check foreground state');
+  assert(petSource.includes('cancelAnimation(panelProgress)'), 'WhalePetStage must cancel popover animation on unmount');
+  assert(petSource.includes('hasMountedBounds'), 'WhalePetStage must separate mount intro from boundary resize clamping');
+  assert(petSource.includes('whale_pet_summon') && petSource.includes('whale_pet_dismiss'), 'WhalePetStage must keep single-source summon/dismiss SFX');
 
   const particlesSource = fs.readFileSync(path.join(root, 'src/components/PetParticles.tsx'), 'utf8');
   assert(particlesSource.includes('cancelAnimation(p)'), 'PetParticles must cancel particle animation on unmount');

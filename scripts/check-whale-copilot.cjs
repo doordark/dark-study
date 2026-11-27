@@ -623,25 +623,32 @@ async function run() {
   assert.match(invalidPreview.changes[0].result, /失败/);
 
   /* 6. UI wiring checks */
-  const settingsSrc = fs.readFileSync(path.join(root, "src/screens/SettingsScreen.tsx"), "utf8");
+  const aiPetSettingsSrc = fs.readFileSync(path.join(root, "src/screens/settings/AiPetSettings.tsx"), "utf8");
+  const reminderSettingsSrc = fs.readFileSync(path.join(root, "src/screens/settings/ReminderWidgetSettings.tsx"), "utf8");
   const whaleSettingsSrc = fs.readFileSync(path.join(root, "src/screens/WhaleSettingsScreen.tsx"), "utf8");
-  assert.ok(settingsSrc.includes("成绩感知"), "SettingsScreen AI entry subtitle must mention 成绩感知");
+  assert.ok(aiPetSettingsSrc.includes("成绩感知"), "AiPetSettings AI entry subtitle must mention 成绩感知");
   assert.ok(whaleSettingsSrc.includes("允许大肥鱼参考成绩与空课"), "WhaleSettingsScreen must expose whaleShareGrades toggle");
   assert.ok(whaleSettingsSrc.includes("whaleShareGrades"), "WhaleSettingsScreen must bind whaleShareGrades");
-  assert.ok(settingsSrc.includes("常驻上课进度通知"), "SettingsScreen must expose liveClassNotification toggle");
-  assert.ok(settingsSrc.includes("liveClassNotification"), "SettingsScreen must bind liveClassNotification");
-  assert.ok(settingsSrc.includes("ensureReminderPermission"), "SettingsScreen must request notification permission when enabling liveClassNotification");
-  assert.ok(settingsSrc.includes("Linking.openSettings"), "SettingsScreen must offer Linking.openSettings fallback on permission denial");
+  assert.ok(reminderSettingsSrc.includes("常驻上课进度通知"), "ReminderWidgetSettings must expose liveClassNotification toggle");
+  assert.ok(reminderSettingsSrc.includes("liveClassNotification"), "ReminderWidgetSettings must bind liveClassNotification");
+  assert.ok(reminderSettingsSrc.includes("ensureReminderPermission"), "ReminderWidgetSettings must request notification permission when enabling liveClassNotification");
+  assert.ok(reminderSettingsSrc.includes("Linking.openSettings"), "ReminderWidgetSettings must offer Linking.openSettings fallback on permission denial");
 
-  const assistantScreenSrc = fs.readFileSync(path.join(root, "src/screens/AssistantScreen.tsx"), "utf8");
-  assert.ok(assistantScreenSrc.includes('"add_task"'), "AssistantScreen SCHEDULE_TYPES must include add_task");
-  assert.ok(assistantScreenSrc.includes("预览新增待办"), "AssistantScreen button label must handle add_task");
+  const assistantChatSrc = fs.readFileSync(path.join(root, "src/components/assistant/useAssistantChat.ts"), "utf8");
+  const assistantWidgetsSrc = fs.readFileSync(path.join(root, "src/components/assistant/AssistantChatWidgets.tsx"), "utf8");
+  assert.ok(assistantChatSrc.includes('"add_task"'), "useAssistantChat SCHEDULE_TYPES must include add_task");
+  assert.ok(assistantWidgetsSrc.includes("预览新增待办"), "AssistantChatWidgets button label must handle add_task");
 
   const assistantMsgSrc = fs.readFileSync(path.join(root, "src/components/AssistantMessage.tsx"), "utf8");
   assert.ok(assistantMsgSrc.includes("预览新增待办"), "AssistantMessage button label must handle add_task");
 
-  const whalePetSrc = fs.readFileSync(path.join(root, "src/components/WhalePet.tsx"), "utf8");
-  assert.ok(whalePetSrc.includes('"add_task"'), "WhalePet SCHEDULE_TYPES must include add_task");
+  const whalePetHelpersSrc = fs.readFileSync(path.join(root, "src/components/whale/whalePetHelpers.ts"), "utf8");
+  const whalePetStageSrc = fs.readFileSync(path.join(root, "src/components/whale/WhalePetStage.tsx"), "utf8");
+  assert.ok(whalePetHelpersSrc.includes('"add_task"'), "whalePetHelpers SCHEDULE_TYPES must include add_task");
+  assert.ok(
+    whalePetStageSrc.includes("isScheduleAction") && whalePetStageSrc.includes("isWhaleAction"),
+    "WhalePetStage must wire isScheduleAction/isWhaleAction from whalePetHelpers",
+  );
 
   console.log(
     "Whale copilot checks passed: weekly free slots, GPA/grade priority summary, attendance redline alerts, recent focus summary, whaleContext live blocks, whaleShareGrades privacy gating, SecureStore partialize invariant, add_task sanitization/preview/commit/undo, and UI wiring.",

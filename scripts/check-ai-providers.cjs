@@ -541,24 +541,26 @@ function testSettingsAndVoiceUiCleanup() {
   const path = require("node:path");
   const root = path.resolve(__dirname, "..");
 
-  const settingsSrc = fs.readFileSync(path.join(root, "src/screens/SettingsScreen.tsx"), "utf8");
+  const settingsRootSrc = fs.readFileSync(path.join(root, "src/screens/SettingsScreen.tsx"), "utf8");
+  const settingsSrc = fs.readFileSync(path.join(root, "src/screens/settings/AiPetSettings.tsx"), "utf8");
   assert(
     settingsSrc.includes("如 deepseek-flash / gemini-3.8-flash / qwen3.8-flash"),
-    "SettingsScreen must show 2026 text model placeholder",
+    "AiPetSettings must show 2026 text model placeholder",
   );
   assert(
     settingsSrc.includes("输入或粘贴 AIza…（Google AI Studio Key）"),
-    "SettingsScreen must show Gemini API key placeholder",
+    "AiPetSettings must show Gemini API key placeholder",
   );
   assert(
     settingsSrc.includes("输入或粘贴 sk-or-…"),
-    "SettingsScreen must show OpenRouter API key placeholder",
+    "AiPetSettings must show OpenRouter API key placeholder",
   );
   assert(
-    !settingsSrc.includes("允许大肥鱼参考成绩与空课"),
-    "SettingsScreen must remove whaleShareGrades toggle from outer AI card",
+    !settingsSrc.includes("允许大肥鱼参考成绩与空课") &&
+      !settingsRootSrc.includes("允许大肥鱼参考成绩与空课"),
+    "SettingsScreen/AiPetSettings must remove whaleShareGrades toggle from outer AI card",
   );
-  assert(settingsSrc.includes("成绩感知"), "SettingsScreen AI entry subtitle must mention 成绩感知");
+  assert(settingsSrc.includes("成绩感知"), "AiPetSettings AI entry subtitle must mention 成绩感知");
 
   const whaleSettingsSrc = fs.readFileSync(path.join(root, "src/screens/WhaleSettingsScreen.tsx"), "utf8");
   assert(

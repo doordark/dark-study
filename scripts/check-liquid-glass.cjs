@@ -145,10 +145,10 @@ assert.equal(resolveMaterial('invalid'), 'flat');
 const backupSource = fs.readFileSync(path.join(root, 'src', 'utils', 'backup.ts'), 'utf8');
 assert(backupSource.includes("'clear'") && backupSource.includes("'frosted'"), 'backup.ts must validate clear & frosted materials');
 
-const settingsScreenSource = fs.readFileSync(path.join(root, 'src', 'screens', 'SettingsScreen.tsx'), 'utf8');
-assert(settingsScreenSource.includes('key: "clear"') && settingsScreenSource.includes('label: "清透"'), 'SettingsScreen must offer the 清透 (clear) material option');
-assert(settingsScreenSource.includes('key: "frosted"') && settingsScreenSource.includes('label: "柔雾玻璃"'), 'SettingsScreen must offer the 柔雾玻璃 (frosted) material option');
-assert(settingsScreenSource.includes('flex-wrap') && settingsScreenSource.includes('48%'), 'SettingsScreen must arrange 4 materials in a 2x2 grid');
+const settingsScreenSource = fs.readFileSync(path.join(root, 'src', 'screens', 'settings', 'AppearanceSettings.tsx'), 'utf8');
+assert(settingsScreenSource.includes('key: "clear"') && settingsScreenSource.includes('label: "清透"'), 'AppearanceSettings must offer the 清透 (clear) material option');
+assert(settingsScreenSource.includes('key: "frosted"') && settingsScreenSource.includes('label: "柔雾玻璃"'), 'AppearanceSettings must offer the 柔雾玻璃 (frosted) material option');
+assert(settingsScreenSource.includes('flex-wrap') && settingsScreenSource.includes('48%'), 'AppearanceSettings must arrange 4 materials in a 2x2 grid');
 
 const backdropSource = fs.readFileSync(path.join(root, 'src', 'components', 'Backdrop.tsx'), 'utf8');
 assert(
