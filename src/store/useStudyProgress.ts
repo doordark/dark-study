@@ -367,22 +367,18 @@ export const useStudyProgress = create<StudyProgressState>()(
         const ts = Number.isFinite(now) ? Math.floor(now) : Date.now();
         const remainingSec = computeFocusRemainingSec(current, ts);
         const completed = remainingSec <= 0;
-        if (current.running && (remainingSec !== current.remainingSec || completed)) {
-          const next: ActiveFocusSession = completed
-            ? {
-                ...current,
-                remainingSec: 0,
-                running: false,
-                endAt: null,
-                notificationId: null,
-              }
-            : {
-                ...current,
-                remainingSec,
-              };
+        if (current.running && completed) {
+          // 保留 notificationId 供调用方完成结算时取消系统通知，避免提前清零引发竞态
+          const next: ActiveFocusSession = {
+            ...current,
+            remainingSec: 0,
+            running: false,
+            endAt: null,
+          };
           set({ activeFocusSession: next });
-          return { session: next, remainingSec, completed };
+          return { session: next, remainingSec: 0, completed: true };
         }
+        // 运行中未到期不调用 set，避免每 500ms/1s 触发 AsyncStorage 频繁落盘与无关重渲染
         return { session: current, remainingSec, completed };
       },
 

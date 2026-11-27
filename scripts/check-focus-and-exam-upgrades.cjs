@@ -6,9 +6,11 @@ const createLoader = require("./load-project-ts.cjs");
 
 async function run() {
   const disk = new Map();
+  let storageWriteCount = 0;
   const storage = {
     getItem: async (key) => disk.get(key) ?? null,
     setItem: async (key, value) => {
+      storageWriteCount += 1;
       disk.set(key, value);
     },
     removeItem: async (key) => {
@@ -198,12 +200,20 @@ async function run() {
   assert.equal(rehydratedSession.id, started.id);
   assert.equal(rehydratedSession.notificationId, "notif-active-1");
 
-  // Sync after 12 minutes elapsed in background
+  // Sync after 12 minutes elapsed in background — must NOT write to AsyncStorage while still running
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const writesBeforeMidSync = storageWriteCount;
   const midSync = freshStore
     .getState()
     .tickOrSyncFocusSession(t0 + 12 * 60 * 1000);
   assert.equal(midSync.remainingSec, 13 * 60);
   assert.equal(midSync.completed, false);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(
+    storageWriteCount,
+    writesBeforeMidSync,
+    "tickOrSyncFocusSession must not trigger AsyncStorage writes mid-session",
+  );
 
   // Pause at 12m elapsed, wait 30 minutes, then resume -> remaining must stay 13m!
   const paused = freshStore
@@ -226,11 +236,20 @@ async function run() {
   freshStore.getState().setFocusAmbient(false);
   assert.equal(freshStore.getState().activeFocusSession.ambientOn, false);
 
-  // Finish after full remaining 13m -> completed: true & atomic settlement awards 32 dark币
+  // Finish after full remaining 13m -> completed: true, preserves notificationId until settled, & atomic settlement awards 32 dark币
   const endTime = resumeTime + 13 * 60 * 1000 + 500;
   const doneSync = freshStore.getState().tickOrSyncFocusSession(endTime);
   assert.equal(doneSync.completed, true);
   assert.equal(doneSync.remainingSec, 0);
+  assert.equal(
+    doneSync.session.notificationId,
+    "notif-resumed",
+    "tickOrSyncFocusSession must preserve notificationId on completion so caller can cancel it",
+  );
+  assert.equal(
+    freshStore.getState().activeFocusSession.notificationId,
+    "notif-resumed",
+  );
 
   const completion = freshStore
     .getState()
