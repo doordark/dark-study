@@ -10,12 +10,17 @@ import {
 } from "react-native";
 
 import { coursePalette, WEEKDAY_LABELS } from "@/constants/palette";
+import { useStudyProgress } from "@/store/useStudyProgress";
 import type { Course, Schedule } from "@/types";
 import { selectHaptic, tapHaptic } from "@/utils/haptics";
 import {
   computeScheduleStats,
   searchScheduleCourses,
 } from "@/utils/scheduleExport";
+import {
+  buildStudyReviewSummary,
+  getAttendanceRiskCourses,
+} from "@/utils/studyProgress";
 import {
   countDistinctCourses,
   formatWeeksCompact,
@@ -30,7 +35,16 @@ export interface CourseSearchStatsModalProps {
   onSelectCourse: (course: Course, targetWeek?: number) => void;
 }
 
-type ModalTab = "search" | "stats";
+type ModalTab = "search" | "stats" | "review";
+
+const TOP_COURSE_BAR_COLORS = [
+  "#0EA5E9",
+  "#8B5CF6",
+  "#10B981",
+  "#F59E0B",
+  "#F43F5E",
+  "#06B6D4",
+] as const;
 
 export function CourseSearchStatsModal({
   visible,
@@ -42,6 +56,30 @@ export function CourseSearchStatsModal({
   const [tab, setTab] = useState<ModalTab>("search");
   const [query, setQuery] = useState("");
   const [onlyCurrentWeek, setOnlyCurrentWeek] = useState(false);
+
+  const focusLogs = useStudyProgress((s) => s.focusLogs);
+  const attendanceByCourse = useStudyProgress((s) => s.attendanceByCourse);
+  const customAbsenceLimits = useStudyProgress((s) => s.customAbsenceLimits);
+
+  const studyReview = useMemo(
+    () => buildStudyReviewSummary(focusLogs, attendanceByCourse),
+    [focusLogs, attendanceByCourse],
+  );
+
+  const attendanceRisks = useMemo(
+    () =>
+      getAttendanceRiskCourses(
+        schedule,
+        attendanceByCourse,
+        customAbsenceLimits,
+      ),
+    [schedule, attendanceByCourse, customAbsenceLimits],
+  );
+
+  const maxDailyFocusMinutes = useMemo(
+    () => Math.max(15, ...studyReview.dailyLast7.map((d) => d.minutes)),
+    [studyReview.dailyLast7],
+  );
 
   const searchResults = useMemo(() => {
     const matched = searchScheduleCourses(schedule, query);
@@ -159,8 +197,9 @@ export function CourseSearchStatsModal({
           <View className="mx-5 mb-3 flex-row rounded-2xl bg-slate-100 p-1 dark:bg-slate-800/80">
             {(
               [
-                ["search", "搜索与全部课程", "search-outline"],
+                ["search", "搜索课程", "search-outline"],
                 ["stats", "学期统计", "bar-chart-outline"],
+                ["review", "学习复盘", "flame-outline"],
               ] as const
             ).map(([key, label, icon]) => {
               const active = tab === key;
@@ -171,19 +210,27 @@ export function CourseSearchStatsModal({
                     selectHaptic();
                     setTab(key);
                   }}
-                  className={`flex-1 flex-row items-center justify-center gap-1.5 rounded-xl py-2 ${
+                  className={`flex-1 flex-row items-center justify-center gap-1 rounded-xl py-2 ${
                     active ? "bg-white dark:bg-slate-700" : ""
                   }`}
                 >
                   <Ionicons
                     name={icon}
-                    size={14}
-                    color={active ? "#0284C7" : "#94A3B8"}
+                    size={13.5}
+                    color={
+                      active
+                        ? key === "review"
+                          ? "#10B981"
+                          : "#0284C7"
+                        : "#94A3B8"
+                    }
                   />
                   <Text
-                    className={`text-[12.5px] font-bold ${
+                    className={`text-[12px] font-bold ${
                       active
-                        ? "text-sky-700 dark:text-sky-300"
+                        ? key === "review"
+                          ? "text-emerald-700 dark:text-emerald-300"
+                          : "text-sky-700 dark:text-sky-300"
                         : "text-slate-500 dark:text-slate-400"
                     }`}
                   >
@@ -367,12 +414,48 @@ export function CourseSearchStatsModal({
                 )}
               </ScrollView>
             </View>
-          ) : (
+          ) : tab === "stats" ? (
             <ScrollView
               className="flex-1 px-5"
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ gap: 12, paddingBottom: 16 }}
             >
+              {/* 学习复盘速览入口 */}
+              <Pressable
+                onPress={() => {
+                  selectHaptic();
+                  setTab("review");
+                }}
+                accessibilityRole="button"
+                className="flex-row items-center justify-between rounded-2xl border border-emerald-400/35 bg-emerald-500/10 px-3.5 py-2.5 dark:border-emerald-400/20 dark:bg-emerald-500/12"
+              >
+                <View className="min-w-0 flex-1 pr-2">
+                  <Text className="text-[12px] font-bold text-emerald-700 dark:text-emerald-300">
+                    学习复盘速览
+                  </Text>
+                  <Text
+                    numberOfLines={1}
+                    className="mt-0.5 text-[11px] text-emerald-700/80 dark:text-emerald-300/80"
+                  >
+                    累计专注 {studyReview.totalFocusMinutes} 分钟 · 连续{" "}
+                    {studyReview.streakDays} 天 · 出勤率{" "}
+                    {studyReview.attendance.attendanceRate !== null
+                      ? `${Math.round(studyReview.attendance.attendanceRate * 100)}%`
+                      : "--"}
+                  </Text>
+                </View>
+                <View className="shrink-0 flex-row items-center">
+                  <Text className="text-[11px] font-bold text-emerald-600 dark:text-emerald-300">
+                    看详情
+                  </Text>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={13}
+                    color="#10B981"
+                  />
+                </View>
+              </Pressable>
+
               {/* 核心指标四宫格 */}
               <View className="flex-row flex-wrap gap-2.5">
                 <View className="min-w-[46%] flex-1 rounded-2xl border border-slate-200/80 bg-slate-50/90 p-3.5 dark:border-white/10 dark:bg-slate-800/70">
@@ -579,6 +662,302 @@ export function CourseSearchStatsModal({
                   </View>
                 </View>
               ) : null}
+            </ScrollView>
+          ) : (
+            /* ---------------- Tab 3: 学期学习复盘仪表盘 ---------------- */
+            <ScrollView
+              className="flex-1 px-5"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ gap: 12, paddingBottom: 16 }}
+            >
+              {/* 核心复盘四宫格 */}
+              <View className="flex-row flex-wrap gap-2.5">
+                <View className="min-w-[46%] flex-1 rounded-2xl border border-slate-200/80 bg-slate-50/90 p-3.5 dark:border-white/10 dark:bg-slate-800/70">
+                  <Text className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                    累计专注时长
+                  </Text>
+                  <Text className="mt-1 text-[22px] font-extrabold text-sky-600 dark:text-sky-300">
+                    {studyReview.totalFocusMinutes}
+                    <Text className="text-[12px] font-semibold"> 分</Text>
+                  </Text>
+                  <Text className="mt-0.5 text-[10.5px] text-slate-400">
+                    约 {(studyReview.totalFocusMinutes / 60).toFixed(1)} 小时 ·{" "}
+                    {studyReview.totalFocusSessions} 次番茄
+                  </Text>
+                </View>
+
+                <View className="min-w-[46%] flex-1 rounded-2xl border border-slate-200/80 bg-slate-50/90 p-3.5 dark:border-white/10 dark:bg-slate-800/70">
+                  <Text className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                    连续学习天数
+                  </Text>
+                  <Text className="mt-1 text-[22px] font-extrabold text-amber-600 dark:text-amber-300">
+                    {studyReview.streakDays}
+                    <Text className="text-[12px] font-semibold"> 天</Text>
+                  </Text>
+                  <Text className="mt-0.5 text-[10.5px] text-slate-400">
+                    近 7 天活跃 {studyReview.activeDaysLast7} / 7 天
+                  </Text>
+                </View>
+
+                <View className="min-w-[46%] flex-1 rounded-2xl border border-slate-200/80 bg-slate-50/90 p-3.5 dark:border-white/10 dark:bg-slate-800/70">
+                  <Text className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                    近 7 天专注
+                  </Text>
+                  <Text className="mt-1 text-[22px] font-extrabold text-violet-600 dark:text-violet-300">
+                    {studyReview.last7DaysMinutes}
+                    <Text className="text-[12px] font-semibold"> 分</Text>
+                  </Text>
+                  <Text className="mt-0.5 text-[10.5px] text-slate-400">
+                    今日专注 {studyReview.todayFocusMinutes} 分钟
+                  </Text>
+                </View>
+
+                <View className="min-w-[46%] flex-1 rounded-2xl border border-slate-200/80 bg-slate-50/90 p-3.5 dark:border-white/10 dark:bg-slate-800/70">
+                  <Text className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                    综合出勤率
+                  </Text>
+                  <Text className="mt-1 text-[22px] font-extrabold text-emerald-600 dark:text-emerald-300">
+                    {studyReview.attendance.attendanceRate !== null
+                      ? Math.round(studyReview.attendance.attendanceRate * 100)
+                      : "--"}
+                    {studyReview.attendance.attendanceRate !== null ? (
+                      <Text className="text-[12px] font-semibold">%</Text>
+                    ) : null}
+                  </Text>
+                  <Text className="mt-0.5 text-[10.5px] text-slate-400">
+                    已记录 {studyReview.attendance.totalRecords} 次 ·{" "}
+                    {studyReview.attendance.trackedCourses} 门课
+                  </Text>
+                </View>
+              </View>
+
+              {/* 近 7 天专注柱状图 */}
+              <View className="rounded-2xl border border-slate-200/80 bg-slate-50/90 p-4 dark:border-white/10 dark:bg-slate-800/70">
+                <View className="flex-row items-center justify-between">
+                  <Text className="text-[13px] font-bold text-slate-800 dark:text-white">
+                    近 7 天专注节奏（分钟）
+                  </Text>
+                  <Text className="text-[10.5px] text-slate-500 dark:text-slate-400">
+                    共 {studyReview.last7DaysMinutes} 分钟
+                  </Text>
+                </View>
+
+                <View className="mt-4 h-36 flex-row items-end justify-between gap-2 px-1">
+                  {studyReview.dailyLast7.map((bucket) => {
+                    const ratio =
+                      bucket.minutes > 0
+                        ? Math.max(0.1, bucket.minutes / maxDailyFocusMinutes)
+                        : 0;
+                    const barHeight = Math.round(ratio * 84);
+                    return (
+                      <View key={bucket.dateIso} className="flex-1 items-center">
+                        <Text className="mb-1 text-[9.5px] font-semibold text-slate-500 dark:text-slate-400">
+                          {bucket.minutes > 0 ? `${bucket.minutes}m` : "-"}
+                        </Text>
+                        <View className="h-[84px] w-full items-center justify-end">
+                          <View
+                            style={{
+                              height: Math.max(4, barHeight),
+                              width: "66%",
+                              borderRadius: 8,
+                              backgroundColor: bucket.isToday
+                                ? "#10B981"
+                                : bucket.minutes > 0
+                                  ? "rgba(16,185,129,0.48)"
+                                  : "rgba(148,163,184,0.22)",
+                            }}
+                          />
+                        </View>
+                        <Text
+                          className={`mt-1.5 text-[10.5px] font-semibold ${
+                            bucket.isToday
+                              ? "text-emerald-600 dark:text-emerald-300"
+                              : "text-slate-500 dark:text-slate-400"
+                          }`}
+                        >
+                          {bucket.shortWeekday}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* 专注学科排行分布条 */}
+              <View className="rounded-2xl border border-slate-200/80 bg-slate-50/90 p-4 dark:border-white/10 dark:bg-slate-800/70">
+                <View className="mb-2.5 flex-row items-center justify-between">
+                  <Text className="text-[13px] font-bold text-slate-800 dark:text-white">
+                    专注学科排行分布
+                  </Text>
+                  <Text className="text-[10.5px] text-slate-500 dark:text-slate-400">
+                    共 {studyReview.topCourses.length} 门学科
+                  </Text>
+                </View>
+
+                {studyReview.topCourses.length === 0 ? (
+                  <View className="items-center py-6">
+                    <Ionicons name="timer-outline" size={26} color="#94A3B8" />
+                    <Text className="mt-2 text-[12.5px] font-semibold text-slate-600 dark:text-slate-300">
+                      还没有专注记录
+                    </Text>
+                    <Text className="mt-0.5 text-[11px] text-slate-400">
+                      在课表页点「专注 / 考勤」开启第一个番茄钟吧
+                    </Text>
+                  </View>
+                ) : (
+                  <View className="gap-3">
+                    {studyReview.topCourses.slice(0, 6).map((item, idx) => {
+                      const barColor =
+                        TOP_COURSE_BAR_COLORS[idx % TOP_COURSE_BAR_COLORS.length];
+                      const pct = Math.round(item.ratio * 100);
+                      return (
+                        <View key={item.courseKey}>
+                          <View className="mb-1 flex-row items-center justify-between">
+                            <View className="min-w-0 flex-1 flex-row items-center pr-2">
+                              <View
+                                className="mr-2 h-2.5 w-2.5 rounded-full"
+                                style={{ backgroundColor: barColor }}
+                              />
+                              <Text
+                                numberOfLines={1}
+                                className="flex-1 text-[12.5px] font-bold text-slate-800 dark:text-slate-100"
+                              >
+                                {item.courseName}
+                              </Text>
+                            </View>
+                            <Text className="shrink-0 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                              {item.minutes} 分钟 · {item.sessions} 次 ({pct}%)
+                            </Text>
+                          </View>
+                          <View className="h-2 w-full overflow-hidden rounded-full bg-slate-200/80 dark:bg-white/10">
+                            <View
+                              className="h-full rounded-full"
+                              style={{
+                                width: `${Math.max(4, pct)}%`,
+                                backgroundColor: barColor,
+                              }}
+                            />
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+
+              {/* 总体考勤汇总 */}
+              <View className="rounded-2xl border border-slate-200/80 bg-slate-50/90 p-4 dark:border-white/10 dark:bg-slate-800/70">
+                <View className="flex-row items-center justify-between">
+                  <Text className="text-[13px] font-bold text-slate-800 dark:text-white">
+                    学期考勤总览
+                  </Text>
+                  <Text className="text-[10.5px] text-slate-500 dark:text-slate-400">
+                    {studyReview.attendance.trackedCourses} 门课有打卡
+                  </Text>
+                </View>
+
+                {studyReview.attendance.totalRecords === 0 ? (
+                  <Text className="mt-2 text-[11.5px] text-slate-500 dark:text-slate-400">
+                    暂无考勤打卡记录，可在课程快捷菜单或「专注 / 考勤」中一键签到。
+                  </Text>
+                ) : (
+                  <>
+                    {/* 三色占比条 */}
+                    <View className="mt-3 h-3 w-full flex-row overflow-hidden rounded-full bg-slate-200/80 dark:bg-white/10">
+                      {studyReview.attendance.present > 0 ? (
+                        <View
+                          style={{
+                            flex: studyReview.attendance.present,
+                            backgroundColor: "#10B981",
+                          }}
+                        />
+                      ) : null}
+                      {studyReview.attendance.leave > 0 ? (
+                        <View
+                          style={{
+                            flex: studyReview.attendance.leave,
+                            backgroundColor: "#F59E0B",
+                          }}
+                        />
+                      ) : null}
+                      {studyReview.attendance.absent > 0 ? (
+                        <View
+                          style={{
+                            flex: studyReview.attendance.absent,
+                            backgroundColor: "#F43F5E",
+                          }}
+                        />
+                      ) : null}
+                    </View>
+
+                    <View className="mt-3 flex-row gap-2">
+                      <View className="flex-1 items-center rounded-xl bg-emerald-500/12 py-2">
+                        <Text className="text-[15px] font-extrabold text-emerald-700 dark:text-emerald-300">
+                          {studyReview.attendance.present}
+                        </Text>
+                        <Text className="text-[10px] font-semibold text-emerald-700/80 dark:text-emerald-300/80">
+                          出勤
+                        </Text>
+                      </View>
+                      <View className="flex-1 items-center rounded-xl bg-amber-500/12 py-2">
+                        <Text className="text-[15px] font-extrabold text-amber-700 dark:text-amber-300">
+                          {studyReview.attendance.leave}
+                        </Text>
+                        <Text className="text-[10px] font-semibold text-amber-700/80 dark:text-amber-300/80">
+                          请假
+                        </Text>
+                      </View>
+                      <View className="flex-1 items-center rounded-xl bg-rose-500/12 py-2">
+                        <Text className="text-[15px] font-extrabold text-rose-700 dark:text-rose-300">
+                          {studyReview.attendance.absent}
+                        </Text>
+                        <Text className="text-[10px] font-semibold text-rose-700/80 dark:text-rose-300/80">
+                          缺勤
+                        </Text>
+                      </View>
+                    </View>
+
+                    {attendanceRisks.length > 0 ? (
+                      <View className="mt-3 gap-1.5">
+                        <Text className="text-[11px] font-bold text-rose-600 dark:text-rose-300">
+                          缺勤预警学科（{attendanceRisks.length}）
+                        </Text>
+                        {attendanceRisks.map((item) => (
+                          <View
+                            key={item.courseKey}
+                            className="flex-row items-center justify-between rounded-xl bg-white/90 px-3 py-2 dark:bg-slate-900/70"
+                          >
+                            <Text
+                              numberOfLines={1}
+                              className="flex-1 pr-2 text-[12px] font-semibold text-slate-800 dark:text-slate-100"
+                            >
+                              {item.courseName}
+                            </Text>
+                            <View
+                              className={`rounded-full px-2 py-0.5 ${
+                                item.summary.riskLevel === "danger"
+                                  ? "bg-rose-500/20"
+                                  : "bg-amber-500/20"
+                              }`}
+                            >
+                              <Text
+                                className={`text-[10px] font-bold ${
+                                  item.summary.riskLevel === "danger"
+                                    ? "text-rose-700 dark:text-rose-300"
+                                    : "text-amber-700 dark:text-amber-300"
+                                }`}
+                              >
+                                缺勤 {item.summary.absent} / 红线{" "}
+                                {item.summary.redline}
+                              </Text>
+                            </View>
+                          </View>
+                        ))}
+                      </View>
+                    ) : null}
+                  </>
+                )}
+              </View>
             </ScrollView>
           )}
         </View>

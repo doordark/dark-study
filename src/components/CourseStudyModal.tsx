@@ -2,6 +2,7 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AppState,
   Modal,
   Pressable,
   ScrollView,
@@ -21,7 +22,15 @@ import {
   GlassTargetProvider,
 } from "@/components/GlassContainer";
 import { WhaleAvatar } from "@/components/WhaleAvatar";
-import { useStudyProgress } from "@/store/useStudyProgress";
+import {
+  cancelFocusCompletionNotification,
+  scheduleFocusCompletionNotification,
+} from "@/services/courseReminders";
+import { playSfx, type SfxId } from "@/services/soundEffects";
+import {
+  useStudyProgress,
+  type FocusSessionCompletion,
+} from "@/store/useStudyProgress";
 import type { Course, Schedule } from "@/types";
 import {
   selectHaptic,
@@ -31,16 +40,20 @@ import {
 } from "@/utils/haptics";
 import {
   FOCUS_PRESET_MINUTES,
+  SHORT_BREAK_MINUTES,
   buildFarmRewardForFocus,
   computeAttendanceSummary,
+  computeFocusRemainingSec,
   courseIdentityKey,
+  formatFocusCountdown,
   getCourseFocusMinutes,
   getCourseSlotsByKey,
   getTodayFocusMinutes,
   listDistinctScheduleCourses,
+  type ActiveFocusSession,
   type AttendanceRecord,
   type AttendanceStatus,
-  type PendingFarmReward,
+  type FocusSessionMode,
 } from "@/utils/studyProgress";
 import { toIsoDate } from "@/utils/time";
 
@@ -55,6 +68,14 @@ export interface CourseStudyModalProps {
 }
 
 type StudyTab = "focus" | "attendance";
+
+const AMBIENT_CHIME_NOTES: readonly SfxId[] = [
+  "star_note_1",
+  "star_note_3",
+  "star_note_5",
+  "star_note_6",
+];
+const AMBIENT_CHIME_INTERVAL_MS = 45_000;
 
 const STATUS_META: Record<
   AttendanceStatus,
@@ -93,13 +114,6 @@ const STATUS_META: Record<
   },
 };
 
-function formatCountdown(totalSec: number): string {
-  const safe = Math.max(0, Math.floor(totalSec));
-  const mins = Math.floor(safe / 60);
-  const secs = safe % 60;
-  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-}
-
 export function CourseStudyModal(props: CourseStudyModalProps) {
   if (!props.visible) return null;
   return <CourseStudyModalBody {...props} />;
@@ -117,6 +131,7 @@ function CourseStudyModalBody({
   const customAbsenceLimits = useStudyProgress((s) => s.customAbsenceLimits);
   const focusLogs = useStudyProgress((s) => s.focusLogs);
   const pendingFarmRewards = useStudyProgress((s) => s.pendingFarmRewards);
+  const activeFocusSession = useStudyProgress((s) => s.activeFocusSession);
   const recordAttendance = useStudyProgress((s) => s.recordAttendance);
   const removeAttendanceRecord = useStudyProgress(
     (s) => s.removeAttendanceRecord,
@@ -124,7 +139,20 @@ function CourseStudyModalBody({
   const setCustomAbsenceLimit = useStudyProgress(
     (s) => s.setCustomAbsenceLimit,
   );
-  const recordCourseFocus = useStudyProgress((s) => s.recordCourseFocus);
+  const startFocusSession = useStudyProgress((s) => s.startFocusSession);
+  const pauseFocusSession = useStudyProgress((s) => s.pauseFocusSession);
+  const resumeFocusSession = useStudyProgress((s) => s.resumeFocusSession);
+  const tickOrSyncFocusSession = useStudyProgress(
+    (s) => s.tickOrSyncFocusSession,
+  );
+  const completeActiveFocusSession = useStudyProgress(
+    (s) => s.completeActiveFocusSession,
+  );
+  const clearFocusSession = useStudyProgress((s) => s.clearFocusSession);
+  const setFocusAmbient = useStudyProgress((s) => s.setFocusAmbient);
+  const setFocusNotificationId = useStudyProgress(
+    (s) => s.setFocusNotificationId,
+  );
 
   const { height: winH } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -135,10 +163,12 @@ function CourseStudyModalBody({
     [schedule],
   );
 
+  const activeSessionCourseKey = activeFocusSession?.courseKey ?? null;
   const initialKey = useMemo(() => {
     if (course) return courseIdentityKey(course);
+    if (activeSessionCourseKey) return activeSessionCourseKey;
     return distinctCourses[0]?.courseKey ?? "free-study::";
-  }, [course, distinctCourses]);
+  }, [activeSessionCourseKey, course, distinctCourses]);
 
   const [tab, setTab] = useState<StudyTab>(initialTab);
   const [manualKey, setManualKey] = useState<string | null>(null);
@@ -166,118 +196,252 @@ function CourseStudyModalBody({
     [activeEntry],
   );
 
-  /* ---------------- Tab 1: 学科番茄专注 ---------------- */
+  /* ---------------- Tab 1: 学科番茄专注（持久化状态） ---------------- */
+  const [draftMode, setDraftMode] = useState<FocusSessionMode>("focus");
   const [presetMin, setPresetMin] = useState<number>(25);
-  const [remainingSec, setRemainingSec] = useState<number>(25 * 60);
-  const [running, setRunning] = useState(false);
-  const [hasStarted, setHasStarted] = useState(false);
-  const [celebration, setCelebration] = useState<PendingFarmReward | null>(null);
-  const endAtRef = useRef<number | null>(null);
-  const completedRef = useRef(false);
+  const [draftAmbientOn, setDraftAmbientOn] = useState<boolean>(false);
+  const [celebration, setCelebration] = useState<FocusSessionCompletion | null>(
+    null,
+  );
+  const [clockNow, setClockNow] = useState<number>(() => Date.now());
+  const ambientNoteIndexRef = useRef(0);
+
+  const sessionMode: FocusSessionMode = activeFocusSession
+    ? activeFocusSession.mode
+    : draftMode;
+  const running = activeFocusSession?.running ?? false;
+  const hasStarted = Boolean(activeFocusSession);
+  const ambientOn = activeFocusSession
+    ? activeFocusSession.ambientOn
+    : draftAmbientOn;
+  const focusCourseKey = activeFocusSession
+    ? activeFocusSession.courseKey
+    : activeCourseKey;
+  const focusCourseName = activeFocusSession
+    ? activeFocusSession.courseName
+    : activeCourseName;
+
+  const totalSec = activeFocusSession
+    ? Math.max(1, activeFocusSession.totalSec)
+    : Math.max(
+        1,
+        (draftMode === "break" ? SHORT_BREAK_MINUTES : presetMin) * 60,
+      );
+  const remainingSec = activeFocusSession
+    ? computeFocusRemainingSec(activeFocusSession, clockNow)
+    : totalSec;
+  const progressRatio = Math.min(
+    1,
+    Math.max(0, (totalSec - remainingSec) / totalSec),
+  );
 
   const courseFocusMinutes = useMemo(
-    () => getCourseFocusMinutes(focusLogs, activeCourseKey),
-    [focusLogs, activeCourseKey],
+    () => getCourseFocusMinutes(focusLogs, focusCourseKey),
+    [focusLogs, focusCourseKey],
   );
   const todayFocusMinutes = useMemo(
     () => getTodayFocusMinutes(focusLogs),
     [focusLogs],
   );
+  const previewMinutes =
+    activeFocusSession && activeFocusSession.mode === "focus"
+      ? Math.max(1, Math.round(activeFocusSession.totalSec / 60))
+      : presetMin;
   const previewReward = useMemo(
-    () => buildFarmRewardForFocus(presetMin, activeCourseName),
-    [presetMin, activeCourseName],
+    () => buildFarmRewardForFocus(previewMinutes, focusCourseName),
+    [previewMinutes, focusCourseName],
   );
 
-  const settleFocus = useCallback(
-    (minutes: number) => {
-      if (completedRef.current) return;
-      completedRef.current = true;
-      const { reward } = recordCourseFocus(
-        activeEntry?.course ?? activeCourseKey,
-        minutes,
-        { courseName: activeCourseName },
+  const scheduleForSession = useCallback(
+    async (session: ActiveFocusSession, prevNotifId?: string | null) => {
+      if (prevNotifId) {
+        await cancelFocusCompletionNotification(prevNotifId);
+      }
+      if (!session.running || !session.endAt) return;
+      const mins = Math.max(1, Math.round(session.totalSec / 60));
+      const title =
+        session.mode === "break"
+          ? "短休结束 · 准备回到学习"
+          : `${session.courseName} 专注完成`;
+      const body =
+        session.mode === "break"
+          ? `${mins} 分钟短休已结束，回来开启下一轮番茄钟吧！`
+          : `已完成 ${mins} 分钟专注，doordoor农场 dark币 已存入奖励箱！`;
+      const notifId = await scheduleFocusCompletionNotification(
+        session.endAt,
+        title,
+        body,
       );
-      successHaptic();
-      setRunning(false);
-      setHasStarted(false);
-      endAtRef.current = null;
-      setRemainingSec(presetMin * 60);
-      setCelebration(reward);
+      if (!notifId) return;
+      const latest = useStudyProgress.getState().activeFocusSession;
+      if (latest && latest.id === session.id && latest.running) {
+        setFocusNotificationId(session.id, notifId);
+      } else {
+        await cancelFocusCompletionNotification(notifId);
+      }
     },
-    [activeCourseKey, activeCourseName, activeEntry, presetMin, recordCourseFocus],
+    [setFocusNotificationId],
   );
+
+  const settleActiveSession = useCallback(
+    (early = false) => {
+      const current = useStudyProgress.getState().activeFocusSession;
+      if (!current) return;
+      const prevNotifId = current.notificationId;
+      const result = completeActiveFocusSession({ early });
+      if (!result) return;
+      void cancelFocusCompletionNotification(prevNotifId);
+      successHaptic();
+      playSfx(
+        result.mode === "break" ? "whale_ui_ripple" : "star_constellation",
+        {
+          volume: result.mode === "break" ? 0.45 : 0.56,
+          ignoreCooldown: true,
+          bypassToggle: true,
+        },
+      );
+      setCelebration(result);
+    },
+    [completeActiveFocusSession],
+  );
+
+  const activeSessionId = activeFocusSession?.id ?? null;
 
   useEffect(() => {
-    if (!running) return;
-    const timer = setInterval(() => {
-      const targetEnd = endAtRef.current;
-      if (!targetEnd) return;
-      const nextSec = Math.max(0, Math.ceil((targetEnd - Date.now()) / 1000));
-      setRemainingSec(nextSec);
-      if (nextSec <= 0) {
-        clearInterval(timer);
-        settleFocus(presetMin);
+    if (!activeSessionId) return;
+    const syncOnce = () => {
+      const now = Date.now();
+      setClockNow(now);
+      const synced = tickOrSyncFocusSession(now);
+      if (synced.completed) {
+        settleActiveSession(false);
       }
-    }, 500);
+    };
+    const initTimer = setTimeout(syncOnce, 0);
+    const interval = running ? setInterval(syncOnce, 500) : null;
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") syncOnce();
+    });
+    return () => {
+      clearTimeout(initTimer);
+      if (interval) clearInterval(interval);
+      sub.remove();
+    };
+  }, [activeSessionId, running, settleActiveSession, tickOrSyncFocusSession]);
+
+  // 轻音伴读：专注/短休运行期间每 45 秒播放柔和星铃提示音，停止或卸载时自动清理
+  useEffect(() => {
+    if (!running || !ambientOn) return;
+    const timer = setInterval(() => {
+      const note =
+        AMBIENT_CHIME_NOTES[
+          ambientNoteIndexRef.current % AMBIENT_CHIME_NOTES.length
+        ];
+      ambientNoteIndexRef.current += 1;
+      playSfx(note, {
+        volume: 0.2,
+        ignoreCooldown: true,
+        bypassToggle: true,
+      });
+    }, AMBIENT_CHIME_INTERVAL_MS);
     return () => clearInterval(timer);
-  }, [running, presetMin, settleFocus]);
+  }, [running, ambientOn]);
+
+  const handleSelectMode = (nextMode: FocusSessionMode) => {
+    if (hasStarted) return;
+    selectHaptic();
+    setDraftMode(nextMode);
+    setCelebration(null);
+  };
 
   const handleSelectPreset = (minutes: number) => {
-    if (running) return;
+    if (hasStarted) return;
     selectHaptic();
-    completedRef.current = false;
+    setDraftMode("focus");
     setPresetMin(minutes);
-    setRemainingSec(minutes * 60);
-    setHasStarted(false);
     setCelebration(null);
-    endAtRef.current = null;
+  };
+
+  const handleToggleAmbient = () => {
+    selectHaptic();
+    const next = !ambientOn;
+    setDraftAmbientOn(next);
+    if (activeFocusSession) {
+      setFocusAmbient(next);
+    }
+    if (next) {
+      playSfx("star_note_3", {
+        volume: 0.26,
+        ignoreCooldown: true,
+        bypassToggle: true,
+      });
+    }
   };
 
   const handleToggleRun = () => {
     tapHaptic();
     setCelebration(null);
-    if (running) {
-      if (endAtRef.current) {
-        const left = Math.max(
-          1,
-          Math.ceil((endAtRef.current - Date.now()) / 1000),
-        );
-        setRemainingSec(left);
+    if (activeFocusSession) {
+      if (activeFocusSession.running) {
+        const prevNotifId = activeFocusSession.notificationId;
+        pauseFocusSession();
+        void cancelFocusCompletionNotification(prevNotifId);
+      } else {
+        const resumed = resumeFocusSession();
+        if (resumed) {
+          setClockNow(Date.now());
+          void scheduleForSession(resumed);
+        }
       }
-      endAtRef.current = null;
-      setRunning(false);
-    } else {
-      completedRef.current = false;
-      const baseSec = remainingSec > 0 ? remainingSec : presetMin * 60;
-      endAtRef.current = Date.now() + baseSec * 1000;
-      setHasStarted(true);
-      setRunning(true);
+      return;
     }
+
+    const durationMinutes =
+      draftMode === "break" ? SHORT_BREAK_MINUTES : presetMin;
+    const started = startFocusSession({
+      mode: draftMode,
+      course: activeEntry?.course ?? activeCourseKey,
+      courseName: activeCourseName,
+      durationMinutes,
+      ambientOn: draftAmbientOn,
+    });
+    setClockNow(started.startedAt);
+    if (started.ambientOn) {
+      playSfx("star_note_1", {
+        volume: 0.24,
+        ignoreCooldown: true,
+        bypassToggle: true,
+      });
+    }
+    void scheduleForSession(started);
+  };
+
+  const handleStartShortBreak = () => {
+    tapHaptic();
+    const prev = clearFocusSession();
+    setCelebration(null);
+    setDraftMode("break");
+    const started = startFocusSession({
+      mode: "break",
+      course: activeEntry?.course ?? activeCourseKey,
+      courseName: activeCourseName,
+      durationMinutes: SHORT_BREAK_MINUTES,
+      ambientOn: draftAmbientOn,
+    });
+    setClockNow(started.startedAt);
+    void scheduleForSession(started, prev?.notificationId);
   };
 
   const handleResetTimer = () => {
     selectHaptic();
-    completedRef.current = false;
-    endAtRef.current = null;
-    setRunning(false);
-    setHasStarted(false);
-    setRemainingSec(presetMin * 60);
+    const prev = clearFocusSession();
+    void cancelFocusCompletionNotification(prev?.notificationId);
     setCelebration(null);
   };
 
   const handleFinishEarly = () => {
-    const totalSec = presetMin * 60;
-    const currentLeft =
-      running && endAtRef.current
-        ? Math.max(0, Math.ceil((endAtRef.current - Date.now()) / 1000))
-        : remainingSec;
-    const elapsedSec = Math.max(0, totalSec - currentLeft);
-    const settledMinutes = Math.max(1, Math.round(elapsedSec / 60));
-    settleFocus(settledMinutes);
+    settleActiveSession(true);
   };
-
-  const totalSec = Math.max(1, presetMin * 60);
-  const progressRatio = Math.min(1, Math.max(0, (totalSec - remainingSec) / totalSec));
 
   /* ---------------- Tab 2: 考勤与缺勤预警 ---------------- */
   const records: AttendanceRecord[] = useMemo(
@@ -447,7 +611,11 @@ function CourseStudyModalBody({
                     contentContainerStyle={{ paddingHorizontal: 20, gap: 6 }}
                   >
                     {distinctCourses.map((item) => {
-                      const isSel = item.courseKey === activeCourseKey;
+                      const isSel =
+                        tab === "focus" && activeFocusSession
+                          ? item.courseKey === focusCourseKey
+                          : item.courseKey === activeCourseKey;
+                      const lockedByFocus = tab === "focus" && hasStarted;
                       const itemSummary = computeAttendanceSummary(
                         item.slots,
                         attendanceByCourse[item.courseKey],
@@ -456,7 +624,7 @@ function CourseStudyModalBody({
                       return (
                         <Pressable
                           key={item.courseKey}
-                          disabled={running}
+                          disabled={lockedByFocus}
                           onPress={() => {
                             selectHaptic();
                             setManualKey(item.courseKey);
@@ -466,7 +634,7 @@ function CourseStudyModalBody({
                             isSel
                               ? "border-sky-400/75 bg-sky-500/20"
                               : "border-slate-300/35 bg-white/30 dark:border-white/10 dark:bg-white/[0.05]"
-                          } ${running && !isSel ? "opacity-45" : ""}`}
+                          } ${lockedByFocus && !isSel ? "opacity-45" : ""}`}
                         >
                           <Text
                             numberOfLines={1}
@@ -505,24 +673,149 @@ function CourseStudyModalBody({
                     <View className="rounded-2xl border border-slate-300/35 bg-white/35 p-4 dark:border-white/10 dark:bg-white/[0.06]">
                       <View className="flex-row items-center justify-between">
                         <View className="min-w-0 flex-1 pr-2">
-                          <Text
-                            numberOfLines={1}
-                            className="text-[15px] font-extrabold text-slate-800 dark:text-white"
-                          >
-                            {activeCourseName}
-                          </Text>
+                          <View className="flex-row items-center gap-1.5">
+                            <Text
+                              numberOfLines={1}
+                              className="shrink text-[15px] font-extrabold text-slate-800 dark:text-white"
+                            >
+                              {focusCourseName}
+                            </Text>
+                            {hasStarted ? (
+                              <View
+                                className={`shrink-0 rounded-full px-2 py-0.5 ${
+                                  running
+                                    ? sessionMode === "break"
+                                      ? "bg-emerald-500/20"
+                                      : "bg-sky-500/20"
+                                    : "bg-amber-500/20"
+                                }`}
+                              >
+                                <Text
+                                  className={`text-[9.5px] font-bold ${
+                                    running
+                                      ? sessionMode === "break"
+                                        ? "text-emerald-700 dark:text-emerald-300"
+                                        : "text-sky-700 dark:text-sky-300"
+                                      : "text-amber-700 dark:text-amber-300"
+                                  }`}
+                                >
+                                  {running
+                                    ? sessionMode === "break"
+                                      ? "短休中"
+                                      : "专注中"
+                                    : "已暂停"}
+                                </Text>
+                              </View>
+                            ) : null}
+                          </View>
                           <Text className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-                            {activeEntry?.course.teacher
+                            {!activeFocusSession && activeEntry?.course.teacher
                               ? `${activeEntry.course.teacher} · `
                               : ""}
                             本学科累计专注 {courseFocusMinutes} 分钟
                           </Text>
                         </View>
-                        <View className="rounded-full border border-amber-400/40 bg-amber-500/15 px-2.5 py-1">
-                          <Text className="text-[10.5px] font-bold text-amber-700 dark:text-amber-300">
-                            预计 +{previewReward.coins} 金币
-                          </Text>
+                        {sessionMode === "focus" ? (
+                          <View className="rounded-full border border-amber-400/40 bg-amber-500/15 px-2.5 py-1">
+                            <Text className="text-[10.5px] font-bold text-amber-700 dark:text-amber-300">
+                              预计 +{previewReward.coins} dark币
+                            </Text>
+                          </View>
+                        ) : (
+                          <View className="rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2.5 py-1">
+                            <Text className="text-[10.5px] font-bold text-emerald-700 dark:text-emerald-300">
+                              放松充能
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+
+                      {/* 模式切换（专注 / 5分钟短休） + 轻音伴读开关 */}
+                      <View className="mt-3 flex-row items-center justify-between gap-2">
+                        <View className="flex-1 flex-row rounded-xl border border-slate-300/30 bg-white/30 p-0.5 dark:border-white/10 dark:bg-white/[0.04]">
+                          {(
+                            [
+                              ["focus", "专注番茄", "flame-outline"],
+                              ["break", "5分钟短休", "cafe-outline"],
+                            ] as const
+                          ).map(([modeKey, label, icon]) => {
+                            const active = sessionMode === modeKey;
+                            return (
+                              <Pressable
+                                key={modeKey}
+                                disabled={hasStarted}
+                                onPress={() => handleSelectMode(modeKey)}
+                                className={`flex-1 flex-row items-center justify-center rounded-lg py-1.5 ${
+                                  active
+                                    ? modeKey === "break"
+                                      ? "bg-emerald-500/90"
+                                      : "bg-sky-500/90"
+                                    : "bg-transparent"
+                                } ${hasStarted && !active ? "opacity-40" : ""}`}
+                              >
+                                <Ionicons
+                                  name={icon}
+                                  size={12}
+                                  color={
+                                    active
+                                      ? "#FFFFFF"
+                                      : isDark
+                                        ? "#94A3B8"
+                                        : "#64748B"
+                                  }
+                                />
+                                <Text
+                                  className={`ml-1 text-[11px] font-bold ${
+                                    active
+                                      ? "text-white"
+                                      : "text-slate-600 dark:text-slate-300"
+                                  }`}
+                                >
+                                  {label}
+                                </Text>
+                              </Pressable>
+                            );
+                          })}
                         </View>
+
+                        <Pressable
+                          onPress={handleToggleAmbient}
+                          accessibilityRole="switch"
+                          accessibilityState={{ checked: ambientOn }}
+                          accessibilityLabel="轻音伴读开关"
+                          className={`flex-row items-center rounded-xl border px-2.5 py-1.5 ${
+                            ambientOn
+                              ? "border-violet-400/60 bg-violet-500/20"
+                              : "border-slate-300/30 bg-white/30 dark:border-white/10 dark:bg-white/[0.04]"
+                          }`}
+                        >
+                          <Ionicons
+                            name={
+                              ambientOn
+                                ? "musical-notes"
+                                : "volume-mute-outline"
+                            }
+                            size={13}
+                            color={
+                              ambientOn
+                                ? isDark
+                                  ? "#C4B5FD"
+                                  : "#7C3AED"
+                                : isDark
+                                  ? "#94A3B8"
+                                  : "#64748B"
+                            }
+                          />
+                          <Text
+                            className={`ml-1 text-[10.5px] font-semibold ${
+                              ambientOn
+                                ? "text-violet-700 dark:text-violet-300"
+                                : "text-slate-500 dark:text-slate-400"
+                            }`}
+                          >
+                            {ambientOn ? "轻音开" : "轻音关"}
+                          </Text>
+                        </Pressable>
                       </View>
 
                       {/* 倒计时主盘 */}
@@ -531,57 +824,75 @@ function CourseStudyModalBody({
                           className="text-[46px] font-black tracking-widest text-slate-800 dark:text-white"
                           style={{ fontVariant: ["tabular-nums"] }}
                         >
-                          {formatCountdown(remainingSec)}
+                          {formatFocusCountdown(remainingSec)}
                         </Text>
-                        <Text className="mt-1 text-[11.5px] font-medium text-slate-500 dark:text-slate-400">
-                          {running
-                            ? "专注进行中 · 完成后自动奖励星露坡金币与作物加速"
-                            : hasStarted
-                              ? "已暂停 · 可继续专注或提前结算已学时长"
-                              : `选择番茄时长，完成 ${presetMin} 分钟可获 +${previewReward.coins} 星露坡金币`}
+                        <Text className="mt-1 text-center text-[11.5px] font-medium text-slate-500 dark:text-slate-400">
+                          {sessionMode === "break"
+                            ? running
+                              ? "短休进行中 · 关闭弹窗也会继续计时并在结束时提醒"
+                              : hasStarted
+                                ? "短休已暂停 · 可继续休息或提前结束"
+                                : "5 分钟短休 · 眺望远方、舒展肩颈再投入下一轮"
+                            : running
+                              ? "专注进行中 · 关闭弹窗或切后台仍精准计时，完成即得 dark币"
+                              : hasStarted
+                                ? "已暂停 · 关闭弹窗会保留进度，可继续专注或提前结算"
+                                : `选择番茄时长，完成 ${presetMin} 分钟可获 +${previewReward.coins} dark币`}
                         </Text>
 
                         {/* 进度条 */}
                         <View className="mt-3.5 h-2.5 w-full overflow-hidden rounded-full bg-slate-300/40 dark:bg-white/10">
                           <View
-                            className="h-full rounded-full bg-sky-500"
+                            className={`h-full rounded-full ${
+                              sessionMode === "break"
+                                ? "bg-emerald-500"
+                                : "bg-sky-500"
+                            }`}
                             style={{ width: `${Math.round(progressRatio * 100)}%` }}
                           />
                         </View>
                       </View>
 
-                      {/* 15 / 25 / 45 预设档位 */}
-                      <View className="mt-3 flex-row gap-2">
-                        {FOCUS_PRESET_MINUTES.map((mins) => {
-                          const selected = presetMin === mins;
-                          const est = buildFarmRewardForFocus(mins, activeCourseName);
-                          return (
-                            <Pressable
-                              key={mins}
-                              disabled={running}
-                              onPress={() => handleSelectPreset(mins)}
-                              className={`flex-1 items-center rounded-xl border py-2 ${
-                                selected
-                                  ? "border-sky-400/75 bg-sky-500/20"
-                                  : "border-slate-300/30 bg-white/30 dark:border-white/10 dark:bg-white/[0.04]"
-                              } ${running && !selected ? "opacity-40" : ""}`}
-                            >
-                              <Text
-                                className={`text-[13px] font-bold ${
+                      {/* 15 / 25 / 45 预设档位（仅专注模式显示） */}
+                      {sessionMode === "focus" ? (
+                        <View className="mt-3 flex-row gap-2">
+                          {FOCUS_PRESET_MINUTES.map((mins) => {
+                            const selected =
+                              (activeFocusSession
+                                ? Math.round(activeFocusSession.totalSec / 60)
+                                : presetMin) === mins;
+                            const est = buildFarmRewardForFocus(
+                              mins,
+                              focusCourseName,
+                            );
+                            return (
+                              <Pressable
+                                key={mins}
+                                disabled={hasStarted}
+                                onPress={() => handleSelectPreset(mins)}
+                                className={`flex-1 items-center rounded-xl border py-2 ${
                                   selected
-                                    ? "text-sky-700 dark:text-sky-300"
-                                    : "text-slate-700 dark:text-slate-200"
-                                }`}
+                                    ? "border-sky-400/75 bg-sky-500/20"
+                                    : "border-slate-300/30 bg-white/30 dark:border-white/10 dark:bg-white/[0.04]"
+                                } ${hasStarted && !selected ? "opacity-40" : ""}`}
                               >
-                                {mins} 分钟
-                              </Text>
-                              <Text className="mt-0.5 text-[10px] text-slate-500 dark:text-slate-400">
-                                +{est.coins} 币 · +{est.growthBoostMin}m
-                              </Text>
-                            </Pressable>
-                          );
-                        })}
-                      </View>
+                                <Text
+                                  className={`text-[13px] font-bold ${
+                                    selected
+                                      ? "text-sky-700 dark:text-sky-300"
+                                      : "text-slate-700 dark:text-slate-200"
+                                  }`}
+                                >
+                                  {mins} 分钟
+                                </Text>
+                                <Text className="mt-0.5 text-[10px] text-slate-500 dark:text-slate-400">
+                                  +{est.coins} dark币 · +{est.growthBoostMin}m
+                                </Text>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                      ) : null}
 
                       {/* 计时控制按钮 */}
                       <View className="mt-4 flex-row gap-2">
@@ -589,7 +900,11 @@ function CourseStudyModalBody({
                           onPress={handleToggleRun}
                           accessibilityRole="button"
                           className={`flex-1 flex-row items-center justify-center rounded-2xl py-3 ${
-                            running ? "bg-amber-500" : "bg-sky-500"
+                            running
+                              ? "bg-amber-500"
+                              : sessionMode === "break"
+                                ? "bg-emerald-500"
+                                : "bg-sky-500"
                           }`}
                         >
                           <Ionicons
@@ -601,8 +916,12 @@ function CourseStudyModalBody({
                             {running
                               ? "暂停"
                               : hasStarted
-                                ? "继续专注"
-                                : "开始专注"}
+                                ? sessionMode === "break"
+                                  ? "继续短休"
+                                  : "继续专注"
+                                : sessionMode === "break"
+                                  ? "开始 5 分钟短休"
+                                  : "开始专注"}
                           </Text>
                         </Pressable>
 
@@ -619,7 +938,7 @@ function CourseStudyModalBody({
                                 color="#10B981"
                               />
                               <Text className="ml-1 text-[12.5px] font-bold text-emerald-700 dark:text-emerald-300">
-                                提前结算
+                                {sessionMode === "break" ? "结束短休" : "提前结算"}
                               </Text>
                             </Pressable>
                             <Pressable
@@ -639,46 +958,104 @@ function CourseStudyModalBody({
                       </View>
                     </View>
 
-                    {/* 专注完成庆祝卡片 */}
+                    {/* 专注 / 短休完成庆祝卡片 */}
                     {celebration ? (
                       <View className="rounded-2xl border border-emerald-400/50 bg-emerald-500/15 p-4">
-                        <View className="flex-row items-center">
-                          <View className="h-10 w-10 items-center justify-center rounded-2xl bg-emerald-500/20">
-                            <Ionicons name="sparkles" size={20} color="#10B981" />
-                          </View>
-                          <View className="ml-3 flex-1">
-                            <Text className="text-[14px] font-extrabold text-emerald-800 dark:text-emerald-200">
-                              +{celebration.coins} 星露坡金币 · 已存入农场奖励箱！
-                            </Text>
-                            <Text className="mt-0.5 text-[11px] text-emerald-700/85 dark:text-emerald-300/85">
-                              {celebration.title} · 作物加速 +
-                              {celebration.growthBoostMin} 分钟
-                            </Text>
-                          </View>
-                        </View>
-                        <View className="mt-3 flex-row gap-2">
-                          <Pressable
-                            onPress={handleVisitFarm}
-                            accessibilityRole="button"
-                            className="flex-1 items-center rounded-xl bg-emerald-600 py-2.5"
-                          >
-                            <Text className="text-[12.5px] font-bold text-white">
-                              去星露坡领奖励
-                            </Text>
-                          </Pressable>
-                          <Pressable
-                            onPress={() => {
-                              selectHaptic();
-                              setCelebration(null);
-                            }}
-                            accessibilityRole="button"
-                            className="items-center rounded-xl border border-emerald-500/35 bg-white/40 px-4 py-2.5 dark:bg-white/10"
-                          >
-                            <Text className="text-[12.5px] font-semibold text-emerald-800 dark:text-emerald-200">
-                              继续学习
-                            </Text>
-                          </Pressable>
-                        </View>
+                        {celebration.mode === "focus" && celebration.reward ? (
+                          <>
+                            <View className="flex-row items-center">
+                              <View className="h-10 w-10 items-center justify-center rounded-2xl bg-emerald-500/20">
+                                <Ionicons
+                                  name="sparkles"
+                                  size={20}
+                                  color="#10B981"
+                                />
+                              </View>
+                              <View className="ml-3 flex-1">
+                                <Text className="text-[14px] font-extrabold text-emerald-800 dark:text-emerald-200">
+                                  +{celebration.reward.coins} dark币 · 已存入农场奖励箱！
+                                </Text>
+                                <Text className="mt-0.5 text-[11px] text-emerald-700/85 dark:text-emerald-300/85">
+                                  {celebration.reward.title} · 作物加速 +
+                                  {celebration.reward.growthBoostMin} 分钟
+                                </Text>
+                              </View>
+                            </View>
+                            <View className="mt-3 flex-row gap-2">
+                              <Pressable
+                                onPress={handleStartShortBreak}
+                                accessibilityRole="button"
+                                className="flex-1 flex-row items-center justify-center rounded-xl bg-teal-600 py-2.5"
+                              >
+                                <Ionicons
+                                  name="cafe-outline"
+                                  size={14}
+                                  color="#FFFFFF"
+                                />
+                                <Text className="ml-1 text-[12px] font-bold text-white">
+                                  5分钟短休
+                                </Text>
+                              </Pressable>
+                              <Pressable
+                                onPress={handleVisitFarm}
+                                accessibilityRole="button"
+                                className="flex-1 items-center justify-center rounded-xl bg-emerald-600 py-2.5"
+                              >
+                                <Text className="text-[12px] font-bold text-white">
+                                  去doordoor农场领奖
+                                </Text>
+                              </Pressable>
+                              <Pressable
+                                onPress={() => {
+                                  selectHaptic();
+                                  setCelebration(null);
+                                }}
+                                accessibilityRole="button"
+                                className="items-center justify-center rounded-xl border border-emerald-500/35 bg-white/40 px-3 py-2.5 dark:bg-white/10"
+                              >
+                                <Text className="text-[12px] font-semibold text-emerald-800 dark:text-emerald-200">
+                                  继续
+                                </Text>
+                              </Pressable>
+                            </View>
+                          </>
+                        ) : (
+                          <>
+                            <View className="flex-row items-center">
+                              <View className="h-10 w-10 items-center justify-center rounded-2xl bg-teal-500/20">
+                                <Ionicons
+                                  name="cafe-outline"
+                                  size={20}
+                                  color="#14B8A6"
+                                />
+                              </View>
+                              <View className="ml-3 flex-1">
+                                <Text className="text-[14px] font-extrabold text-emerald-800 dark:text-emerald-200">
+                                  短休完成 · 精力已充能！
+                                </Text>
+                                <Text className="mt-0.5 text-[11px] text-emerald-700/85 dark:text-emerald-300/85">
+                                  已放松 {celebration.minutes} 分钟，准备开启下一轮「
+                                  {celebration.courseName}」专注吧
+                                </Text>
+                              </View>
+                            </View>
+                            <View className="mt-3 flex-row gap-2">
+                              <Pressable
+                                onPress={() => {
+                                  selectHaptic();
+                                  setDraftMode("focus");
+                                  setCelebration(null);
+                                }}
+                                accessibilityRole="button"
+                                className="flex-1 items-center rounded-xl bg-sky-500 py-2.5"
+                              >
+                                <Text className="text-[12.5px] font-bold text-white">
+                                  回到番茄专注
+                                </Text>
+                              </Pressable>
+                            </View>
+                          </>
+                        )}
                       </View>
                     ) : null}
 
@@ -690,7 +1067,7 @@ function CourseStudyModalBody({
                             学习奖励闭环
                           </Text>
                           <Text className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-                            完成番茄专注、勾掉作业/复习/考试均会自动掉落星露坡金币，进入农场时自动结算到账。
+                            完成番茄专注、勾掉作业/复习/考试均会自动掉落 dark币，进入doordoor农场时自动结算到账。
                           </Text>
                         </View>
                         {pendingFarmRewards.length > 0 ? (

@@ -44,6 +44,10 @@ import {
   type TaskReminder,
 } from "@/utils/courseTasks";
 import { selectHaptic } from "@/utils/haptics";
+import {
+  buildExamTimeline,
+  type ExamTicketItem,
+} from "@/utils/studyProgress";
 
 export interface CourseTaskSheetProps {
   visible: boolean;
@@ -55,7 +59,7 @@ export interface CourseTaskSheetProps {
   onClose: () => void;
 }
 
-type FilterType = "all" | CourseTaskType;
+type FilterType = "all" | "examWeek" | CourseTaskType;
 
 const REMINDER_LABELS: Record<TaskReminder, string> = {
   0: "不提醒",
@@ -225,14 +229,18 @@ function CourseTaskSheetBody({
     setTimeInput(formatClockHm(d));
   };
 
-  const openCreateForm = (presetCourse?: Course | null) => {
+  const openCreateForm = (
+    presetCourse?: Course | null,
+    presetType: CourseTaskType = "homework",
+  ) => {
     selectHaptic();
-    const initialMs = defaultDueAt(1, 22, 0);
+    const initialMs =
+      presetType === "exam" ? defaultDueAt(3, 9, 0) : defaultDueAt(1, 22, 0);
     setEditingId(null);
     setTitle("");
-    setTaskType("homework");
+    setTaskType(presetType);
     applyDueTimestamp(initialMs);
-    setReminder(60);
+    setReminder(presetType === "exam" ? 1440 : 60);
     setLinkedCourse(
       presetCourse
         ? {
@@ -373,11 +381,17 @@ function CourseTaskSheetBody({
     ]);
   };
 
+  const examTimeline = useMemo(
+    () => buildExamTimeline(courseTasks, nowMs),
+    [courseTasks, nowMs],
+  );
+
   const counts = useMemo(() => {
     let pending = 0;
     let completed = 0;
     const byType: Record<FilterType, number> = {
       all: 0,
+      examWeek: examTimeline.length,
       homework: 0,
       exam: 0,
       review: 0,
@@ -392,13 +406,15 @@ function CourseTaskSheetBody({
       }
     }
     return { pending, completed, byType };
-  }, [courseTasks]);
+  }, [courseTasks, examTimeline.length]);
 
   const { pendingList, completedList } = useMemo(() => {
     const filtered =
       filter === "all"
         ? courseTasks
-        : courseTasks.filter((t) => t.type === filter);
+        : filter === "examWeek"
+          ? courseTasks.filter((t) => t.type === "exam")
+          : courseTasks.filter((t) => t.type === filter);
     const pendingItems = filtered
       .filter((t) => !t.completedAt)
       .sort((a, b) => a.dueAt - b.dueAt || a.id.localeCompare(b.id));
@@ -574,6 +590,160 @@ function CourseTaskSheetBody({
     );
   };
 
+  const renderExamTicket = (
+    ticket: ExamTicketItem,
+    index: number,
+    total: number,
+  ) => {
+    const { task, countdown } = ticket;
+    const isLast = index === total - 1;
+    const dotColor = countdown.overdue
+      ? "bg-rose-500"
+      : ticket.isToday || countdown.urgent
+        ? "bg-amber-500"
+        : "bg-sky-500";
+    const badgeClass = countdown.overdue
+      ? "border-rose-500/45 bg-rose-500/18"
+      : ticket.isToday || countdown.urgent
+        ? "border-amber-400/50 bg-amber-500/18"
+        : "border-sky-400/40 bg-sky-500/15";
+    const badgeTextClass = countdown.overdue
+      ? "text-rose-700 dark:text-rose-300"
+      : ticket.isToday || countdown.urgent
+        ? "text-amber-700 dark:text-amber-300"
+        : "text-sky-700 dark:text-sky-300";
+
+    return (
+      <View key={task.id} className="flex-row">
+        {/* 左侧时间轴轨 */}
+        <View className="mr-2.5 items-center pt-3">
+          <View
+            className={`h-3 w-3 rounded-full border-2 border-white dark:border-slate-900 ${dotColor}`}
+          />
+          {!isLast ? (
+            <View className="mt-1 w-[1.5px] flex-1 bg-rose-400/30 dark:bg-rose-400/20" />
+          ) : null}
+        </View>
+
+        {/* 右侧准考证票面卡片 */}
+        <Pressable
+          onPress={() => openEditForm(task)}
+          className="mb-3 flex-1 rounded-2xl border border-rose-400/35 bg-white/45 p-3.5 dark:border-rose-400/20 dark:bg-white/[0.06]"
+        >
+          {/* 票头：日期时间 + 考试形式 + 倒计时 */}
+          <View className="flex-row items-center justify-between gap-2">
+            <View className="min-w-0 flex-1 flex-row items-center gap-1.5">
+              <Ionicons name="calendar-outline" size={12} color="#F43F5E" />
+              <Text
+                numberOfLines={1}
+                className="text-[11.5px] font-bold text-rose-700 dark:text-rose-300"
+              >
+                {ticket.dateTimeLabel}
+              </Text>
+              {ticket.examModeLabel ? (
+                <View className="rounded-md border border-rose-400/35 bg-rose-500/12 px-1.5 py-0.5">
+                  <Text className="text-[9.5px] font-bold text-rose-700 dark:text-rose-300">
+                    {ticket.examModeLabel}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+            <View className={`shrink-0 rounded-full border px-2 py-0.5 ${badgeClass}`}>
+              <Text className={`text-[10px] font-bold ${badgeTextClass}`}>
+                {countdown.label}
+              </Text>
+            </View>
+          </View>
+
+          {/* 考试科目名与关联课程 */}
+          <View className="mt-1.5 flex-row items-center justify-between gap-2">
+            <View className="min-w-0 flex-1">
+              <Text
+                numberOfLines={1}
+                className="text-[14.5px] font-extrabold text-slate-800 dark:text-white"
+              >
+                {task.title}
+              </Text>
+              {task.course?.courseName && task.course.courseName !== task.title ? (
+                <Text
+                  numberOfLines={1}
+                  className="mt-0.5 text-[11px] font-medium text-slate-500 dark:text-slate-400"
+                >
+                  科目：{task.course.courseName}
+                </Text>
+              ) : null}
+            </View>
+
+            <Pressable
+              onPress={() => {
+                selectHaptic();
+                toggleCourseTask(task.id);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`标记 ${task.title} 已考完`}
+              hitSlop={8}
+              className="flex-row items-center rounded-full border border-emerald-400/40 bg-emerald-500/12 px-2 py-1"
+            >
+              <Ionicons name="checkmark-circle-outline" size={12} color="#10B981" />
+              <Text className="ml-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
+                考完
+              </Text>
+            </Pressable>
+          </View>
+
+          {/* 准考证虚线分隔 */}
+          <View className="my-2.5 border-t border-dashed border-rose-400/30 dark:border-rose-300/20" />
+
+          {/* 考场 + 座位双栏存根 */}
+          <View className="flex-row gap-2">
+            <View className="flex-1 rounded-xl bg-amber-500/10 px-2.5 py-1.5 dark:bg-amber-400/10">
+              <Text className="text-[9.5px] font-semibold text-amber-700/80 dark:text-amber-300/80">
+                考场地点
+              </Text>
+              <Text
+                numberOfLines={1}
+                className={`mt-0.5 text-[12px] font-bold ${
+                  ticket.location
+                    ? "text-slate-800 dark:text-slate-100"
+                    : "text-slate-400 dark:text-slate-500"
+                }`}
+              >
+                {ticket.location || "点击补充考场"}
+              </Text>
+            </View>
+            <View className="w-28 rounded-xl bg-sky-500/10 px-2.5 py-1.5 dark:bg-sky-400/10">
+              <Text className="text-[9.5px] font-semibold text-sky-700/80 dark:text-sky-300/80">
+                座位号
+              </Text>
+              <Text
+                numberOfLines={1}
+                className={`mt-0.5 text-[12px] font-bold ${
+                  ticket.seat
+                    ? "text-slate-800 dark:text-slate-100"
+                    : "text-slate-400 dark:text-slate-500"
+                }`}
+              >
+                {ticket.seat || "待填"}
+              </Text>
+            </View>
+          </View>
+
+          {task.note ? (
+            <View className="mt-2 flex-row items-center">
+              <Ionicons name="information-circle-outline" size={11.5} color="#94A3B8" />
+              <Text
+                numberOfLines={1}
+                className="ml-1 flex-1 text-[10.5px] text-slate-500 dark:text-slate-400"
+              >
+                {task.note}
+              </Text>
+            </View>
+          ) : null}
+        </Pressable>
+      </View>
+    );
+  };
+
   return (
     <Modal
       visible
@@ -671,12 +841,14 @@ function CourseTaskSheetBody({
                         {(
                           [
                             ["all", "全部"],
+                            ["examWeek", "考试周准考证"],
                             ["homework", "作业"],
                             ["exam", "考试"],
                             ["review", "复习"],
                           ] as const
                         ).map(([key, label]) => {
                           const selected = filter === key;
+                          const isExamWeek = key === "examWeek";
                           return (
                             <Pressable
                               key={key}
@@ -686,15 +858,31 @@ function CourseTaskSheetBody({
                               }}
                               className={`flex-row items-center rounded-full border px-3 py-1.5 ${
                                 selected
-                                  ? "border-sky-400/75 bg-sky-500/20"
-                                  : "border-slate-300/35 bg-white/30 dark:border-white/10 dark:bg-white/[0.05]"
+                                  ? isExamWeek
+                                    ? "border-rose-400/75 bg-rose-500/20"
+                                    : "border-sky-400/75 bg-sky-500/20"
+                                  : isExamWeek
+                                    ? "border-rose-400/35 bg-rose-500/10 dark:border-rose-400/25 dark:bg-rose-400/10"
+                                    : "border-slate-300/35 bg-white/30 dark:border-white/10 dark:bg-white/[0.05]"
                               }`}
                             >
+                              {isExamWeek ? (
+                                <Ionicons
+                                  name="card-outline"
+                                  size={12}
+                                  color={selected ? "#E11D48" : "#F43F5E"}
+                                  style={{ marginRight: 4 }}
+                                />
+                              ) : null}
                               <Text
                                 className={`text-[11.5px] font-semibold ${
                                   selected
-                                    ? "text-sky-700 dark:text-sky-300"
-                                    : "text-slate-600 dark:text-slate-300"
+                                    ? isExamWeek
+                                      ? "text-rose-700 dark:text-rose-300"
+                                      : "text-sky-700 dark:text-sky-300"
+                                    : isExamWeek
+                                      ? "text-rose-700/90 dark:text-rose-300/90"
+                                      : "text-slate-600 dark:text-slate-300"
                                 }`}
                               >
                                 {label}
@@ -703,8 +891,12 @@ function CourseTaskSheetBody({
                                 <Text
                                   className={`ml-1 text-[10.5px] font-bold ${
                                     selected
-                                      ? "text-sky-600 dark:text-sky-300"
-                                      : "text-slate-400 dark:text-slate-500"
+                                      ? isExamWeek
+                                        ? "text-rose-600 dark:text-rose-300"
+                                        : "text-sky-600 dark:text-sky-300"
+                                      : isExamWeek
+                                        ? "text-rose-500 dark:text-rose-400"
+                                        : "text-slate-400 dark:text-slate-500"
                                   }`}
                                 >
                                   {counts.byType[key]}
@@ -716,13 +908,70 @@ function CourseTaskSheetBody({
                       </ScrollView>
                     </View>
 
-                    {/* 列表 */}
+                    {/* 列表 / 考试周准考证时间轴 */}
                     <ScrollView
                       className="flex-1 px-5"
                       showsVerticalScrollIndicator={false}
                       contentContainerStyle={{ paddingBottom: 20 }}
                     >
-                      {pendingList.length === 0 && completedList.length === 0 ? (
+                      {filter === "examWeek" ? (
+                        <>
+                          {/* 考试周总览头卡 */}
+                          <View className="mb-3 flex-row items-center justify-between rounded-2xl border border-rose-400/35 bg-rose-500/10 px-3.5 py-2.5 dark:border-rose-400/20 dark:bg-rose-500/12">
+                            <View className="min-w-0 flex-1 pr-2">
+                              <Text className="text-[13px] font-extrabold text-rose-700 dark:text-rose-200">
+                                考试周 · 电子准考证
+                              </Text>
+                              <Text
+                                numberOfLines={1}
+                                className="mt-0.5 text-[11px] text-rose-700/80 dark:text-rose-300/80"
+                              >
+                                {examTimeline.length > 0
+                                  ? `待考 ${examTimeline.length} 场 · 下一场 ${examTimeline[0].courseName}（${examTimeline[0].countdown.label}）`
+                                  : "集中查看考试时间、考场号、座位号与开闭卷要求"}
+                              </Text>
+                            </View>
+                            <Pressable
+                              onPress={() => openCreateForm(null, "exam")}
+                              accessibilityRole="button"
+                              className="shrink-0 flex-row items-center rounded-full bg-rose-500 px-2.5 py-1.5"
+                            >
+                              <Ionicons name="add" size={13} color="#FFFFFF" />
+                              <Text className="ml-0.5 text-[11px] font-bold text-white">
+                                录考试
+                              </Text>
+                            </Pressable>
+                          </View>
+
+                          {examTimeline.length === 0 ? (
+                            <View className="mt-4 items-center rounded-3xl border border-dashed border-rose-300/50 bg-white/20 px-6 py-10 dark:border-rose-400/20 dark:bg-white/[0.03]">
+                              <Ionicons
+                                name="school-outline"
+                                size={28}
+                                color="#F43F5E"
+                              />
+                              <Text className="mt-2.5 text-[14px] font-bold text-slate-700 dark:text-slate-200">
+                                暂无待考科目
+                              </Text>
+                              <Text className="mt-1 text-center text-[11.5px] text-slate-500 dark:text-slate-400">
+                                录入考试时间、考场、座位号与开闭卷形式，自动生成考试周时间轴
+                              </Text>
+                              <Pressable
+                                onPress={() => openCreateForm(null, "exam")}
+                                className="mt-4 rounded-full bg-rose-500 px-5 py-2"
+                              >
+                                <Text className="text-[12px] font-semibold text-white">
+                                  添加第一场考试
+                                </Text>
+                              </Pressable>
+                            </View>
+                          ) : (
+                            examTimeline.map((ticket, idx) =>
+                              renderExamTicket(ticket, idx, examTimeline.length),
+                            )
+                          )}
+                        </>
+                      ) : pendingList.length === 0 && completedList.length === 0 ? (
                         <View className="mt-6 items-center rounded-3xl border border-dashed border-slate-300/50 bg-white/20 px-6 py-10 dark:border-white/10 dark:bg-white/[0.03]">
                           <Ionicons
                             name="calendar-clear-outline"
@@ -746,6 +995,59 @@ function CourseTaskSheetBody({
                         </View>
                       ) : (
                         <>
+                          {/* 全部/考试视角下提供一键进入「考试周准考证」紧凑入口卡 */}
+                          {(filter === "all" || filter === "exam") &&
+                          examTimeline.length > 0 ? (
+                            <Pressable
+                              onPress={() => {
+                                selectHaptic();
+                                setFilter("examWeek");
+                              }}
+                              accessibilityRole="button"
+                              className="mb-2.5 flex-row items-center justify-between rounded-2xl border border-rose-400/35 bg-rose-500/10 px-3.5 py-2.5 dark:border-rose-400/20 dark:bg-rose-500/12"
+                            >
+                              <View className="min-w-0 flex-1 flex-row items-center pr-2">
+                                <Ionicons
+                                  name="card-outline"
+                                  size={15}
+                                  color="#F43F5E"
+                                />
+                                <View className="ml-2 min-w-0 flex-1">
+                                  <Text
+                                    numberOfLines={1}
+                                    className="text-[12px] font-bold text-rose-700 dark:text-rose-200"
+                                  >
+                                    考试周准考证 · {examTimeline.length} 场待考
+                                  </Text>
+                                  <Text
+                                    numberOfLines={1}
+                                    className="mt-0.5 text-[10.5px] text-rose-700/80 dark:text-rose-300/80"
+                                  >
+                                    下一场：{examTimeline[0].courseName} ·{" "}
+                                    {examTimeline[0].dateLabel}{" "}
+                                    {examTimeline[0].timeLabel}
+                                    {examTimeline[0].location
+                                      ? ` · ${examTimeline[0].location}`
+                                      : ""}
+                                    {examTimeline[0].seat
+                                      ? ` ${examTimeline[0].seat}`
+                                      : ""}
+                                  </Text>
+                                </View>
+                              </View>
+                              <View className="shrink-0 flex-row items-center">
+                                <Text className="text-[11px] font-bold text-rose-600 dark:text-rose-300">
+                                  准考证
+                                </Text>
+                                <Ionicons
+                                  name="chevron-forward"
+                                  size={13}
+                                  color="#F43F5E"
+                                />
+                              </View>
+                            </Pressable>
+                          ) : null}
+
                           {pendingList.map(renderTaskRow)}
 
                           {completedList.length > 0 ? (

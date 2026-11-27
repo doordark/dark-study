@@ -7,6 +7,7 @@ import { addDays, mondayOf, parseIsoDate, toIsoDate } from "@/utils/time";
 const CHANNEL = "course-reminders";
 const MARKER = "dark-study-course-reminder";
 const TASK_MARKER = "dark-study-course-task";
+const FOCUS_MARKER = "dark-study-focus-complete";
 
 if (Platform.OS !== "web") {
   Notifications.setNotificationHandler({ handleNotification: async () => ({
@@ -180,6 +181,53 @@ export async function sendTestCourseReminder(minutes: number): Promise<void> {
       channelId: CHANNEL,
     },
   });
+}
+
+/** 为番茄钟/短休安排后台到期本地通知（Web 或未授权时静默返回 null） */
+export async function scheduleFocusCompletionNotification(
+  endAtMs: number,
+  title: string,
+  body: string,
+): Promise<string | null> {
+  if (Platform.OS === "web") return null;
+  if (!Number.isFinite(endAtMs) || endAtMs <= Date.now() + 1000) return null;
+  try {
+    let perm = await Notifications.getPermissionsAsync();
+    if (!perm.granted && perm.canAskAgain) {
+      perm = await Notifications.requestPermissionsAsync();
+    }
+    if (!perm.granted) return null;
+    await prepareReminderChannel();
+    const id = await Notifications.scheduleNotificationAsync({
+      content: {
+        title: title.trim() || "专注完成",
+        body: body.trim() || "本轮番茄钟已结束",
+        sound: "default",
+        data: { kind: FOCUS_MARKER },
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DATE,
+        date: new Date(Math.floor(endAtMs)),
+        channelId: CHANNEL,
+      },
+    });
+    return id || null;
+  } catch {
+    return null;
+  }
+}
+
+/** 取消已安排的番茄钟/短休本地通知（Web 或空 ID 时静默无操作） */
+export async function cancelFocusCompletionNotification(
+  notificationId: string | null | undefined,
+): Promise<void> {
+  if (Platform.OS === "web") return;
+  if (typeof notificationId !== "string" || !notificationId.trim()) return;
+  try {
+    await Notifications.cancelScheduledNotificationAsync(notificationId.trim());
+  } catch {
+    // ignore already fired or missing notification
+  }
 }
 
 interface PlannedNotification {
