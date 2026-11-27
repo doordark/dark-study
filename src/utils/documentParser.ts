@@ -1,9 +1,11 @@
 import type { Course, CourseColor, Period } from "@/types";
 import {
+  addDays,
   mondayOf,
   parseIsoDate,
   periodAtTime,
   periodEndingAtTime,
+  toIsoDate,
 } from "@/utils/time";
 
 const COLOR_VALUES: CourseColor[] = [
@@ -486,204 +488,759 @@ const ICS_DAY_TO_NUM: Record<string, number> = {
   SU: 7,
 };
 
-function parseIcsDateTime(raw: string): Date | null {
-  const m = raw.match(
-    /(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})?(Z)?$/i,
+const KNOWN_TZ_OFFSETS_MIN: Record<string, number> = {
+  "asia/shanghai": 480,
+  "asia/chongqing": 480,
+  "asia/harbin": 480,
+  "asia/hong_kong": 480,
+  "asia/taipei": 480,
+  "asia/singapore": 480,
+  "asia/urumqi": 480,
+  prc: 480,
+  "etc/gmt-8": 480,
+  "china standard time": 480,
+  "asia/tokyo": 540,
+  "asia/seoul": 540,
+  utc: 0,
+  gmt: 0,
+  "etc/utc": 0,
+};
+
+interface WallDateTime {
+  year: number;
+  month: number; // 1..12
+  day: number; // 1..31
+  hour: number; // 0..23
+  minute: number; // 0..59
+  second: number; // 0..59
+}
+
+export interface IcsParseContext {
+  startDate?: string;
+  totalWeeks?: number;
+  periods: Period[];
+  /** 可选：用于解析未声明 VTIMEZONE 的 UTC (Z) 时间戳 */
+  timezoneOffsetMinutes?: number;
+}
+
+export interface ParsedIcsScheduleResult {
+  courses: Course[];
+  startDate?: string;
+  totalWeeks?: number;
+  calendarName?: string;
+}
+
+function parseTzOffsetMinutes(raw: string): number | null {
+  const m = raw.trim().match(/^([+-])(\d{2})(\d{2})$/);
+  if (!m) return null;
+  const sign = m[1] === "-" ? -1 : 1;
+  const hours = Number(m[2]);
+  const mins = Number(m[3]);
+  if (hours > 14 || mins > 59) return null;
+  return sign * (hours * 60 + mins);
+}
+
+function resolveKnownTzOffset(tzName: string | undefined): number | null {
+  if (!tzName) return null;
+  const normalized = tzName.trim().replace(/^["']|["']$/g, "").toLowerCase();
+  if (Object.hasOwn(KNOWN_TZ_OFFSETS_MIN, normalized)) {
+    return KNOWN_TZ_OFFSETS_MIN[normalized];
+  }
+  return null;
+}
+
+function wallFromUtcMs(utcMs: number): WallDateTime {
+  const d = new Date(utcMs);
+  return {
+    year: d.getUTCFullYear(),
+    month: d.getUTCMonth() + 1,
+    day: d.getUTCDate(),
+    hour: d.getUTCHours(),
+    minute: d.getUTCMinutes(),
+    second: d.getUTCSeconds(),
+  };
+}
+
+function wallToUtcMs(w: WallDateTime): number {
+  return Date.UTC(w.year, w.month - 1, w.day, w.hour, w.minute, w.second);
+}
+
+function wallToDateIso(w: Pick<WallDateTime, "year" | "month" | "day">): string {
+  return `${String(w.year).padStart(4, "0")}-${String(w.month).padStart(2, "0")}-${String(w.day).padStart(2, "0")}`;
+}
+
+function wallWeekday(w: Pick<WallDateTime, "year" | "month" | "day">): number {
+  const dow = new Date(Date.UTC(w.year, w.month - 1, w.day)).getUTCDay();
+  return dow === 0 ? 7 : dow;
+}
+
+function wallClock(w: Pick<WallDateTime, "hour" | "minute">): string {
+  return `${String(w.hour).padStart(2, "0")}:${String(w.minute).padStart(2, "0")}`;
+}
+
+function parseIcsDateTimeWall(
+  raw: string,
+  utcOffsetMinutes: number | null,
+): WallDateTime | null {
+  const cleaned = raw.trim();
+  const m = cleaned.match(
+    /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})?(Z)?$/i,
   );
   if (!m) return null;
   const year = Number(m[1]);
-  const month = Number(m[2]) - 1;
+  const month = Number(m[2]);
   const day = Number(m[3]);
   const hour = Number(m[4]);
   const minute = Number(m[5]);
   const second = Number(m[6] ?? 0);
-  if (m[7]?.toUpperCase() === "Z") {
-    return new Date(Date.UTC(year, month, day, hour, minute, second));
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31 ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59
+  ) {
+    return null;
   }
-  return new Date(year, month, day, hour, minute, second);
+  if (m[7]?.toUpperCase() === "Z") {
+    const utcMs = Date.UTC(year, month - 1, day, hour, minute, second);
+    const offsetMin =
+      utcOffsetMinutes !== null
+        ? utcOffsetMinutes
+        : -new Date(utcMs).getTimezoneOffset();
+    return wallFromUtcMs(utcMs + offsetMin * 60_000);
+  }
+  return { year, month, day, hour, minute, second };
 }
 
+function parseIcsDateOrDateTimeIso(
+  raw: string,
+  utcOffsetMinutes: number | null,
+): string | null {
+  const trimmed = raw.trim();
+  const dateOnly = trimmed.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (dateOnly) {
+    return `${dateOnly[1]}-${dateOnly[2]}-${dateOnly[3]}`;
+  }
+  const wall = parseIcsDateTimeWall(trimmed, utcOffsetMinutes);
+  return wall ? wallToDateIso(wall) : null;
+}
+
+function parseIcsDurationMs(raw: string): number | null {
+  const m = raw
+    .trim()
+    .match(
+      /^([+-])?P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/i,
+    );
+  if (!m || m[1] === "-") return null;
+  const weeks = Number(m[2] ?? 0);
+  const days = Number(m[3] ?? 0);
+  const hours = Number(m[4] ?? 0);
+  const minutes = Number(m[5] ?? 0);
+  const seconds = Number(m[6] ?? 0);
+  const totalMs =
+    ((((weeks * 7 + days) * 24 + hours) * 60 + minutes) * 60 + seconds) * 1000;
+  return totalMs > 0 ? totalMs : null;
+}
+
+/** 单遍 RFC 5545 反转义：正确区分 `\\n`（字面反斜杠+n）与 `\n`（换行） */
 function unescapeIcs(value: string): string {
   return value
-    .replace(/\\n/gi, "\n")
-    .replace(/\\,/g, ",")
-    .replace(/\\;/g, ";")
-    .replace(/\\\\/g, "\\")
+    .replace(/\\([nN,;\\])/g, (_, ch: string) =>
+      ch === "n" || ch === "N" ? "\n" : ch,
+    )
     .trim();
 }
 
-function calendarWeekOf(date: Date, termMonday: Date): number {
-  const dayUtc = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
-  const monUtc = Date.UTC(
-    termMonday.getFullYear(),
-    termMonday.getMonth(),
-    termMonday.getDate(),
-  );
-  return Math.floor((dayUtc - monUtc) / 86400000 / 7) + 1;
+function calendarWeekFromWall(
+  wall: Pick<WallDateTime, "year" | "month" | "day">,
+  termMondayUtcMs: number,
+): number {
+  const dayUtc = Date.UTC(wall.year, wall.month - 1, wall.day);
+  return Math.floor((dayUtc - termMondayUtcMs) / 86_400_000 / 7) + 1;
 }
 
-export function parseIcsSchedule(
+function parseDescriptionMeta(description: string): {
+  teacher: string;
+  credits?: number;
+  note: string;
+  explicitWeek?: number;
+  explicitPeriods?: [number, number];
+} {
+  if (!description) return { teacher: "", note: "" };
+
+  const teacherMatch = description.match(
+    /(?:任课教师|授课教师|主讲教师|教师|老师|主讲|Teacher|Instructor|Lecturer)\s*[:：]\s*([^\n,;，；|]+)/i,
+  );
+  const teacher = teacherMatch ? teacherMatch[1].trim().slice(0, 40) : "";
+
+  let credits: number | undefined;
+  const creditsMatch = description.match(
+    /(?:学分|Credits?)\s*[:：]\s*(\d+(?:\.\d+)?)\b/i,
+  );
+  if (creditsMatch) {
+    const n = Number(creditsMatch[1]);
+    if (Number.isFinite(n) && n >= 0 && n <= 30) {
+      credits = n;
+    }
+  }
+
+  let note = "";
+  const noteMatch = description.match(
+    /(?:^|\n)(?:备注|说明|Note)\s*[:：]\s*([\s\S]+)$/i,
+  );
+  if (noteMatch) {
+    note = noteMatch[1].trim().slice(0, 200);
+  }
+
+  let explicitWeek: number | undefined;
+  const weekMatch = description.match(/第\s*(\d{1,2})\s*周/);
+  if (weekMatch) {
+    const w = Number(weekMatch[1]);
+    if (Number.isInteger(w) && w >= 1 && w <= 30) {
+      explicitWeek = w;
+    }
+  }
+
+  let explicitPeriods: [number, number] | undefined;
+  const periodRange = description.match(
+    /第\s*(\d{1,2})\s*[-~—–至到]\s*(\d{1,2})\s*节/,
+  );
+  if (periodRange) {
+    const s = Number(periodRange[1]);
+    const e = Number(periodRange[2]);
+    if (s >= 1 && e >= s) explicitPeriods = [s, e];
+  } else {
+    const singlePeriod = description.match(/第\s*(\d{1,2})\s*节/);
+    if (singlePeriod) {
+      const s = Number(singlePeriod[1]);
+      if (s >= 1) explicitPeriods = [s, s];
+    }
+  }
+
+  return { teacher, credits, note, explicitWeek, explicitPeriods };
+}
+
+function extractPropTzid(propHeader: string): string | undefined {
+  const m = propHeader.match(/;TZID=([^;:]+)/i);
+  return m ? m[1].trim().replace(/^["']|["']$/g, "") : undefined;
+}
+
+/**
+ * 完整 RFC 5545 `.ics` 课表解析（支持 VTIMEZONE、TZID、UTC Z、DURATION、
+ * 折行展开、单遍反转义、VALARM 隔离、RRULE WEEKLY/INTERVAL/BYDAY/COUNT/UNTIL、
+ * EXDATE/RDATE，以及 Dark Study 导出格式无损往返）。
+ */
+export function parseIcsScheduleDetailed(
   icsText: string,
-  ctx: { startDate: string; totalWeeks: number; periods: Period[] },
-): Course[] {
-  const unfolded = icsText.replace(/\r?\n[ \t]/g, "");
-  const lines = unfolded.split(/\r?\n/);
-  const termMonday = mondayOf(parseIsoDate(ctx.startDate));
-  const totalWeeks = Math.max(1, ctx.totalWeeks);
+  ctx: IcsParseContext,
+): ParsedIcsScheduleResult {
+  const stripped = icsText.replace(/^\uFEFF/, "");
+  const unfolded = stripped.replace(/\r\n[ \t]|\n[ \t]|\r[ \t]/g, "");
+  const lines = unfolded.split(/\r\n|\n|\r/);
 
   type RawEvent = {
     summary: string;
     location: string;
     description: string;
     dtstart: string;
+    dtstartTzid?: string;
     dtend: string;
+    dtendTzid?: string;
+    duration: string;
     rrule: string;
+    exdates: { raw: string; tzid?: string }[];
+    rdates: { raw: string; tzid?: string }[];
   };
+
+  let calendarName = "";
+  let calendarTzName = "";
+  const tzOffsetsById = new Map<string, number>();
+  let firstVtzOffset: number | null = null;
+
+  let inTimezone = false;
+  let currentTzId = "";
+  let inStandard = false;
+
   const events: RawEvent[] = [];
   let cur: RawEvent | null = null;
+  let subComponentDepth = 0;
+
   for (const rawLine of lines) {
     const line = rawLine.trim();
-    if (line === "BEGIN:VEVENT") {
+    if (!line) continue;
+    const upper = line.toUpperCase();
+
+    if (cur) {
+      if (upper === "END:VEVENT" && subComponentDepth === 0) {
+        events.push(cur);
+        cur = null;
+        continue;
+      }
+      if (upper.startsWith("BEGIN:")) {
+        subComponentDepth += 1;
+        continue;
+      }
+      if (upper.startsWith("END:")) {
+        if (subComponentDepth > 0) subComponentDepth -= 1;
+        continue;
+      }
+      if (subComponentDepth > 0) continue;
+
+      const colon = line.indexOf(":");
+      if (colon < 0) continue;
+      const header = line.slice(0, colon);
+      const prop = header.split(";")[0].toUpperCase();
+      const val = line.slice(colon + 1);
+      if (prop === "SUMMARY") cur.summary = unescapeIcs(val);
+      else if (prop === "LOCATION") cur.location = unescapeIcs(val);
+      else if (prop === "DESCRIPTION") cur.description = unescapeIcs(val);
+      else if (prop === "DTSTART") {
+        cur.dtstart = val.trim();
+        cur.dtstartTzid = extractPropTzid(header);
+      } else if (prop === "DTEND") {
+        cur.dtend = val.trim();
+        cur.dtendTzid = extractPropTzid(header);
+      } else if (prop === "DURATION") {
+        cur.duration = val.trim();
+      } else if (prop === "RRULE") {
+        cur.rrule = val.trim();
+      } else if (prop === "EXDATE") {
+        const tzid = extractPropTzid(header);
+        for (const item of val.split(",")) {
+          if (item.trim()) cur.exdates.push({ raw: item.trim(), tzid });
+        }
+      } else if (prop === "RDATE") {
+        const tzid = extractPropTzid(header);
+        for (const item of val.split(",")) {
+          if (item.trim()) cur.rdates.push({ raw: item.trim(), tzid });
+        }
+      }
+      continue;
+    }
+
+    if (upper === "BEGIN:VEVENT") {
       cur = {
         summary: "",
         location: "",
         description: "",
         dtstart: "",
         dtend: "",
+        duration: "",
         rrule: "",
+        exdates: [],
+        rdates: [],
       };
+      subComponentDepth = 0;
       continue;
     }
-    if (line === "END:VEVENT") {
-      if (cur) events.push(cur);
-      cur = null;
+
+    if (upper === "BEGIN:VTIMEZONE") {
+      inTimezone = true;
+      currentTzId = "";
+      inStandard = false;
       continue;
     }
-    if (!cur) continue;
+    if (upper === "END:VTIMEZONE") {
+      inTimezone = false;
+      currentTzId = "";
+      inStandard = false;
+      continue;
+    }
+    if (inTimezone) {
+      if (upper === "BEGIN:STANDARD") {
+        inStandard = true;
+        continue;
+      }
+      if (upper === "END:STANDARD") {
+        inStandard = false;
+        continue;
+      }
+      const colon = line.indexOf(":");
+      if (colon < 0) continue;
+      const prop = line.slice(0, colon).split(";")[0].toUpperCase();
+      const val = line.slice(colon + 1).trim();
+      if (prop === "TZID") {
+        currentTzId = val;
+      } else if (prop === "TZOFFSETTO") {
+        const offsetMin = parseTzOffsetMinutes(val);
+        if (offsetMin !== null) {
+          if (firstVtzOffset === null || inStandard) {
+            firstVtzOffset = offsetMin;
+          }
+          if (currentTzId && (inStandard || !tzOffsetsById.has(currentTzId))) {
+            tzOffsetsById.set(currentTzId, offsetMin);
+          }
+        }
+      }
+      continue;
+    }
+
     const colon = line.indexOf(":");
-    if (colon < 0) continue;
-    const prop = line.slice(0, colon).split(";")[0].toUpperCase();
-    const val = line.slice(colon + 1);
-    if (prop === "SUMMARY") cur.summary = unescapeIcs(val);
-    else if (prop === "LOCATION") cur.location = unescapeIcs(val);
-    else if (prop === "DESCRIPTION") cur.description = unescapeIcs(val);
-    else if (prop === "DTSTART") cur.dtstart = val.trim();
-    else if (prop === "DTEND") cur.dtend = val.trim();
-    else if (prop === "RRULE") cur.rrule = val.trim();
+    if (colon >= 0) {
+      const prop = line.slice(0, colon).split(";")[0].toUpperCase();
+      const val = line.slice(colon + 1);
+      if (prop === "X-WR-CALNAME" && !calendarName) {
+        calendarName = unescapeIcs(val);
+      } else if (prop === "X-WR-TIMEZONE" && !calendarTzName) {
+        calendarTzName = val.trim();
+      }
+    }
   }
 
-  const merged = new Map<string, Course>();
-  let colorIdx = 0;
+  const defaultUtcOffsetMin: number | null =
+    typeof ctx.timezoneOffsetMinutes === "number" &&
+    Number.isFinite(ctx.timezoneOffsetMinutes)
+      ? ctx.timezoneOffsetMinutes
+      : firstVtzOffset ??
+        resolveKnownTzOffset(calendarTzName) ??
+        (tzOffsetsById.size > 0
+          ? (tzOffsetsById.values().next().value ?? null)
+          : null);
 
+  interface PreparedEvent {
+    summary: string;
+    location: string;
+    teacher: string;
+    credits?: number;
+    note: string;
+    explicitWeek?: number;
+    start: WallDateTime;
+    end: WallDateTime;
+    startPeriod: number;
+    endPeriod: number;
+    rrule: string;
+    exdateIsos: Set<string>;
+    rdateWalls: WallDateTime[];
+    utcOffsetMin: number | null;
+  }
+
+  const prepared: PreparedEvent[] = [];
   for (const ev of events) {
     if (!ev.summary || !ev.dtstart) continue;
-    const start = parseIcsDateTime(ev.dtstart);
+    const evOffset =
+      (ev.dtstartTzid ? tzOffsetsById.get(ev.dtstartTzid) ?? resolveKnownTzOffset(ev.dtstartTzid) : null) ??
+      defaultUtcOffsetMin;
+    const start = parseIcsDateTimeWall(ev.dtstart, evOffset);
     if (!start) continue;
-    const end = ev.dtend
-      ? parseIcsDateTime(ev.dtend)
-      : new Date(start.getTime() + 90 * 60000);
-    if (!end || end <= start) continue;
 
-    const startClock = `${String(start.getHours()).padStart(2, "0")}:${String(
-      start.getMinutes(),
-    ).padStart(2, "0")}`;
-    const endClock = `${String(end.getHours()).padStart(2, "0")}:${String(
-      end.getMinutes(),
-    ).padStart(2, "0")}`;
-
-    const startPeriod = periodAtTime(ctx.periods, startClock) ?? 1;
-    const endPeriod = Math.max(
-      startPeriod,
-      periodEndingAtTime(ctx.periods, endClock) ?? startPeriod,
-    );
-
-    const teacherMatch = ev.description.match(
-      /(?:教师|老师|任课教师|主讲)\s*[:：]\s*([^\n,;，；]+)/,
-    );
-    const teacher = teacherMatch ? teacherMatch[1].trim() : "";
-
-    const baseWeek = calendarWeekOf(start, termMonday);
-    const baseWeekday = start.getDay() === 0 ? 7 : start.getDay();
-
-    const occurrences: { weekday: number; week: number }[] = [];
-    if (ev.rrule && /FREQ=WEEKLY/i.test(ev.rrule)) {
-      const ruleMap = new Map<string, string>();
-      for (const seg of ev.rrule.split(";")) {
-        const [k, v] = seg.split("=");
-        if (k && v) ruleMap.set(k.toUpperCase(), v.toUpperCase());
+    let end: WallDateTime | null = null;
+    if (ev.dtend) {
+      const endOffset =
+        (ev.dtendTzid ? tzOffsetsById.get(ev.dtendTzid) ?? resolveKnownTzOffset(ev.dtendTzid) : null) ??
+        evOffset;
+      end = parseIcsDateTimeWall(ev.dtend, endOffset);
+    } else if (ev.duration) {
+      const durMs = parseIcsDurationMs(ev.duration);
+      if (durMs) {
+        end = wallFromUtcMs(wallToUtcMs(start) + durMs);
       }
-      const interval = Math.max(1, Number(ruleMap.get("INTERVAL")) || 1);
-      const count = Number(ruleMap.get("COUNT")) || 0;
-      const untilRaw = ruleMap.get("UNTIL");
-      const untilDate = untilRaw
-        ? parseIcsDateTime(
-            /^\d{8}$/.test(untilRaw) ? `${untilRaw}T235959` : untilRaw,
-          )
-        : null;
-      const byDay = (ruleMap.get("BYDAY") ?? "")
-        .split(",")
-        .map((d) => ICS_DAY_TO_NUM[d.replace(/^[+-]?\d+/, "")])
-        .filter((d): d is number => Boolean(d));
-      const weekdays = byDay.length ? byDay : [baseWeekday];
+    }
+    if (!end) {
+      end = wallFromUtcMs(wallToUtcMs(start) + 90 * 60_000);
+    }
+    if (wallToUtcMs(end) <= wallToUtcMs(start)) continue;
 
-      let produced = 0;
-      for (
-        let week = Math.max(1, baseWeek);
-        week <= totalWeeks;
-        week += interval
-      ) {
-        for (const wd of weekdays) {
-          if (week === baseWeek && wd < baseWeekday) continue;
-          const occDate = new Date(
-            termMonday.getFullYear(),
-            termMonday.getMonth(),
-            termMonday.getDate() + (week - 1) * 7 + (wd - 1),
-            start.getHours(),
-            start.getMinutes(),
-          );
-          if (untilDate && occDate > untilDate) continue;
-          occurrences.push({ weekday: wd, week });
-          produced += 1;
-          if (count > 0 && produced >= count) break;
-        }
-        if (count > 0 && produced >= count) break;
-      }
-    } else if (baseWeek >= 1 && baseWeek <= totalWeeks) {
-      occurrences.push({ weekday: baseWeekday, week: baseWeek });
+    const meta = parseDescriptionMeta(ev.description);
+    const startClock = wallClock(start);
+    const endClock = wallClock(end);
+
+    let startPeriod = periodAtTime(ctx.periods, startClock);
+    let endPeriod = periodEndingAtTime(ctx.periods, endClock);
+    if (startPeriod == null || endPeriod == null) {
+      startPeriod = meta.explicitPeriods?.[0] ?? 1;
+      endPeriod = meta.explicitPeriods?.[1] ?? startPeriod;
+    }
+    endPeriod = Math.max(startPeriod, endPeriod);
+
+    const exdateIsos = new Set<string>();
+    for (const ex of ev.exdates) {
+      const exOffset =
+        (ex.tzid ? tzOffsetsById.get(ex.tzid) ?? resolveKnownTzOffset(ex.tzid) : null) ??
+        evOffset;
+      const iso = parseIcsDateOrDateTimeIso(ex.raw, exOffset);
+      if (iso) exdateIsos.add(iso);
     }
 
-    for (const occ of occurrences) {
-      if (occ.week < 1 || occ.week > totalWeeks) continue;
-      const key = JSON.stringify([
-        ev.summary,
-        occ.weekday,
-        startPeriod,
-        endPeriod,
-        ev.location,
-      ]);
-      const existing = merged.get(key);
-      if (existing) {
-        if (!existing.weeks.includes(occ.week)) {
-          existing.weeks.push(occ.week);
-          existing.weeks.sort((a, b) => a - b);
+    const rdateWalls: WallDateTime[] = [];
+    for (const rd of ev.rdates) {
+      const rdOffset =
+        (rd.tzid ? tzOffsetsById.get(rd.tzid) ?? resolveKnownTzOffset(rd.tzid) : null) ??
+        evOffset;
+      const wall = parseIcsDateTimeWall(rd.raw, rdOffset);
+      if (wall) rdateWalls.push(wall);
+    }
+
+    prepared.push({
+      summary: ev.summary,
+      location: ev.location,
+      teacher: meta.teacher,
+      credits: meta.credits,
+      note: meta.note,
+      explicitWeek: meta.explicitWeek,
+      start,
+      end,
+      startPeriod,
+      endPeriod,
+      rrule: ev.rrule,
+      exdateIsos,
+      rdateWalls,
+      utcOffsetMin: evOffset,
+    });
+  }
+
+  if (!prepared.length) {
+    return {
+      courses: [],
+      calendarName: calendarName || undefined,
+    };
+  }
+
+  const expandForAnchor = (
+    anchorIso: string,
+    maxWeeks: number,
+    unboundedWeekLimit = maxWeeks,
+  ): { courses: Course[]; maxWeekObserved: number } => {
+    const anchorDate = mondayOf(parseIsoDate(anchorIso));
+    const termMondayUtcMs = Date.UTC(
+      anchorDate.getFullYear(),
+      anchorDate.getMonth(),
+      anchorDate.getDate(),
+    );
+
+    const merged = new Map<string, Course>();
+    let colorIdx = 0;
+    let maxWeekObserved = 0;
+
+    for (const ev of prepared) {
+      const baseWeek = calendarWeekFromWall(ev.start, termMondayUtcMs);
+      const baseWeekday = wallWeekday(ev.start);
+
+      const occurrences: { weekday: number; week: number }[] = [];
+      const seenOcc = new Set<string>();
+      const pushOcc = (week: number, weekday: number, dateIso: string) => {
+        if (ev.exdateIsos.has(dateIso)) return;
+        if (week < 1 || week > maxWeeks) return;
+        const occKey = `${week}:${weekday}`;
+        if (seenOcc.has(occKey)) return;
+        seenOcc.add(occKey);
+        if (week > maxWeekObserved) maxWeekObserved = week;
+        occurrences.push({ week, weekday });
+      };
+
+      const ruleMap = new Map<string, string>();
+      if (ev.rrule) {
+        for (const seg of ev.rrule.split(";")) {
+          const eq = seg.indexOf("=");
+          if (eq > 0) {
+            ruleMap.set(
+              seg.slice(0, eq).trim().toUpperCase(),
+              seg.slice(eq + 1).trim().toUpperCase(),
+            );
+          }
         }
-        if (!existing.teacher && teacher) existing.teacher = teacher;
-      } else {
-        merged.set(key, {
-          id: "",
-          name: ev.summary,
-          teacher,
-          classroom: ev.location,
-          weekday: occ.weekday,
-          startPeriod,
-          endPeriod,
-          weeks: [occ.week],
-          color: COLOR_VALUES[colorIdx++ % COLOR_VALUES.length],
-          note: "",
-        });
       }
+
+      const freq = ruleMap.get("FREQ");
+      const rawInterval = Math.max(1, Number(ruleMap.get("INTERVAL")) || 1);
+      const isWeeklyRule =
+        freq === "WEEKLY" || (freq === "DAILY" && rawInterval % 7 === 0);
+
+      if (isWeeklyRule) {
+        const interval =
+          freq === "DAILY" ? Math.max(1, Math.floor(rawInterval / 7)) : rawInterval;
+        const count = Math.max(0, Number(ruleMap.get("COUNT")) || 0);
+        const untilRaw = ruleMap.get("UNTIL");
+        let untilWall: WallDateTime | null = null;
+        if (untilRaw) {
+          untilWall = parseIcsDateTimeWall(
+            /^\d{8}$/.test(untilRaw) ? `${untilRaw}T235959` : untilRaw,
+            ev.utcOffsetMin,
+          );
+        }
+        const untilMs = untilWall ? wallToUtcMs(untilWall) : null;
+
+        const byDay = (ruleMap.get("BYDAY") ?? "")
+          .split(",")
+          .map((d) => ICS_DAY_TO_NUM[d.trim().replace(/^[+-]?\d+/, "")])
+          .filter((d): d is number => Boolean(d));
+        const weekdays = byDay.length
+          ? [...new Set(byDay)].sort((a, b) => a - b)
+          : [baseWeekday];
+
+        let startWeekIter = baseWeek;
+        let produced = 0;
+        // 防止极早历史 DTSTART 触发无界循环
+        if (startWeekIter < -104 && count === 0) {
+          const skipSteps = Math.floor((1 - startWeekIter) / interval);
+          startWeekIter += skipSteps * interval;
+        }
+
+        const loopMaxWeek =
+          count === 0 && untilMs === null
+            ? Math.min(maxWeeks, unboundedWeekLimit)
+            : maxWeeks;
+
+        let steps = 0;
+        for (
+          let week = startWeekIter;
+          week <= loopMaxWeek && steps < 520;
+          week += interval, steps += 1
+        ) {
+          let stopped = false;
+          for (const wd of weekdays) {
+            if (week === baseWeek && wd < baseWeekday) continue;
+            const occUtcDayMs =
+              termMondayUtcMs + ((week - 1) * 7 + (wd - 1)) * 86_400_000;
+            const occDate = wallFromUtcMs(occUtcDayMs);
+            const occWithTime: WallDateTime = {
+              year: occDate.year,
+              month: occDate.month,
+              day: occDate.day,
+              hour: ev.start.hour,
+              minute: ev.start.minute,
+              second: ev.start.second,
+            };
+            if (untilMs !== null && wallToUtcMs(occWithTime) > untilMs) {
+              stopped = true;
+              break;
+            }
+            const iso = wallToDateIso(occWithTime);
+            // RFC 5545: COUNT 计入生成的实例（排除前）
+            produced += 1;
+            pushOcc(week, wd, iso);
+            if (count > 0 && produced >= count) {
+              stopped = true;
+              break;
+            }
+          }
+          if (stopped) break;
+        }
+      } else {
+        pushOcc(baseWeek, baseWeekday, wallToDateIso(ev.start));
+      }
+
+      for (const rd of ev.rdateWalls) {
+        pushOcc(
+          calendarWeekFromWall(rd, termMondayUtcMs),
+          wallWeekday(rd),
+          wallToDateIso(rd),
+        );
+      }
+
+      for (const occ of occurrences) {
+        const key = JSON.stringify([
+          ev.summary,
+          occ.weekday,
+          ev.startPeriod,
+          ev.endPeriod,
+          ev.location,
+          ev.teacher,
+        ]);
+        const existing = merged.get(key);
+        if (existing) {
+          if (!existing.weeks.includes(occ.week)) {
+            existing.weeks.push(occ.week);
+            existing.weeks.sort((a, b) => a - b);
+          }
+          if (!existing.teacher && ev.teacher) existing.teacher = ev.teacher;
+          if (existing.credits === undefined && ev.credits !== undefined) {
+            existing.credits = ev.credits;
+          }
+          if (!existing.note && ev.note) existing.note = ev.note;
+        } else {
+          merged.set(key, {
+            id: "",
+            name: ev.summary,
+            teacher: ev.teacher,
+            classroom: ev.location,
+            weekday: occ.weekday,
+            startPeriod: ev.startPeriod,
+            endPeriod: ev.endPeriod,
+            weeks: [occ.week],
+            color: COLOR_VALUES[colorIdx++ % COLOR_VALUES.length],
+            ...(ev.credits !== undefined ? { credits: ev.credits } : {}),
+            note: ev.note,
+          });
+        }
+      }
+    }
+
+    const courses = [...merged.values()].sort(
+      (a, b) =>
+        a.weekday - b.weekday ||
+        a.startPeriod - b.startPeriod ||
+        a.endPeriod - b.endPeriod ||
+        a.name.localeCompare(b.name),
+    );
+    return { courses, maxWeekObserved };
+  };
+
+  const inferAnchorStartDate = (): string => {
+    let earliestMondayMs = Infinity;
+    for (const ev of prepared) {
+      const evDate = new Date(ev.start.year, ev.start.month - 1, ev.start.day);
+      const evMon = mondayOf(evDate);
+      const weekOffsetDays =
+        ev.explicitWeek && ev.explicitWeek >= 1 ? (ev.explicitWeek - 1) * 7 : 0;
+      const inferredMon = addDays(evMon, -weekOffsetDays);
+      const utcMs = Date.UTC(
+        inferredMon.getFullYear(),
+        inferredMon.getMonth(),
+        inferredMon.getDate(),
+      );
+      if (utcMs < earliestMondayMs) {
+        earliestMondayMs = utcMs;
+      }
+    }
+    const d = wallFromUtcMs(earliestMondayMs);
+    return toIsoDate(new Date(d.year, d.month - 1, d.day));
+  };
+
+  const requestedTotalWeeks = Math.max(
+    1,
+    Math.min(30, Math.floor(ctx.totalWeeks ?? 18)),
+  );
+  const hasExplicitStart = Boolean(
+    ctx.startDate && /^\d{4}-\d{2}-\d{2}$/.test(ctx.startDate),
+  );
+
+  if (hasExplicitStart) {
+    const direct = expandForAnchor(ctx.startDate!, requestedTotalWeeks);
+    if (direct.courses.length > 0) {
+      return {
+        courses: direct.courses,
+        startDate: toIsoDate(mondayOf(parseIsoDate(ctx.startDate!))),
+        totalWeeks: requestedTotalWeeks,
+        calendarName: calendarName || undefined,
+      };
     }
   }
 
-  return [...merged.values()];
+  // 未提供开学日期，或外部日历跨学期导致全部落在当前学期外时：自动从事件锚定开学周一
+  const inferredStart = inferAnchorStartDate();
+  const inferred = expandForAnchor(
+    inferredStart,
+    Math.max(requestedTotalWeeks, 30),
+    requestedTotalWeeks,
+  );
+  const effectiveTotalWeeks = Math.max(
+    ctx.totalWeeks ? requestedTotalWeeks : 1,
+    Math.min(30, Math.max(inferred.maxWeekObserved, ctx.totalWeeks ? requestedTotalWeeks : inferred.maxWeekObserved || 18)),
+  );
+  return {
+    courses: inferred.courses,
+    startDate: inferredStart,
+    totalWeeks: effectiveTotalWeeks,
+    calendarName: calendarName || undefined,
+  };
+}
+
+export function parseIcsSchedule(
+  icsText: string,
+  ctx: { startDate: string; totalWeeks: number; periods: Period[] },
+): Course[] {
+  return parseIcsScheduleDetailed(icsText, ctx).courses;
 }

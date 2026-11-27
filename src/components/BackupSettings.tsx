@@ -41,7 +41,7 @@ export function BackupSettings() {
   const summary = backup ? backupSummary(backup) : null;
   return <View style={{ gap: 14 }}><GlassContainer radius={24} intensity={42} borderOpacity={0.22}><View style={{ padding: 18, gap: 14 }}>
     <Text className="text-lg font-bold text-slate-800 dark:text-white">备份与恢复</Text>
-    <Text className="text-sm text-slate-600 dark:text-slate-300">保存课表、成绩、农场进度、人物记忆和偏好，便于换设备或恢复数据。</Text>
+    <Text className="text-sm text-slate-600 dark:text-slate-300">保存课表、成绩、农场进度、星空记录、人物记忆和偏好，便于换设备或恢复数据。</Text>
     <Text className="text-xs text-slate-500 dark:text-slate-400">备份不含 API 密钥、联网用量及本地图片文件；聊天中的待应用课程操作不会恢复。</Text>
     <Pressable disabled={busy} accessibilityRole="button" onPress={() => void run(async () => {
       const { collectBackup } = await import('@/services/backupStorage');
@@ -54,7 +54,7 @@ export function BackupSettings() {
     })} className="rounded-xl bg-slate-400/20 p-3"><Text className="text-center font-bold text-slate-700 dark:text-white">选择备份并预览</Text></Pressable>
     {backup && summary ? <View style={{ gap: 12 }}>
       <Text className="font-bold text-slate-800 dark:text-white">文件校验通过 · {new Date(backup.createdAt).toLocaleString()}</Text>
-      <Text className="text-sm text-slate-600 dark:text-slate-300">{summary.schedules} 份课表 · {summary.courses} 条课程 · {summary.grades} 条成绩 · {summary.messages} 条聊天{summary.farm ? ` · 含农场进度（${summary.coins} 金币）` : ''}</Text>
+      <Text className="text-sm text-slate-600 dark:text-slate-300">{summary.schedules} 份课表 · {summary.courses} 条课程 · {summary.grades} 条成绩 · {summary.messages} 条聊天{summary.farm ? ` · 含农场进度（${summary.coins} dark币）` : ''}</Text>
       {(['merge', 'replace'] as const).map(value => <Pressable key={value} disabled={busy} accessibilityRole="radio" accessibilityState={{ checked: mode === value }} onPress={() => setMode(value)} className={mode === value ? 'rounded-xl bg-sky-400/25 p-3' : 'rounded-xl bg-slate-400/10 p-3'}>
         <Text className="font-bold text-slate-800 dark:text-white">{value === 'merge' ? '合并导入' : '覆盖恢复'}{mode === value ? ' ✓' : ''}</Text>
         <Text className="mt-1 text-xs text-slate-600 dark:text-slate-300">{value === 'merge' ? '追加不同 ID 的课表、成绩和记忆，同 ID 保留当前内容。已有农场进度与偏好继续使用当前数据。' : '覆盖备份中包含的数据。当前 API 密钥、自定义背景与联网用量保持不变。'}</Text>

@@ -18,6 +18,7 @@ import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import { CourseReminderSync } from "@/components/CourseReminderSync";
 import { CourseWidgetSync } from "@/components/CourseWidgetSync";
 import { ImportTaskOverlay } from "@/components/ImportTaskOverlay";
+import { WebdavAutoSync } from "@/components/WebdavAutoSync";
 import { WhalePet } from "@/components/WhalePet";
 import { triggerWhaleWave, WhaleWaveOverlay } from "@/components/WhaleSummonFX";
 import { useSettings } from "@/store/useSettings";
@@ -159,6 +160,7 @@ export default function RootLayout() {
         {/* 全局导入任务悬浮层：分析进度弹窗 / 可拖动进度球，退出导入页后任务继续 */}
         <CourseReminderSync />
         <CourseWidgetSync />
+        <WebdavAutoSync />
         <ImportTaskOverlay />
         {/* 大肥鱼进退场与主题切换径向扩散波纹层（精确锚定底部中央按钮） */}
         <WhaleWaveCoordinator />

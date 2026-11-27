@@ -159,6 +159,147 @@ async function run() {
   assert.equal(collected.data['dark-study-settings'].state.renderQuality, 'beautiful', 'export includes a preference changed immediately before exporting');
   assert.equal(collected.data['dark-study-widget-settings'].state.style, 'tinted', 'export includes widget style changed immediately before exporting');
   assert.equal(collected.data['dark-study-widget-settings'].state.mode, 'upcoming', 'export includes widget mode changed immediately before exporting');
-  console.log('PASS: portable backup, widget style/mode backup & restore, preview counts, key/usage exclusions, merge identity, replacement preferences, malformed/future data rejection, partial-write rollback and crash recovery');
+
+  // --- Upgrade 3: NightSky + DesktopPet + Forward-Compatible Grade/Settings/Focus Fields ---
+  const v2Main = structuredClone(main);
+  v2Main.state.gradeRules = [
+    { ...DEFAULT_GRADE_RULES[0], retakePolicy: 'highest' },
+    { id: 'rule-latest', name: '最新策略', excludedTypes: [], excludedCourseIds: [], retakePolicy: 'latest' },
+    { id: 'rule-all', name: '全计入', excludedTypes: [], excludedCourseIds: [], retakePolicy: 'all' },
+  ];
+  const nightChronicle = {
+    visits: 12,
+    totalStarsCollected: 42,
+    unlockedConstellations: ['big-dipper', 'lyra', 'big-dipper'],
+    owlPathUnlocked: true,
+    lastConstellationId: 'lyra',
+    secretBadges: ['star-musician', 'blood-moon'],
+    wishesSent: 4,
+    meteorsTapped: 19,
+    unexpectedNoise: 'drop-me',
+  };
+  const nightFavorites = [
+    { id: 'q1', text: '星光不问赶路人', work: '夜航船', author: '张岱', category: 'book' },
+    { id: 'q1', text: '重复ID去重', work: '夜航船', category: 'book' },
+  ];
+  const nightWishes = [
+    { id: 'w1', text: '期末高数 95+', createdAt: 1730000000000, constellationName: '北斗七星', echoedAt: 1730050000000 },
+  ];
+  const desktopPet = {
+    version: 0,
+    state: {
+      autoFollowBackground: false,
+      overlayMode: 'always',
+      petScale: 1.2,
+      petOpacity: 0.85,
+      panelTheme: 'dark',
+      tapAction: 'panel',
+      showBubbles: false,
+      running: true, // transient runtime field must be stripped
+    },
+  };
+  const studyProgressWithFocus = {
+    version: 0,
+    state: {
+      attendanceByCourse: {},
+      customAbsenceLimits: {},
+      focusLogs: [],
+      pendingFarmRewards: [],
+      activeFocusSession: {
+        id: 'focus-1',
+        mode: 'focus',
+        courseKey: 'math::prof',
+        courseName: '高等数学',
+        totalSec: 1500,
+        remainingSec: 800,
+        endAt: 1730001000000,
+        running: true,
+        notificationId: 'local-notif-id',
+        ambientOn: true,
+        startedAt: 1730000000000,
+      },
+    },
+  };
+
+  const fullBackup = backup.createBackup([
+    ['dark-study-storage', JSON.stringify(v2Main)],
+    ['dark-study-settings', JSON.stringify({
+      version: 0,
+      state: {
+        appearance: 'dark',
+        graduationCreditTargets: { required: 96, elective: 32.5, general: 16 },
+      },
+    })],
+    ['dark-study-study-progress', JSON.stringify(studyProgressWithFocus)],
+    ['dark-study-desktop-pet', JSON.stringify(desktopPet)],
+    ['dark-study-night-chronicle', JSON.stringify(nightChronicle)],
+    ['dark-study-night-favorites', JSON.stringify(nightFavorites)],
+    ['dark-study-night-visits', '12'],
+    ['dark-study-night-wishes', JSON.stringify(nightWishes)],
+  ]);
+
+  assert.deepEqual(backup.parseBackup(JSON.stringify(fullBackup)), fullBackup);
+  assert.deepEqual(fullBackup.data['dark-study-settings'].state.graduationCreditTargets, { required: 96, elective: 32.5, general: 16 });
+  assert.equal(fullBackup.data['dark-study-storage'].state.gradeRules[0].retakePolicy, 'highest');
+  assert.equal(fullBackup.data['dark-study-storage'].state.gradeRules[1].retakePolicy, 'latest');
+  assert.equal('activeFocusSession' in fullBackup.data['dark-study-study-progress'].state, false, 'transient activeFocusSession is safely tolerated & omitted');
+  assert.equal(fullBackup.data['dark-study-desktop-pet'].state.overlayMode, 'always');
+  assert.equal(fullBackup.data['dark-study-desktop-pet'].state.running, undefined);
+  assert.deepEqual(fullBackup.data['dark-study-night-chronicle'].unlockedConstellations, ['big-dipper', 'lyra']);
+  assert.equal(fullBackup.data['dark-study-night-chronicle'].unexpectedNoise, undefined);
+  assert.equal(fullBackup.data['dark-study-night-favorites'].length, 1);
+  assert.equal(fullBackup.data['dark-study-night-visits'], '12');
+  assert.equal(fullBackup.data['dark-study-night-wishes'][0].echoedAt, 1730050000000);
+
+  // Validation rejections for new fields & modules
+  const badTargets = structuredClone(fullBackup);
+  badTargets.data['dark-study-settings'].state.graduationCreditTargets = { required: -5 };
+  assert.throws(() => backup.parseBackup(JSON.stringify(badTargets)), /毕业学分目标/);
+  const badRetake = structuredClone(fullBackup);
+  badRetake.data['dark-study-storage'].state.gradeRules[0].retakePolicy = 'invalid';
+  assert.throws(() => backup.parseBackup(JSON.stringify(badRetake)), /重修策略/);
+  const badPet = structuredClone(fullBackup);
+  badPet.data['dark-study-desktop-pet'].state.petScale = 9;
+  assert.throws(() => backup.parseBackup(JSON.stringify(badPet)), /桌宠缩放/);
+  const badNightVisits = structuredClone(fullBackup);
+  badNightVisits.data['dark-study-night-visits'] = '-3';
+  assert.throws(() => backup.parseBackup(JSON.stringify(badNightVisits)), /夜空访问次数/);
+  const badNightFav = structuredClone(fullBackup);
+  badNightFav.data['dark-study-night-favorites'] = [{ id: 'bad', text: 't', work: 'w', category: 'unknown' }];
+  assert.throws(() => backup.parseBackup(JSON.stringify(badNightFav)), /收藏星笺/);
+
+  // Merge semantics for night sky (union & max counters)
+  const nightMergePlan = new Map(backup.buildRestorePlan(fullBackup, [
+    ['dark-study-night-visits', '20'],
+    ['dark-study-night-chronicle', JSON.stringify({ visits: 20, totalStarsCollected: 30, unlockedConstellations: ['orion'], owlPathUnlocked: false, secretBadges: ['wish-keeper'], wishesSent: 9, meteorsTapped: 5 })],
+    ['dark-study-night-favorites', JSON.stringify([{ id: 'q0', text: '旧收藏', work: '诗经', category: 'book' }])],
+    ['dark-study-night-wishes', JSON.stringify([{ id: 'w0', text: '早睡早起', createdAt: 1730099999000, constellationName: '猎户守望' }])],
+  ], 'merge'));
+  assert.equal(nightMergePlan.get('dark-study-night-visits'), '20');
+  const mergedChronicle = JSON.parse(nightMergePlan.get('dark-study-night-chronicle'));
+  assert.equal(mergedChronicle.visits, 20);
+  assert.equal(mergedChronicle.totalStarsCollected, 42);
+  assert.equal(mergedChronicle.owlPathUnlocked, true);
+  assert.deepEqual(mergedChronicle.unlockedConstellations, ['orion', 'big-dipper', 'lyra']);
+  assert.deepEqual(mergedChronicle.secretBadges, ['wish-keeper', 'star-musician', 'blood-moon']);
+  assert.equal(JSON.parse(nightMergePlan.get('dark-study-night-favorites')).length, 2);
+  assert.equal(JSON.parse(nightMergePlan.get('dark-study-night-wishes')).length, 2);
+
+  // Full integration restore via backupStorage: desktopPet rehydrates & night-sky keys restore/clear cleanly
+  await service.restoreBackup(fullBackup, 'replace');
+  assert.equal(realLoad('src/store/useDesktopPet.ts').useDesktopPet.getState().overlayMode, 'always');
+  assert.equal(realLoad('src/store/useDesktopPet.ts').useDesktopPet.getState().petScale, 1.2);
+  assert.equal(realLoad('src/store/useDesktopPet.ts').useDesktopPet.getState().panelTheme, 'dark');
+  assert.equal(disk.get('dark-study-night-visits'), '12');
+  assert.equal(JSON.parse(disk.get('dark-study-night-wishes')).length, 1);
+
+  // Restoring an older v1 backup (without night-sky keys) in replace mode clears stale night-sky keys smoothly
+  await service.restoreBackup(result, 'replace');
+  assert.equal(disk.has('dark-study-night-chronicle'), false);
+  assert.equal(disk.has('dark-study-night-favorites'), false);
+  assert.equal(disk.has('dark-study-night-visits'), false);
+  assert.equal(disk.has('dark-study-night-wishes'), false);
+
+  console.log('PASS: portable backup, NightSky + DesktopPet + forward-compatible Grade/Settings/Focus coverage, widget style/mode backup & restore, preview counts, key/usage exclusions, merge identity, replacement preferences, malformed/future data rejection, partial-write rollback and crash recovery');
 }
 run().catch(error => { console.error(error); process.exitCode = 1; });

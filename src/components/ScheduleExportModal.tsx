@@ -1,6 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { LinearGradient } from "expo-linear-gradient";
-import React, { useId, useMemo, useState } from "react";
+import React, { useId, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -8,26 +7,42 @@ import {
   Pressable,
   ScrollView,
   Share,
-  StyleSheet,
   Text,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Svg, { Circle, Defs, RadialGradient, Stop } from "react-native-svg";
+import Svg, {
+  Circle,
+  ClipPath,
+  Defs,
+  G,
+  Line,
+  LinearGradient as SvgLinearGradient,
+  RadialGradient,
+  Rect,
+  Stop,
+  Text as SvgText,
+} from "react-native-svg";
 
 import {
   BACKGROUND_PRESETS,
   type BackgroundTint,
 } from "@/constants/backgrounds";
-import { coursePalette, WEEKDAY_LABELS } from "@/constants/palette";
-import type { Course, Schedule } from "@/types";
+import type { Schedule } from "@/types";
 import { selectHaptic, successHaptic, tapHaptic, warnHaptic } from "@/utils/haptics";
 import {
   computeScheduleStats,
   formatScheduleTextSummary,
   shareScheduleIcsFile,
 } from "@/utils/scheduleExport";
-import { addDays, mondayOf, parseIsoDate } from "@/utils/time";
+import {
+  buildScheduleWallpaperSvgMarkup,
+  buildWallpaperFileName,
+  computeScheduleWallpaperLayout,
+  exportWallpaperPng,
+  WALLPAPER_DEFAULT_HEIGHT,
+  WALLPAPER_DEFAULT_WIDTH,
+} from "@/utils/scheduleWallpaperExport";
 
 export interface ScheduleExportModalProps {
   visible: boolean;
@@ -49,327 +64,408 @@ const TINT_ORDER: BackgroundTint[] = [
   "noir",
 ];
 
-function formatWeekDateRange(schedule: Schedule, week: number): string {
-  const startMonday = mondayOf(parseIsoDate(schedule.startDate));
-  if (!Number.isFinite(startMonday.getTime())) return "";
-  const weekMon = addDays(startMonday, (week - 1) * 7);
-  const weekSun = addDays(weekMon, 6);
-  const fmt = (d: Date) =>
-    `${d.getMonth() + 1}.${String(d.getDate()).padStart(2, "0")}`;
-  return `${fmt(weekMon)} – ${fmt(weekSun)}`;
-}
-
 function WallpaperPosterCard({
   schedule,
   week,
   tint,
   posterDark,
   showWeekend,
+  svgRef,
 }: {
   schedule: Schedule;
   week: number;
   tint: BackgroundTint;
   posterDark: boolean;
   showWeekend: boolean;
+  svgRef?: React.RefObject<Svg | null>;
 }) {
   const uidPrefix = useId().replace(/[^\w-]/g, "");
-  const preset = BACKGROUND_PRESETS[tint];
-  const gradientColors = posterDark ? preset.glassDark : preset.glassLight;
-  const glowRgb = posterDark ? preset.glassDarkGlowRgb : preset.glassLightGlowRgb;
-  const dayCount = showWeekend ? 7 : 5;
-  const days = useMemo(
-    () => Array.from({ length: dayCount }, (_, i) => i + 1),
-    [dayCount],
-  );
-  const periods = schedule.periods;
-  const rowCount = Math.max(1, periods.length);
-  const rowHeight = rowCount <= 8 ? 42 : rowCount <= 10 ? 36 : 31;
-  const gridHeight = rowCount * rowHeight;
-
-  const weekCourses = useMemo(
+  const layout = useMemo(
     () =>
-      schedule.courses.filter(
-        (c) => c.weeks.includes(week) && c.weekday >= 1 && c.weekday <= dayCount,
-      ),
-    [schedule.courses, week, dayCount],
+      computeScheduleWallpaperLayout({
+        schedule,
+        week,
+        tint,
+        posterDark,
+        showWeekend,
+        width: WALLPAPER_DEFAULT_WIDTH,
+        height: WALLPAPER_DEFAULT_HEIGHT,
+      }),
+    [schedule, week, tint, posterDark, showWeekend],
   );
 
-  const dayDateLabels = useMemo(() => {
-    const startMonday = mondayOf(parseIsoDate(schedule.startDate));
-    const weekStart = addDays(startMonday, (week - 1) * 7);
-    return days.map((d) => {
-      const date = addDays(weekStart, d - 1);
-      return `${date.getMonth() + 1}/${date.getDate()}`;
-    });
-  }, [schedule.startDate, week, days]);
-
-  const dateRange = useMemo(
-    () => formatWeekDateRange(schedule, week),
-    [schedule, week],
-  );
-
-  const inkPrimary = posterDark ? "#F8FAFC" : "#0F172A";
-  const inkMuted = posterDark ? "rgba(226,232,240,0.68)" : "rgba(51,65,85,0.72)";
-  const gridLine = posterDark
-    ? "rgba(255,255,255,0.08)"
-    : "rgba(15,23,42,0.08)";
-  const surfaceBg = posterDark
-    ? "rgba(15,23,42,0.44)"
-    : "rgba(255,255,255,0.56)";
-  const surfaceBorder = posterDark
-    ? "rgba(255,255,255,0.14)"
-    : "rgba(255,255,255,0.78)";
+  const bgId = `wpBg-${uidPrefix}`;
+  const glow1Id = `wpGlow1-${uidPrefix}`;
+  const glow2Id = `wpGlow2-${uidPrefix}`;
+  const glow3Id = `wpGlow3-${uidPrefix}`;
+  const headerBaseY = layout.badge.y + 30;
 
   return (
     <View
       style={{
+        width: "100%",
+        aspectRatio: layout.width / layout.height,
         borderRadius: 28,
         overflow: "hidden",
         borderWidth: 1,
-        borderColor: surfaceBorder,
+        borderColor: layout.surfaceBorder,
       }}
     >
-      <LinearGradient
-        colors={[gradientColors[0], gradientColors[1], gradientColors[2]]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 0.9, y: 1 }}
-        style={StyleSheet.absoluteFill}
-      />
+      <Svg
+        ref={svgRef}
+        width="100%"
+        height="100%"
+        viewBox={`0 0 ${layout.width} ${layout.height}`}
+      >
+        <Defs>
+          <SvgLinearGradient id={bgId} x1="0%" y1="0%" x2="90%" y2="100%">
+            <Stop offset="0%" stopColor={layout.gradientColors[0]} />
+            <Stop offset="50%" stopColor={layout.gradientColors[1]} />
+            <Stop offset="100%" stopColor={layout.gradientColors[2]} />
+          </SvgLinearGradient>
+          <RadialGradient id={glow1Id} cx="18%" cy="14%" r="55%">
+            <Stop
+              offset="0%"
+              stopColor={`rgb(${layout.glowRgb[0]})`}
+              stopOpacity={layout.glowOpacities[0]}
+            />
+            <Stop
+              offset="100%"
+              stopColor={`rgb(${layout.glowRgb[0]})`}
+              stopOpacity={0}
+            />
+          </RadialGradient>
+          <RadialGradient id={glow2Id} cx="85%" cy="32%" r="52%">
+            <Stop
+              offset="0%"
+              stopColor={`rgb(${layout.glowRgb[1]})`}
+              stopOpacity={layout.glowOpacities[1]}
+            />
+            <Stop
+              offset="100%"
+              stopColor={`rgb(${layout.glowRgb[1]})`}
+              stopOpacity={0}
+            />
+          </RadialGradient>
+          <RadialGradient id={glow3Id} cx="50%" cy="90%" r="58%">
+            <Stop
+              offset="0%"
+              stopColor={`rgb(${layout.glowRgb[2]})`}
+              stopOpacity={layout.glowOpacities[2]}
+            />
+            <Stop
+              offset="100%"
+              stopColor={`rgb(${layout.glowRgb[2]})`}
+              stopOpacity={0}
+            />
+          </RadialGradient>
+          {layout.courses.map((course) => (
+            <ClipPath key={course.clipId} id={`${course.clipId}-${uidPrefix}`}>
+              <Rect
+                x={course.x}
+                y={course.y}
+                width={course.width}
+                height={course.height}
+                rx={course.rx}
+                ry={course.rx}
+              />
+            </ClipPath>
+          ))}
+        </Defs>
 
-      {/* Aurora 柔光光斑层（SVG 径向渐变） */}
-      <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-        <Svg width="100%" height="100%" viewBox="0 0 360 540" preserveAspectRatio="none">
-          <Defs>
-            <RadialGradient id={`posterGlow1-${uidPrefix}`} cx="18%" cy="14%" r="55%">
-              <Stop offset="0%" stopColor={`rgb(${glowRgb[0]})`} stopOpacity={posterDark ? 0.36 : 0.42} />
-              <Stop offset="100%" stopColor={`rgb(${glowRgb[0]})`} stopOpacity={0} />
-            </RadialGradient>
-            <RadialGradient id={`posterGlow2-${uidPrefix}`} cx="85%" cy="32%" r="52%">
-              <Stop offset="0%" stopColor={`rgb(${glowRgb[1]})`} stopOpacity={posterDark ? 0.32 : 0.36} />
-              <Stop offset="100%" stopColor={`rgb(${glowRgb[1]})`} stopOpacity={0} />
-            </RadialGradient>
-            <RadialGradient id={`posterGlow3-${uidPrefix}`} cx="50%" cy="90%" r="58%">
-              <Stop offset="0%" stopColor={`rgb(${glowRgb[2]})`} stopOpacity={posterDark ? 0.26 : 0.3} />
-              <Stop offset="100%" stopColor={`rgb(${glowRgb[2]})`} stopOpacity={0} />
-            </RadialGradient>
-          </Defs>
-          <Circle cx="65" cy="75" r="200" fill={`url(#posterGlow1-${uidPrefix})`} />
-          <Circle cx="305" cy="175" r="190" fill={`url(#posterGlow2-${uidPrefix})`} />
-          <Circle cx="180" cy="485" r="210" fill={`url(#posterGlow3-${uidPrefix})`} />
-        </Svg>
-      </View>
+        {/* 背景渐变 + Aurora 柔光层 */}
+        <Rect
+          x={0}
+          y={0}
+          width={layout.width}
+          height={layout.height}
+          fill={`url(#${bgId})`}
+        />
+        <Circle
+          cx={Math.round(layout.width * 0.18)}
+          cy={Math.round(layout.height * 0.14)}
+          r={Math.round(layout.width * 0.56)}
+          fill={`url(#${glow1Id})`}
+        />
+        <Circle
+          cx={Math.round(layout.width * 0.85)}
+          cy={Math.round(layout.height * 0.32)}
+          r={Math.round(layout.width * 0.52)}
+          fill={`url(#${glow2Id})`}
+        />
+        <Circle
+          cx={Math.round(layout.width * 0.5)}
+          cy={Math.round(layout.height * 0.9)}
+          r={Math.round(layout.width * 0.58)}
+          fill={`url(#${glow3Id})`}
+        />
 
-      <View style={{ padding: 16 }}>
         {/* 海报页眉 */}
-        <View className="flex-row items-end justify-between pb-3">
-          <View className="flex-1 pr-2">
-            <Text
-              numberOfLines={1}
-              style={{ color: inkMuted, fontSize: 10, fontWeight: "700", letterSpacing: 1.4 }}
-            >
-              DARK STUDY · TIMETABLE
-            </Text>
-            <Text
-              numberOfLines={1}
-              style={{ color: inkPrimary, fontSize: 19, fontWeight: "800", marginTop: 2 }}
-            >
-              {schedule.name}
-            </Text>
-          </View>
-          <View
-            style={{
-              backgroundColor: surfaceBg,
-              borderColor: surfaceBorder,
-              borderWidth: 1,
-              borderRadius: 14,
-              paddingHorizontal: 10,
-              paddingVertical: 5,
-              alignItems: "flex-end",
-            }}
+        <SvgText
+          x={layout.card.x}
+          y={headerBaseY}
+          fill={layout.inkMuted}
+          fontSize={22}
+          fontWeight="700"
+          letterSpacing={3.5}
+        >
+          DARK STUDY · TIMETABLE
+        </SvgText>
+        <SvgText
+          x={layout.card.x}
+          y={headerBaseY + 62}
+          fill={layout.inkPrimary}
+          fontSize={48}
+          fontWeight="800"
+        >
+          {layout.scheduleName}
+        </SvgText>
+
+        {/* 右上角周次徽章 */}
+        <Rect
+          x={layout.badge.x}
+          y={layout.badge.y}
+          width={layout.badge.width}
+          height={layout.badge.height}
+          rx={layout.badge.rx}
+          ry={layout.badge.rx}
+          fill={layout.surfaceBg}
+          stroke={layout.surfaceBorder}
+          strokeWidth={2}
+        />
+        <SvgText
+          x={layout.badge.x + layout.badge.width - 26}
+          y={layout.badge.y + 48}
+          textAnchor="end"
+          fill={layout.inkPrimary}
+          fontSize={32}
+          fontWeight="800"
+        >
+          {`第 ${layout.week} 周`}
+        </SvgText>
+        {layout.dateRange ? (
+          <SvgText
+            x={layout.badge.x + layout.badge.width - 26}
+            y={layout.badge.y + 82}
+            textAnchor="end"
+            fill={layout.inkMuted}
+            fontSize={22}
+            fontWeight="600"
           >
-            <Text style={{ color: inkPrimary, fontSize: 12, fontWeight: "800" }}>
-              第 {week} 周
-            </Text>
-            {dateRange ? (
-              <Text style={{ color: inkMuted, fontSize: 9.5, fontWeight: "600" }}>
-                {dateRange}
-              </Text>
-            ) : null}
-          </View>
-        </View>
+            {layout.dateRange}
+          </SvgText>
+        ) : null}
 
         {/* 玻璃课表网格容器 */}
-        <View
-          style={{
-            borderRadius: 20,
-            backgroundColor: surfaceBg,
-            borderWidth: 1,
-            borderColor: surfaceBorder,
-            overflow: "hidden",
-          }}
+        <Rect
+          x={layout.card.x}
+          y={layout.card.y}
+          width={layout.card.width}
+          height={layout.card.height}
+          rx={layout.card.rx}
+          ry={layout.card.rx}
+          fill={layout.surfaceBg}
+          stroke={layout.surfaceBorder}
+          strokeWidth={2.5}
+        />
+        <Line
+          x1={layout.card.x}
+          y1={layout.gridTopY}
+          x2={layout.card.x + layout.card.width}
+          y2={layout.gridTopY}
+          stroke={layout.gridLine}
+          strokeWidth={2}
+        />
+        <Line
+          x1={layout.card.x + layout.axisWidth}
+          y1={layout.card.y}
+          x2={layout.card.x + layout.axisWidth}
+          y2={layout.card.y + layout.card.height}
+          stroke={layout.gridLine}
+          strokeWidth={2}
+        />
+        <SvgText
+          x={layout.card.x + layout.axisWidth / 2}
+          y={layout.card.y + layout.headerRowHeight / 2 + 9}
+          textAnchor="middle"
+          fill={layout.inkMuted}
+          fontSize={22}
+          fontWeight="700"
         >
-          {/* 表头 */}
-          <View
-            style={{
-              flexDirection: "row",
-              borderBottomWidth: 1,
-              borderBottomColor: gridLine,
-              paddingVertical: 6,
-            }}
-          >
-            <View style={{ width: 26, alignItems: "center", justifyContent: "center" }}>
-              <Text style={{ color: inkMuted, fontSize: 8.5, fontWeight: "700" }}>
-                节
-              </Text>
-            </View>
-            {days.map((day, idx) => (
-              <View key={day} style={{ flex: 1, alignItems: "center" }}>
-                <Text style={{ color: inkPrimary, fontSize: 10, fontWeight: "700" }}>
-                  {WEEKDAY_LABELS[day - 1].replace("周", "")}
-                </Text>
-                <Text style={{ color: inkMuted, fontSize: 8, marginTop: 1 }}>
-                  {dayDateLabels[idx]}
-                </Text>
-              </View>
-            ))}
-          </View>
+          节
+        </SvgText>
 
-          {/* 网格主体 */}
-          <View style={{ height: gridHeight, flexDirection: "row" }}>
-            {/* 左侧节次轴 */}
-            <View style={{ width: 26, borderRightWidth: 1, borderRightColor: gridLine }}>
-              {periods.map((p, idx) => (
-                <View
-                  key={p.index}
-                  style={{
-                    height: rowHeight,
-                    alignItems: "center",
-                    justifyContent: "center",
-                    borderBottomWidth: idx < periods.length - 1 ? 1 : 0,
-                    borderBottomColor: gridLine,
-                  }}
+        {/* 表头星期与列线 */}
+        {layout.days.map((day, idx) => (
+          <G key={day.weekday}>
+            {idx > 0 ? (
+              <Line
+                x1={day.x}
+                y1={layout.gridTopY}
+                x2={day.x}
+                y2={layout.card.y + layout.card.height}
+                stroke={layout.gridLine}
+                strokeWidth={1.5}
+              />
+            ) : null}
+            <SvgText
+              x={day.centerX}
+              y={layout.card.y + 42}
+              textAnchor="middle"
+              fill={layout.inkPrimary}
+              fontSize={27}
+              fontWeight="800"
+            >
+              {day.shortLabel}
+            </SvgText>
+            {day.dateLabel ? (
+              <SvgText
+                x={day.centerX}
+                y={layout.card.y + 74}
+                textAnchor="middle"
+                fill={layout.inkMuted}
+                fontSize={20}
+                fontWeight="600"
+              >
+                {day.dateLabel}
+              </SvgText>
+            ) : null}
+          </G>
+        ))}
+
+        {/* 左侧节次与横线 */}
+        {layout.periods.map((p, idx) => {
+          const axisCx = layout.card.x + layout.axisWidth / 2;
+          return (
+            <G key={p.index}>
+              {idx > 0 ? (
+                <Line
+                  x1={layout.card.x}
+                  y1={p.y}
+                  x2={layout.card.x + layout.card.width}
+                  y2={p.y}
+                  stroke={layout.gridLine}
+                  strokeWidth={1.5}
+                />
+              ) : null}
+              <SvgText
+                x={axisCx}
+                y={p.centerY - 4}
+                textAnchor="middle"
+                fill={layout.inkPrimary}
+                fontSize={25}
+                fontWeight="800"
+              >
+                {String(p.index)}
+              </SvgText>
+              <SvgText
+                x={axisCx}
+                y={p.centerY + 23}
+                textAnchor="middle"
+                fill={layout.inkMuted}
+                fontSize={18}
+                fontWeight="600"
+              >
+                {p.startTime}
+              </SvgText>
+            </G>
+          );
+        })}
+
+        {/* 课程色块 */}
+        {layout.courses.map((course) => {
+          const textX = course.x + 17;
+          const firstLineY = course.y + 12 + course.nameFontSize;
+          const metaY =
+            firstLineY + course.nameLines.length * course.nameLineHeight + 4;
+          const teacherY = metaY + course.metaFontSize + 8;
+          return (
+            <G
+              key={course.clipId}
+              clipPath={`url(#${course.clipId}-${uidPrefix})`}
+            >
+              <Rect
+                x={course.x}
+                y={course.y}
+                width={course.width}
+                height={course.height}
+                rx={course.rx}
+                ry={course.rx}
+                fill={course.accentColor}
+                fillOpacity={course.fillOpacity}
+                stroke={course.accentColor}
+                strokeOpacity={course.strokeOpacity}
+                strokeWidth={2}
+              />
+              <Rect
+                x={course.x}
+                y={course.y}
+                width={8}
+                height={course.height}
+                fill={course.accentColor}
+              />
+              {course.nameLines.map((line, lineIdx) => (
+                <SvgText
+                  key={lineIdx}
+                  x={textX}
+                  y={firstLineY + lineIdx * course.nameLineHeight}
+                  fill={layout.inkPrimary}
+                  fontSize={course.nameFontSize}
+                  fontWeight="700"
                 >
-                  <Text style={{ color: inkPrimary, fontSize: 9, fontWeight: "700" }}>
-                    {p.index}
-                  </Text>
-                  <Text style={{ color: inkMuted, fontSize: 6.5 }}>
-                    {p.startTime}
-                  </Text>
-                </View>
+                  {line}
+                </SvgText>
               ))}
-            </View>
-
-            {/* 每日列 + 课程色块 */}
-            <View style={{ flex: 1, flexDirection: "row" }}>
-              {days.map((day, colIdx) => {
-                const dayCourses: Course[] = weekCourses.filter(
-                  (c) => c.weekday === day,
-                );
-                return (
-                  <View
-                    key={day}
-                    style={{
-                      flex: 1,
-                      position: "relative",
-                      borderRightWidth: colIdx < dayCount - 1 ? 1 : 0,
-                      borderRightColor: gridLine,
-                    }}
-                  >
-                    {periods.map((p, rIdx) => (
-                      <View
-                        key={p.index}
-                        style={{
-                          height: rowHeight,
-                          borderBottomWidth: rIdx < periods.length - 1 ? 1 : 0,
-                          borderBottomColor: gridLine,
-                        }}
-                      />
-                    ))}
-
-                    {dayCourses.map((course) => {
-                      const palette =
-                        coursePalette[course.color] ?? coursePalette.sky;
-                      const startIdx = Math.max(
-                        0,
-                        periods.findIndex((p) => p.index === course.startPeriod),
-                      );
-                      const endIdxFound = periods.findIndex(
-                        (p) => p.index === course.endPeriod,
-                      );
-                      const endIdx =
-                        endIdxFound >= startIdx
-                          ? endIdxFound
-                          : Math.min(
-                              periods.length - 1,
-                              startIdx + Math.max(0, course.endPeriod - course.startPeriod),
-                            );
-                      const span = Math.max(1, endIdx - startIdx + 1);
-                      const top = startIdx * rowHeight + 1.5;
-                      const height = Math.max(18, span * rowHeight - 3);
-
-                      return (
-                        <View
-                          key={course.id}
-                          style={{
-                            position: "absolute",
-                            top,
-                            left: 1.5,
-                            right: 1.5,
-                            height,
-                            borderRadius: 8,
-                            backgroundColor: posterDark
-                              ? `${palette.solid}38`
-                              : `${palette.solid}2E`,
-                            borderLeftWidth: 2.5,
-                            borderLeftColor: palette.solid,
-                            paddingHorizontal: 3,
-                            paddingVertical: 2,
-                            overflow: "hidden",
-                          }}
-                        >
-                          <Text
-                            numberOfLines={span >= 3 ? 3 : 2}
-                            style={{
-                              color: inkPrimary,
-                              fontSize: showWeekend ? 8.2 : 9.2,
-                              fontWeight: "700",
-                              lineHeight: showWeekend ? 10.5 : 12,
-                            }}
-                          >
-                            {course.name}
-                          </Text>
-                          {course.classroom && height >= 36 ? (
-                            <Text
-                              numberOfLines={1}
-                              style={{
-                                color: inkMuted,
-                                fontSize: showWeekend ? 7 : 7.8,
-                                marginTop: 1,
-                              }}
-                            >
-                              {course.classroom}
-                            </Text>
-                          ) : null}
-                        </View>
-                      );
-                    })}
-                  </View>
-                );
-              })}
-            </View>
-          </View>
-        </View>
+              {course.metaText ? (
+                <SvgText
+                  x={textX}
+                  y={metaY}
+                  fill={layout.inkMuted}
+                  fontSize={course.metaFontSize}
+                  fontWeight="600"
+                >
+                  {course.metaText}
+                </SvgText>
+              ) : null}
+              {course.teacherText &&
+              teacherY <= course.y + course.height - 8 ? (
+                <SvgText
+                  x={textX}
+                  y={teacherY}
+                  fill={layout.inkMuted}
+                  fontSize={Math.max(16, course.metaFontSize - 2)}
+                  fontWeight="500"
+                >
+                  {course.teacherText}
+                </SvgText>
+              ) : null}
+            </G>
+          );
+        })}
 
         {/* 海报页脚 */}
-        <View className="mt-2.5 flex-row items-center justify-between px-1">
-          <Text style={{ color: inkMuted, fontSize: 9.5, fontWeight: "600" }}>
-            本周共 {weekCourses.length} 节次排课
-          </Text>
-          <Text style={{ color: inkMuted, fontSize: 9.5, fontWeight: "600" }}>
-            {schedule.startDate} ~ {schedule.endDate}
-          </Text>
-        </View>
-      </View>
+        <SvgText
+          x={layout.card.x + 8}
+          y={layout.footerY}
+          fill={layout.inkMuted}
+          fontSize={24}
+          fontWeight="600"
+        >
+          {layout.courseCountLabel}
+        </SvgText>
+        {layout.semesterRange ? (
+          <SvgText
+            x={layout.card.x + layout.card.width - 8}
+            y={layout.footerY}
+            textAnchor="end"
+            fill={layout.inkMuted}
+            fontSize={24}
+            fontWeight="600"
+          >
+            {layout.semesterRange}
+          </SvgText>
+        ) : null}
+      </Svg>
     </View>
   );
 }
@@ -409,6 +505,9 @@ function ScheduleExportModalInner({
   const [posterDark, setPosterDark] = useState(isDark);
   const [showWeekend, setShowWeekend] = useState(true);
   const [cleanPreview, setCleanPreview] = useState(false);
+  const [wallpaperBusy, setWallpaperBusy] = useState(false);
+  const [wallpaperMsg, setWallpaperMsg] = useState("");
+  const posterSvgRef = useRef<Svg | null>(null);
 
   const clampedPosterWeek = Math.min(totalWeeks, Math.max(1, posterWeek));
   const stats = useMemo(() => computeScheduleStats(schedule), [schedule]);
@@ -420,6 +519,70 @@ function ScheduleExportModalInner({
       ),
     [schedule, textScope, currentWeek],
   );
+
+  const handleExportWallpaperPng = async (
+    androidAction: "share" | "save" = "share",
+  ) => {
+    if (wallpaperBusy) return;
+    setWallpaperBusy(true);
+    setWallpaperMsg("");
+    try {
+      const svgMarkup = buildScheduleWallpaperSvgMarkup({
+        schedule,
+        week: clampedPosterWeek,
+        tint: posterTint,
+        posterDark,
+        showWeekend,
+        width: WALLPAPER_DEFAULT_WIDTH,
+        height: WALLPAPER_DEFAULT_HEIGHT,
+      });
+      const fileName = buildWallpaperFileName(
+        schedule.name,
+        clampedPosterWeek,
+        "png",
+      );
+      const result = await exportWallpaperPng({
+        svgRef: posterSvgRef,
+        svgMarkup,
+        fileName,
+        width: WALLPAPER_DEFAULT_WIDTH,
+        height: WALLPAPER_DEFAULT_HEIGHT,
+        title: `${schedule.name} 第 ${clampedPosterWeek} 周壁纸`,
+        androidAction,
+      });
+      if (result.canceled) {
+        setWallpaperMsg("已取消保存高清壁纸。");
+        return;
+      }
+      successHaptic();
+      if (result.method === "download") {
+        setWallpaperMsg(
+          result.format === "png"
+            ? `已下载高清壁纸 ${result.fileName}（1080×1920 PNG）。`
+            : `已下载高清矢量壁纸 ${result.fileName}。`,
+        );
+      } else if (result.method === "saf") {
+        setWallpaperMsg(`高清壁纸 ${result.fileName} 已保存到所选文件夹。`);
+      } else if (result.method === "intent") {
+        setWallpaperMsg(
+          "已生成 1080×1920 高清 PNG 并打开系统图片面板，可直接设为壁纸或分享。",
+        );
+      } else {
+        setWallpaperMsg(
+          "已生成 1080×1920 高清 PNG 并唤起系统分享面板，可存储到相册或转发好友。",
+        );
+      }
+    } catch (error) {
+      warnHaptic();
+      setWallpaperMsg(
+        error instanceof Error
+          ? error.message
+          : "导出高清壁纸 PNG 失败，可使用下方全屏纯净预览截屏。",
+      );
+    } finally {
+      setWallpaperBusy(false);
+    }
+  };
 
   const handleExportIcs = async () => {
     if (busy) return;
@@ -831,29 +994,93 @@ function ScheduleExportModalInner({
                   </ScrollView>
                 </View>
 
-                {/* 壁纸海报预览 */}
+                {/* 壁纸海报预览（实时矢量画布，导出与所见 1:1 一致） */}
                 <WallpaperPosterCard
                   schedule={schedule}
                   week={clampedPosterWeek}
                   tint={posterTint}
                   posterDark={posterDark}
                   showWeekend={showWeekend}
+                  svgRef={posterSvgRef}
                 />
 
-                {/* 纯净截屏模式按钮 */}
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => {
-                    tapHaptic();
-                    setCleanPreview(true);
-                  }}
-                  className="flex-row items-center justify-center gap-2 rounded-xl bg-sky-600 py-3"
-                >
-                  <Ionicons name="expand-outline" size={16} color="#FFFFFF" />
-                  <Text className="text-[13px] font-bold text-white">
-                    隐藏界面控件 · 全屏纯净预览（便于截屏存壁纸）
+                {/* 主按钮：一键保存 / 分享高清壁纸 PNG */}
+                <View className="gap-2">
+                  <View className="flex-row gap-2">
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={wallpaperBusy}
+                      onPress={() => void handleExportWallpaperPng("share")}
+                      className={`flex-1 flex-row items-center justify-center gap-2 rounded-xl bg-sky-600 py-3 ${
+                        wallpaperBusy ? "opacity-55" : ""
+                      }`}
+                    >
+                      {wallpaperBusy ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <Ionicons
+                          name="download-outline"
+                          size={16}
+                          color="#FFFFFF"
+                        />
+                      )}
+                      <Text className="text-[13px] font-bold text-white">
+                        {wallpaperBusy
+                          ? "正在渲染高清 PNG…"
+                          : "一键保存 / 分享高清壁纸 PNG"}
+                      </Text>
+                    </Pressable>
+                    {Platform.OS === "android" ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="保存壁纸 PNG 到本地目录"
+                        disabled={wallpaperBusy}
+                        onPress={() => void handleExportWallpaperPng("save")}
+                        className={`flex-row items-center justify-center gap-1 rounded-xl border border-sky-500/40 bg-sky-500/12 px-3.5 py-3 ${
+                          wallpaperBusy ? "opacity-55" : ""
+                        }`}
+                      >
+                        <Ionicons
+                          name="folder-outline"
+                          size={15}
+                          color="#0284C7"
+                        />
+                        <Text className="text-[12px] font-bold text-sky-700 dark:text-sky-300">
+                          存目录
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+
+                  {/* 备选：全屏纯净截屏模式 */}
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={wallpaperBusy}
+                    onPress={() => {
+                      tapHaptic();
+                      setCleanPreview(true);
+                    }}
+                    className="flex-row items-center justify-center gap-1.5 rounded-xl border border-slate-200/80 bg-slate-100/80 py-2.5 dark:border-white/10 dark:bg-slate-800/80"
+                  >
+                    <Ionicons
+                      name="expand-outline"
+                      size={14}
+                      color={isDark ? "#CBD5E1" : "#475569"}
+                    />
+                    <Text className="text-[12px] font-semibold text-slate-600 dark:text-slate-300">
+                      全屏纯净预览（备选截屏模式）
+                    </Text>
+                  </Pressable>
+                </View>
+
+                {wallpaperMsg ? (
+                  <Text
+                    accessibilityLiveRegion="polite"
+                    className="px-1 text-[12px] font-medium text-sky-600 dark:text-sky-300"
+                  >
+                    {wallpaperMsg}
                   </Text>
-                </Pressable>
+                ) : null}
               </ScrollView>
             )}
           </View>

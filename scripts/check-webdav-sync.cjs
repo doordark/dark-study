@@ -660,14 +660,209 @@ async function testPushPullAndRestore() {
   assert.equal(restoreCalls[1].mode, "replace");
 }
 
+async function testAutoSyncOnLaunch() {
+  const tempEnv = createEnv();
+  const baseBackup = buildValidBackup(tempEnv.load);
+  const remoteTimeMs = Date.parse("2026-09-10T10:00:00.000Z");
+  const remoteBackup = {
+    ...baseBackup,
+    createdAt: new Date(remoteTimeMs).toISOString(),
+  };
+  const remoteJson = JSON.stringify(remoteBackup);
+
+  const restoreCalls = [];
+  const env = createEnv({
+    mocks: {
+      "@/services/backupStorage": {
+        collectBackup: async () => remoteBackup,
+        restoreBackup: async (backup, mode) => {
+          restoreCalls.push({ backup, mode });
+        },
+      },
+    },
+  });
+  const webdav = env.load("src/services/webdavSync.ts");
+
+  // 1) Pure decideAutoSyncAction matrix
+  assert.equal(
+    webdav.decideAutoSyncAction({
+      remoteCreatedAt: null,
+      localLastSyncAt: null,
+      hasRemote: false,
+    }).action,
+    "push_initial",
+  );
+  assert.equal(
+    webdav.decideAutoSyncAction({
+      remoteCreatedAt: remoteBackup.createdAt,
+      localLastSyncAt: null,
+      hasRemote: true,
+    }).action,
+    "pull_merge",
+  );
+  assert.equal(
+    webdav.decideAutoSyncAction({
+      remoteCreatedAt: remoteBackup.createdAt,
+      localLastSyncAt: remoteTimeMs - 60_000,
+      hasRemote: true,
+    }).action,
+    "pull_merge",
+  );
+  assert.equal(
+    webdav.decideAutoSyncAction({
+      remoteCreatedAt: remoteBackup.createdAt,
+      localLastSyncAt: remoteTimeMs + 2_000, // within 5s skew tolerance
+      hasRemote: true,
+    }).action,
+    "noop_up_to_date",
+  );
+  assert.equal(
+    webdav.decideAutoSyncAction({
+      remoteCreatedAt: remoteBackup.createdAt,
+      localLastSyncAt: remoteTimeMs + 120_000,
+      hasRemote: true,
+    }).action,
+    "noop_local_newer",
+  );
+  assert.equal(
+    webdav.decideAutoSyncAction({
+      remoteCreatedAt: "invalid-date",
+      localLastSyncAt: remoteTimeMs,
+      hasRemote: true,
+    }).action,
+    "noop_up_to_date",
+  );
+
+  const config = {
+    serverUrl: "https://dav.jianguoyun.com/dav/",
+    username: "student@uni.edu",
+    remotePath: "/DarkStudy/dark-study-backup.json",
+  };
+
+  // 2) Skips cleanly when config/password missing (no fetch)
+  let fetchCount = 0;
+  const skippedNoUrl = await withMockFetch(
+    async () => {
+      fetchCount += 1;
+      return createMockResponse(200, remoteJson);
+    },
+    () =>
+      webdav.runAutoSyncOnLaunch(
+        { ...config, serverUrl: "" },
+        "secret",
+        null,
+      ),
+  );
+  assert.equal(skippedNoUrl.status, "skipped");
+  assert.equal(fetchCount, 0);
+
+  const skippedNoPass = await withMockFetch(
+    async () => {
+      fetchCount += 1;
+      return createMockResponse(200, remoteJson);
+    },
+    () => webdav.runAutoSyncOnLaunch(config, "", null),
+  );
+  assert.equal(skippedNoPass.status, "skipped");
+  assert.equal(fetchCount, 0);
+
+  // 3) Remote newer -> pulls & restores in non-destructive 'merge' mode
+  const mergedRes = await withMockFetch(
+    async () => createMockResponse(200, remoteJson),
+    () =>
+      webdav.runAutoSyncOnLaunch(config, "my-secret", remoteTimeMs - 300_000, {
+        now: remoteTimeMs + 1000,
+      }),
+  );
+  assert.equal(mergedRes.status, "merged");
+  assert.equal(restoreCalls.length, 1);
+  assert.equal(restoreCalls[0].mode, "merge");
+  assert.equal(mergedRes.summary.courses, 1);
+  assert.equal(mergedRes.syncedAt, remoteTimeMs + 1000);
+
+  // 4) autoMerge: false -> returns pullable summary without calling restoreBackup
+  const availableRes = await withMockFetch(
+    async () => createMockResponse(200, remoteJson),
+    () =>
+      webdav.runAutoSyncOnLaunch(config, "my-secret", remoteTimeMs - 300_000, {
+        autoMerge: false,
+      }),
+  );
+  assert.equal(availableRes.status, "available");
+  assert.equal(restoreCalls.length, 1, "must not auto-restore when autoMerge=false");
+  assert.equal(availableRes.summary.grades, 1);
+
+  // 5) Local newer -> never overwrites local data
+  const localNewerRes = await withMockFetch(
+    async () => createMockResponse(200, remoteJson),
+    () =>
+      webdav.runAutoSyncOnLaunch(config, "my-secret", remoteTimeMs + 600_000),
+  );
+  assert.equal(localNewerRes.status, "local_newer");
+  assert.equal(restoreCalls.length, 1);
+
+  // 6) Up to date -> noop
+  const upToDateRes = await withMockFetch(
+    async () => createMockResponse(200, remoteJson),
+    () => webdav.runAutoSyncOnLaunch(config, "my-secret", remoteTimeMs),
+  );
+  assert.equal(upToDateRes.status, "up_to_date");
+  assert.equal(restoreCalls.length, 1);
+
+  // 7) Remote 404 -> pushes initial backup safely
+  const methods404 = [];
+  const pushedRes = await withMockFetch(
+    async (_url, init) => {
+      methods404.push(init.method);
+      if (init.method === "GET") return createMockResponse(404);
+      if (init.method === "MKCOL") return createMockResponse(201);
+      if (init.method === "PUT") return createMockResponse(201);
+      return createMockResponse(500);
+    },
+    () =>
+      webdav.runAutoSyncOnLaunch(config, "my-secret", null, {
+        now: remoteTimeMs + 5000,
+      }),
+  );
+  assert.equal(pushedRes.status, "pushed");
+  assert.deepEqual(methods404, ["GET", "MKCOL", "PUT"]);
+  assert.equal(pushedRes.syncedAt, remoteTimeMs + 5000);
+
+  // 8) Errors (401, network failure, malformed JSON) NEVER throw and NEVER leak password
+  const err401 = await withMockFetch(
+    async () => createMockResponse(401),
+    () => webdav.runAutoSyncOnLaunch(config, "top-secret-pw", null),
+  );
+  assert.equal(err401.status, "error");
+  assert.match(err401.message, /401/);
+  assert(!err401.message.includes("top-secret-pw"));
+
+  const errNet = await withMockFetch(
+    async () => {
+      throw new TypeError("offline");
+    },
+    () => webdav.runAutoSyncOnLaunch(config, "top-secret-pw", null),
+  );
+  assert.equal(errNet.status, "error");
+  assert(!errNet.message.includes("top-secret-pw"));
+
+  const errBadJson = await withMockFetch(
+    async () => createMockResponse(200, "{corrupt"),
+    () => webdav.runAutoSyncOnLaunch(config, "top-secret-pw", null),
+  );
+  assert.equal(errBadJson.status, "error");
+  assert.match(errBadJson.message, /JSON/);
+}
+
 async function run() {
   await testUrlAndPathNormalization();
   await testUtf8BasicAuth();
   await testCredentialsAndSettingsNoPasswordPersist();
   await testConnectionChecks();
   await testPushPullAndRestore();
+  await testAutoSyncOnLaunch();
   console.log(
-    "PASS: WebDAV URL/path normalization & traversal rejection, UTF-8 Basic Auth, SecureStore credentials without AsyncStorage password persistence, PROPFIND/fallback connection checks, MKCOL+PUT push, and GET+parseBackup pull/restore verified",
+    "PASS: WebDAV URL/path normalization & traversal rejection, UTF-8 Basic Auth, SecureStore credentials without AsyncStorage password persistence, PROPFIND/fallback connection checks, MKCOL+PUT push, GET+parseBackup pull/restore, and autoSyncOnLaunch decision & execution verified",
   );
 }
 

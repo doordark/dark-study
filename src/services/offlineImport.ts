@@ -12,7 +12,10 @@ import type {
   SemesterKind,
 } from "@/types";
 import { normalizeParsedPeriods } from "@/utils/courseEditing";
-import { cleanHtmlToText, parseIcsSchedule } from "@/utils/documentParser";
+import {
+  cleanHtmlToText,
+  parseIcsScheduleDetailed,
+} from "@/utils/documentParser";
 import {
   parseEduCourses,
   parseEduGrades,
@@ -659,13 +662,12 @@ export function parseScheduleTextCourses(
 ): Course[] {
   // 1) .ics 日历直接解析
   if (/BEGIN:VCALENDAR/i.test(rawText) && /BEGIN:VEVENT/i.test(rawText)) {
-    const sem = resolveSemester();
-    const icsCourses = parseIcsSchedule(rawText, {
-      startDate: ctx?.startDate ?? sem.startDate,
+    const icsResult = parseIcsScheduleDetailed(rawText, {
+      startDate: ctx?.startDate,
       totalWeeks,
       periods: ctx?.periods?.length ? ctx.periods : DEFAULT_PERIODS,
     });
-    if (icsCourses.length) return icsCourses;
+    if (icsResult.courses.length) return icsResult.courses;
   }
 
   // 1.5) 教务系统（新正方 JSON / 强智·青果 HTML）与 WakeUp 导出快车道
@@ -850,17 +852,20 @@ export async function recognizePeriodsOffline(uri: string): Promise<Period[]> {
 function buildSchedule(
   courses: Course[],
   ctx?: OfflineScheduleContext,
+  override?: { name?: string; startDate?: string; totalWeeks?: number },
 ): Schedule {
   const sem = resolveSemester();
   const startDate =
-    ctx?.startDate && /^\d{4}-\d{2}-\d{2}$/.test(ctx.startDate)
-      ? ctx.startDate
-      : sem.startDate;
-  const totalWeeks = ctx?.totalWeeks ?? sem.totalWeeks;
+    override?.startDate && /^\d{4}-\d{2}-\d{2}$/.test(override.startDate)
+      ? override.startDate
+      : ctx?.startDate && /^\d{4}-\d{2}-\d{2}$/.test(ctx.startDate)
+        ? ctx.startDate
+        : sem.startDate;
+  const totalWeeks = override?.totalWeeks ?? ctx?.totalWeeks ?? sem.totalWeeks;
   const periods = ctx?.periods?.length ? ctx.periods : DEFAULT_PERIODS;
   return {
     id: "import-preview",
-    name: sem.name,
+    name: override?.name?.trim() || sem.name,
     kind: sem.kind,
     startDate,
     endDate: toIsoDate(
@@ -900,6 +905,21 @@ export function recognizeScheduleFromTextOffline(
   text: string,
   ctx?: OfflineScheduleContext,
 ): Schedule {
+  if (/BEGIN:VCALENDAR/i.test(text) && /BEGIN:VEVENT/i.test(text)) {
+    const icsResult = parseIcsScheduleDetailed(text, {
+      startDate: ctx?.startDate,
+      totalWeeks: ctx?.totalWeeks,
+      periods: ctx?.periods?.length ? ctx.periods : DEFAULT_PERIODS,
+    });
+    if (icsResult.courses.length) {
+      return buildSchedule(icsResult.courses, ctx, {
+        name: icsResult.calendarName,
+        startDate: icsResult.startDate,
+        totalWeeks: icsResult.totalWeeks,
+      });
+    }
+  }
+
   const sem = resolveSemester();
   const totalWeeks = ctx?.totalWeeks ?? sem.totalWeeks;
   const courses = parseScheduleTextCourses(text, totalWeeks, ctx);
