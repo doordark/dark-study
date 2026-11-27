@@ -106,6 +106,9 @@ export interface GradeType {
   name: string;
 }
 
+/** 重修计分策略：全部计入 / 重修取最高 / 重修取最新 */
+export type GradeRetakePolicy = "all" | "highest" | "latest";
+
 /** 成绩计算规则：命名后可反复切换，如「综测绩点」「保研绩点」 */
 export interface GradeRule {
   id: string;
@@ -114,6 +117,8 @@ export interface GradeRule {
   excludedTypes: string[];
   /** 手动勾除的课程 id */
   excludedCourseIds: string[];
+  /** 重修计分策略（未设置时默认 "all"，保持与存量规则兼容） */
+  retakePolicy?: GradeRetakePolicy;
 }
 
 /** 联网检索来源 */
