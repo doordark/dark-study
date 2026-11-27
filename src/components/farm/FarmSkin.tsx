@@ -7,6 +7,8 @@ export const FARM_INK = '#59432E';
 export const FARM_BODY_FONT = Platform.select({ ios: 'System', android: 'sans-serif', web: 'system-ui' });
 const headingFont = Platform.select({ ios: 'Georgia', android: 'serif', web: 'Georgia, serif' });
 const SLOT_SKIN = require('../../../assets/images/farm-bag-slots-v6.png');
+const SETTINGS_BTN_SKIN = require('../../../assets/images/farm-settings-btn.webp');
+const PORTRAIT_FRAME_SKIN = require('../../../assets/images/farm-portrait-frame.webp');
 
 export function FarmText({ style, variant = 'body', ...props }: TextProps & { variant?: 'body' | 'title' | 'label' }) {
   return <Text {...props} style={[typography.base, typography[variant], style]} />;
@@ -97,6 +99,122 @@ export function FarmSlotFrame({
         />
       </View>
       {children}
+    </View>
+  );
+}
+
+/** 农场顶栏专属设置按钮框（暖木配黄铜齿轮徽章，带轻按反馈与选中暖金微光） */
+export function FarmSettingsButtonFrame({
+  size = 38,
+  active = false,
+  pressed = false,
+  style,
+}: {
+  size?: number;
+  active?: boolean;
+  pressed?: boolean;
+  style?: StyleProp<ViewStyle>;
+}) {
+  return (
+    <View
+      style={[
+        {
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          alignItems: 'center',
+          justifyContent: 'center',
+          transform: [{ scale: pressed ? 0.94 : 1 }],
+          opacity: pressed ? 0.9 : 1,
+          boxShadow: active
+            ? [{ offsetX: 0, offsetY: 0, blurRadius: 8, color: 'rgba(232, 184, 87, 0.65)' }]
+            : undefined,
+        },
+        style,
+      ]}
+    >
+      <Image
+        accessible={false}
+        source={SETTINGS_BTN_SKIN}
+        resizeMode="contain"
+        fadeDuration={0}
+        style={{ width: size, height: size }}
+      />
+      {active ? (
+        <View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              borderRadius: size / 2,
+              borderWidth: 1.5,
+              borderColor: 'rgba(232, 184, 87, 0.9)',
+            },
+          ]}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+/** 农场全员（居民 / 访客 / 摊主）统一暖色田园人物头像框 */
+export function FarmPortraitFrame({
+  size = 52,
+  tone = 'warm',
+  children,
+  style,
+}: {
+  size?: number;
+  tone?: 'warm' | 'horror';
+  children?: ReactNode;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const isHorror = tone === 'horror';
+  const innerInset = Math.round(size * 0.1);
+  return (
+    <View
+      style={[
+        {
+          width: size,
+          height: size,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: 'transparent',
+        },
+        style,
+      ]}
+    >
+      <Image
+        accessible={false}
+        source={PORTRAIT_FRAME_SKIN}
+        resizeMode="contain"
+        fadeDuration={0}
+        style={{
+          position: 'absolute',
+          width: size,
+          height: size,
+          opacity: isHorror ? 0.85 : 1,
+        }}
+      />
+      {isHorror ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: innerInset,
+            right: innerInset,
+            top: innerInset,
+            bottom: innerInset,
+            borderRadius: Math.round(size * 0.14),
+            backgroundColor: 'rgba(34, 15, 48, 0.78)',
+            borderWidth: 1,
+            borderColor: 'rgba(214, 79, 125, 0.55)',
+          }}
+        />
+      ) : null}
+      <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+        {children}
+      </View>
     </View>
   );
 }

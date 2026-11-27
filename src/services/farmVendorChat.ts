@@ -105,7 +105,7 @@ export async function vendorChat(options: {
   const query = /^(?:请)?(?:帮我)?(?:查一下|搜一下|联网搜索)[：:\s]*(.{2,120})$/.exec(text)?.[1];
   if (!apiKey || (query && !webSearch)) return { reply: NPC_CHAT_UNAVAILABLE, reaction: 'neutral', unavailable: true };
   try {
-    const hits = query ? await searchWeb(query, signal) : [];
+    const hits = query ? await searchWeb(query, signal, apiKey) : [];
     const limit = vendorDiscountLimit(vendor, memory);
     const context = farmChatContext(memory, text).filter(turn => turn.reply !== '你来得正好，看看今天的货和委托吧。');
     const deal = options.deal && options.deal.until > options.at ? options.deal.discountPercent : 0;

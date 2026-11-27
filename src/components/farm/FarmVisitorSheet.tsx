@@ -30,7 +30,7 @@ import { CropSprite, FarmDishSprite, FarmUiIcon } from './CropSprite';
 import { FarmChatConversation, type FarmChatMessage } from './FarmChatConversation';
 import { FarmEmotionMeter } from './FarmEmotionMeter';
 import { FarmNPCSheet } from './FarmNPCSheet';
-import { FarmButton, FarmParchmentCard, FarmSlotFrame, FarmText } from './FarmSkin';
+import { FarmButton, FarmParchmentCard, FarmPortraitFrame, FarmSlotFrame, FarmText } from './FarmSkin';
 import { FarmVisitorSprite } from './FarmVisitorSprite';
 
 export function FarmVisitorSheet({
@@ -162,7 +162,7 @@ export function FarmVisitorSheet({
       >
         {/* 顶栏 */}
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingTop: 12, paddingBottom: 8, gap: 10 }}>
-          <FarmSlotFrame size={50} rarity={isHorror ? 3 : isDafeiyu ? 4 : 2} selected={isHorror}>
+          <FarmPortraitFrame size={54} tone={isHorror ? 'horror' : 'warm'}>
             <FarmVisitorSprite
               who={currentId}
               activity={isHorror ? 'talk' : 'idle'}
@@ -171,7 +171,7 @@ export function FarmVisitorSheet({
               active
               centered
             />
-          </FarmSlotFrame>
+          </FarmPortraitFrame>
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
               <FarmText variant="title" style={{ color: isHorror ? '#FFB7CE' : '#533B24', fontSize: 15, fontWeight: '800' }}>
@@ -235,10 +235,11 @@ export function FarmVisitorSheet({
                 </View>
               ) : null}
             </View>
-            <FarmText style={{ color: isHorror ? '#BCA2C9' : '#857056', fontSize: 10.5, marginTop: 2 }}>
-              {profile.title}
-              {!isHorror && stayHint ? ` · ${stayHint}` : ''}
-            </FarmText>
+            {!isHorror && stayHint ? (
+              <FarmText style={{ color: '#857056', fontSize: 10.5, marginTop: 2 }}>
+                {stayHint}
+              </FarmText>
+            ) : null}
           </View>
 
           {!isHorror ? (

@@ -1,8 +1,10 @@
 import { create } from "zustand";
 
+import { UPDATE_MIRRORS } from "@/config/update";
 import type { ReleaseInfo } from "@/services/updater";
 import {
   createApkDownload,
+  detectFastestUpdateRoute,
   fetchLatestRelease,
   installApk,
   isNewer,
@@ -30,7 +32,10 @@ interface UpdateState {
   fileUri: string | null;
   /** 上次检查时间戳 */
   lastCheckedAt: number | null;
+  /** 下载镜像前缀（空字符串表示 GitHub 直连） */
+  mirrorPrefix: string;
 
+  setMirrorPrefix: (prefix: string) => void;
   check: () => Promise<void>;
   download: () => Promise<void>;
   cancelDownload: () => void;
@@ -51,13 +56,34 @@ export const useUpdateTask = create<UpdateState>()((set, get) => ({
   message: "",
   fileUri: null,
   lastCheckedAt: null,
+  mirrorPrefix: "",
+
+  setMirrorPrefix: (prefix: string) => {
+    set({ mirrorPrefix: prefix.trim() });
+  },
 
   check: async () => {
-    const { phase } = get();
+    const { phase, mirrorPrefix } = get();
     if (phase === "checking" || phase === "downloading") return;
     set({ phase: "checking", message: "" });
     try {
-      const info = await fetchLatestRelease();
+      const defaultFallbacks = (Array.isArray(UPDATE_MIRRORS) ? UPDATE_MIRRORS : [])
+        .map((item) => item.prefix)
+        .filter((prefix) => prefix !== mirrorPrefix);
+      const route =
+        typeof detectFastestUpdateRoute === "function"
+          ? await detectFastestUpdateRoute()
+          : {
+              fastestPrefix: mirrorPrefix,
+              orderedPrefixes: [mirrorPrefix, ...defaultFallbacks],
+              fallbackMirrors: defaultFallbacks,
+            };
+      const primaryPrefix = route.fastestPrefix;
+      set({ mirrorPrefix: primaryPrefix });
+      const info = await fetchLatestRelease({
+        mirrorPrefix: primaryPrefix,
+        orderedPrefixes: route.orderedPrefixes,
+      });
       if (isNewer(info)) {
         set({
           phase: "available",
@@ -75,20 +101,47 @@ export const useUpdateTask = create<UpdateState>()((set, get) => ({
   },
 
   download: async () => {
-    const { phase, info } = get();
+    const { phase, info, mirrorPrefix } = get();
     if (phase !== "available" || !info) return;
     const generation = ++downloadGeneration;
     const current = () => generation === downloadGeneration;
     set({ phase: "downloading", progress: 0, message: "" });
+
+    const defaultFallbacks = (Array.isArray(UPDATE_MIRRORS) ? UPDATE_MIRRORS : [])
+      .map((item) => item.prefix)
+      .filter((prefix) => prefix !== mirrorPrefix);
+
+    let primaryMirror = mirrorPrefix;
+    let fallbackMirrors = defaultFallbacks;
+    if (typeof detectFastestUpdateRoute === "function") {
+      try {
+        const route = await detectFastestUpdateRoute(info.apkUrl);
+        if (!current()) return;
+        primaryMirror = route.fastestPrefix;
+        fallbackMirrors = route.fallbackMirrors;
+        set({ mirrorPrefix: primaryMirror });
+      } catch {
+        if (!current()) return;
+      }
+    }
+
     /** 进度按整数百分比去重上报，避免高频 setState 抖动渲染 */
     let lastPercent = -1;
-    const { promise, cancel } = createApkDownload(info.apkUrl, (p) => {
-      const percent = Math.floor(p * 100);
-      if (current() && percent !== lastPercent) {
-        lastPercent = percent;
-        set({ progress: p });
-      }
-    });
+    const { promise, cancel } = createApkDownload(
+      info.apkUrl,
+      (p) => {
+        const percent = Math.floor(p * 100);
+        if (current() && percent !== lastPercent) {
+          lastPercent = percent;
+          set({ progress: p });
+        }
+      },
+      {
+        expectedSha256: info.sha256,
+        mirrorPrefix: primaryMirror,
+        fallbackMirrors,
+      },
+    );
     activeCancel = cancel;
     try {
       const uri = await promise;
@@ -116,11 +169,11 @@ export const useUpdateTask = create<UpdateState>()((set, get) => ({
   },
 
   install: async () => {
-    const { phase, fileUri } = get();
+    const { phase, fileUri, info } = get();
     if (phase !== "downloaded" || !fileUri) return;
     try {
-      // 缓存可能被系统清理：先确认安装包还在
-      if (!(await verifyApk(fileUri))) {
+      // 缓存可能被系统清理或文件被篡改：先确认安装包有效
+      if (!(await verifyApk(fileUri, info?.sha256))) {
         set({
           phase: "available",
           fileUri: null,

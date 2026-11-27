@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, Text, View } from 'react-native';
 import { GlassContainer } from './GlassContainer';
+import { WebdavSyncCard } from './WebdavSyncCard';
 import { backupSummary, type Backup } from '@/utils/backup';
 import { useStore } from '@/store/useStore';
 import { countDistinctCourses } from '@/utils/time';
@@ -67,6 +68,7 @@ export function BackupSettings() {
     {busy ? <ActivityIndicator color="#38BDF8" /> : null}
     {message ? <Text accessibilityLiveRegion="polite" className="text-sm text-slate-600 dark:text-slate-300">{message}</Text> : null}
   </View></GlassContainer>
+  <WebdavSyncCard />
   <GlassContainer radius={24} intensity={42} borderOpacity={0.22}><View style={{ padding: 18, gap: 10 }}>
     <Text className="text-[14px] font-bold text-slate-800 dark:text-white">危险操作</Text>
     <Text className="text-xs leading-5 text-slate-500 dark:text-slate-400">当前共有 {schedules.length} 份课表（{totalCourses} 门课）和 {grades.length} 条成绩记录。重置将一并清空全部课表、成绩与绩点规则，建议先导出备份。</Text>

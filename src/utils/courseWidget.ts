@@ -7,8 +7,8 @@ export type WidgetShape = "square" | "rectangle" | "large";
 export type WidgetTheme = "system" | "dark" | "light";
 /** 卡片表面质感：清透玻璃 / 澎湃瓷卡 / 主题彩卡 */
 export type WidgetSurfaceStyle = "frosted" | "porcelain" | "tinted";
-/** 展示内容模式：智能预告（今日及后续） / 仅看今日（今日无课显示可爱空态） */
-export type WidgetDisplayMode = "upcoming" | "today";
+/** 展示内容模式：智能预告（今日及后续） / 仅看今日（今日无课显示可爱空态） / 本周一览（周一至周日紧凑全览） */
+export type WidgetDisplayMode = "upcoming" | "today" | "week";
 
 export const WIDGET_SHAPES = [
   { key: "square", label: "小方卡", size: "2 × 2", capacity: 2, desc: "紧凑聚焦" },
@@ -25,7 +25,25 @@ export const WIDGET_SURFACE_STYLES = [
 export const WIDGET_DISPLAY_MODES = [
   { key: "upcoming", label: "智能预告", desc: "优先今日，顺延显示后续课程" },
   { key: "today", label: "仅看今日", desc: "今日无课时展示可爱放空态" },
+  { key: "week", label: "本周一览", desc: "按周一至周日紧凑展示本周每天的课程安排" },
 ] as const;
+
+export interface WeekWidgetDayCourse {
+  id: string;
+  name: string;
+  startTime: string;
+  classroom: string;
+  color: CourseColor;
+}
+
+export interface WeekWidgetDay {
+  weekday: number;
+  dayLabel: string;
+  isToday: boolean;
+  courses: WeekWidgetDayCourse[];
+}
+
+const WEEK_DAY_LABELS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"] as const;
 
 export interface WidgetCourse {
   id: string;
@@ -95,6 +113,70 @@ export function upcomingWidgetCourses(schedule: Schedule | undefined, now = new 
 export function todayWidgetCourses(courses: WidgetCourse[], now = new Date()): WidgetCourse[] {
   const todayIso = toIsoDate(now);
   return courses.filter((item) => toIsoDate(new Date(item.start)) === todayIso);
+}
+
+/** 按周一至周日汇总当前教学周的课程列表，供「本周一览」小组件预览与测试使用 */
+export function weekWidgetDays(
+  schedule: Schedule | undefined,
+  now = new Date(),
+): WeekWidgetDay[] {
+  if (!schedule) return [];
+  const monday = mondayOf(parseIsoDate(schedule.startDate));
+  if (!Number.isFinite(monday.getTime())) return [];
+
+  const diffDays = Math.floor(
+    (Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) -
+      Date.UTC(monday.getFullYear(), monday.getMonth(), monday.getDate())) /
+      86400000,
+  );
+  const activeWeek = Math.floor(diffDays / 7) + 1;
+  const todayWeekday = now.getDay() === 0 ? 7 : now.getDay();
+  const buckets: { startMin: number; course: WeekWidgetDayCourse }[][] = Array.from(
+    { length: 7 },
+    () => [],
+  );
+
+  if (activeWeek >= 1 && activeWeek <= schedule.totalWeeks) {
+    for (const course of schedule.courses) {
+      if (!Number.isInteger(course.weekday) || course.weekday < 1 || course.weekday > 7) continue;
+      if (!course.weeks.includes(activeWeek)) continue;
+      const first = schedule.periods.find((p) => p.index === course.startPeriod);
+      const last = schedule.periods.find((p) => p.index === course.endPeriod);
+      const startTime = course.startTime?.trim() || first?.startTime?.trim();
+      const endTime = course.endTime?.trim() || last?.endTime?.trim();
+      const from = clock(startTime);
+      const to = clock(endTime);
+      if (from === null || to === null || to <= from || !startTime) continue;
+
+      const day = addDays(monday, (activeWeek - 1) * 7 + course.weekday - 1);
+      const iso = toIsoDate(day);
+      if (iso < schedule.startDate || iso > schedule.endDate) continue;
+
+      buckets[course.weekday - 1].push({
+        startMin: from,
+        course: {
+          id: course.id,
+          name: course.name,
+          startTime,
+          classroom: course.classroom,
+          color: course.color,
+        },
+      });
+    }
+  }
+
+  return WEEK_DAY_LABELS.map((dayLabel, idx) => {
+    const weekday = idx + 1;
+    const courses = buckets[idx]
+      .sort((a, b) => a.startMin - b.startMin || a.course.name.localeCompare(b.course.name))
+      .map((entry) => entry.course);
+    return {
+      weekday,
+      dayLabel,
+      isToday: weekday === todayWeekday,
+      courses,
+    };
+  });
 }
 
 export function widgetDayLabel(start: number, now = new Date()): string {

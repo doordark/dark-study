@@ -4,6 +4,7 @@ import { requireNativeView, requireOptionalNativeModule } from "expo";
 
 export interface NativeLiquidGlassViewProps extends ViewProps {
   blurTargetId?: number;
+  allowTargetLookup?: boolean;
   blurRadius: number;
   cornerRadius: number;
   isDark: boolean;

@@ -56,13 +56,14 @@ function TabButton({ item }: { item: ActionItem }) {
   const pressY = useSharedValue(0);
   const tapRing = useSharedValue(0);
   const primaryRef = useRef<ComponentRef<typeof View> | null>(null);
-  const navFrame1Ref = useRef<number | null>(null);
-  const navFrame2Ref = useRef<number | null>(null);
+  const navTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navPendingRef = useRef(false);
 
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme !== "light";
-  const glass = useSettings((s) => s.material === "glass");
+  const translucent = useSettings(
+    (s) => s.material === "glass" || s.material === "clear",
+  );
   const bgTint = useSettings((s) => s.backgroundTint);
   const reduced = useReducedMotion();
   const resolvedTint = resolveTint(bgTint);
@@ -73,13 +74,9 @@ function TabButton({ item }: { item: ActionItem }) {
 
   useEffect(
     () => () => {
-      if (navFrame1Ref.current != null) {
-        cancelAnimationFrame(navFrame1Ref.current);
-        navFrame1Ref.current = null;
-      }
-      if (navFrame2Ref.current != null) {
-        cancelAnimationFrame(navFrame2Ref.current);
-        navFrame2Ref.current = null;
+      if (navTimerRef.current != null) {
+        clearTimeout(navTimerRef.current);
+        navTimerRef.current = null;
       }
       navPendingRef.current = false;
       cancelAnimation(scaleX);
@@ -178,17 +175,15 @@ function TabButton({ item }: { item: ActionItem }) {
         item.onPress();
         return;
       }
-      // 错开 2 帧（约 16-32ms）再触发助手页路由挂载，避免 React 19 把重页面首次渲染合批进扩散动画首帧
+      // 黄金错峰接力：先让径向波纹在零阻塞 UI 线程丝滑冲出半屏（与主题设置同款无竞争环境），
+      // 约 125ms 后再轻柔淡入助手页，彻底避免首帧渲染与扩散前段撞车掉帧。
       navPendingRef.current = true;
       const proceed = item.onPress;
-      navFrame1Ref.current = requestAnimationFrame(() => {
-        navFrame1Ref.current = null;
-        navFrame2Ref.current = requestAnimationFrame(() => {
-          navFrame2Ref.current = null;
-          navPendingRef.current = false;
-          proceed();
-        });
-      });
+      navTimerRef.current = setTimeout(() => {
+        navTimerRef.current = null;
+        navPendingRef.current = false;
+        proceed();
+      }, 125);
       return;
     }
     if (isPrimary && !getWhaleDockOrigin()) {
@@ -266,7 +261,7 @@ function TabButton({ item }: { item: ActionItem }) {
               </LinearGradient>
             )
           ) : (
-            /* 普通 tab：液态玻璃下选中态为高亮瓷白胶囊，形成清透玻璃与瓷白实体反差 */
+            /* 普通 tab：液态玻璃与清透材质下选中态为高亮瓷白胶囊，形成通透底座与瓷白实体反差 */
             <View
               style={{
                 borderRadius: 18,
@@ -275,7 +270,7 @@ function TabButton({ item }: { item: ActionItem }) {
                 alignItems: "center",
                 justifyContent: "center",
                 backgroundColor: item.active
-                  ? glass
+                  ? translucent
                     ? isDark
                       ? "rgba(248,250,252,0.92)"
                       : "rgba(255,255,255,0.88)"
@@ -284,7 +279,7 @@ function TabButton({ item }: { item: ActionItem }) {
                       : "rgba(14,165,233,0.10)"
                   : "transparent",
                 borderWidth: item.active ? 1 : 0,
-                borderColor: glass
+                borderColor: translucent
                   ? "rgba(255,255,255,0.96)"
                   : isDark
                     ? "rgba(186,230,253,0.16)"
@@ -296,14 +291,14 @@ function TabButton({ item }: { item: ActionItem }) {
                 size={19}
                 color={
                   item.active
-                    ? glass
+                    ? translucent
                       ? isDark
                         ? activeAccent.dark
                         : activeAccent.light
                       : isDark
                         ? "#BAE6FD"
                         : "#0284C7"
-                    : glass
+                    : translucent
                       ? isDark
                         ? "rgba(241,245,249,0.86)"
                         : "#334155"
@@ -319,10 +314,10 @@ function TabButton({ item }: { item: ActionItem }) {
             <Text
               className={`mt-1 text-[10px] font-medium ${
                 item.active
-                  ? glass
+                  ? translucent
                     ? "font-semibold text-slate-900 dark:text-white"
                     : "text-sky-600 dark:text-sky-300"
-                  : glass
+                  : translucent
                     ? "text-slate-700 dark:text-slate-200/90"
                     : "text-slate-500 dark:text-slate-400"
               }`}

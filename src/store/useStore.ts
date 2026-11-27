@@ -1,6 +1,11 @@
 import { create, type StateCreator } from "zustand";
 import { persist } from "zustand/middleware";
-import { normalizeCourseTasks, type CourseTask } from "@/utils/courseTasks";
+import {
+  normalizeCourseTasks,
+  normalizeTaskDraft,
+  type CourseTask,
+  type CourseTaskDraft,
+} from "@/utils/courseTasks";
 
 import { DEFAULT_GRADE_RULES, DEFAULT_GRADE_TYPES, DEFAULT_GRADE_YEARS, SAMPLE_SCHEDULE } from "@/constants/sample";
 import type {
@@ -220,7 +225,7 @@ export type ScheduleMetaPatch = Partial<
 interface AppState {
   /** 全部课表（如 "大二下"、"大三上"），可自由命名、切换 */
   schedules: Schedule[];
-  /** 旧版待办仅用于保留已保存的数据和兼容备份。 */
+  /** 课程作业、考试与复习待办 */
   courseTasks: CourseTask[];
   /** 当前选中的课表 id */
   activeScheduleId: string;
@@ -246,6 +251,8 @@ interface AppState {
   duplicateSchedule: (id: string) => string | null;
   /** 仅清空当前课表的全部课程，保留作息、学期与其他课表/成绩 */
   clearActiveCourses: () => void;
+  /** 整表替换当前课表的课程列表（用于节假日调休与一键撤销） */
+  replaceActiveCourses: (courses: Course[]) => void;
   removeSchedule: (id: string) => void;
   /** 更新课表信息（命名 / 开学、放假日期），日期变更后自动重算总周数 */
   updateScheduleMeta: (id: string, patch: ScheduleMetaPatch) => void;
@@ -276,6 +283,13 @@ interface AppState {
   /** 删除当前记录的指定周次，省略周次时删除整条记录；保留同课程其他时段 */
   removeCourseOnce: (id: string, targetWeeks?: number[]) => void;
   setPeriods: (periods: Schedule["periods"]) => void;
+
+  /* ---------------- 课程作业与考试待办 ---------------- */
+  addCourseTask: (draft: CourseTaskDraft) => string;
+  updateCourseTask: (id: string, patch: Partial<CourseTaskDraft>) => void;
+  toggleCourseTask: (id: string) => void;
+  removeCourseTask: (id: string) => void;
+  clearCompletedCourseTasks: () => void;
 
   /* ---------------- 成绩与绩点 ---------------- */
   addGrade: (grade: Omit<GradeRecord, "id">) => string;
@@ -382,6 +396,22 @@ export const createAppState: StateCreator<AppState> = (set, get) => ({
 
       clearActiveCourses: () =>
         set((s) => mapActive(s, (cur) => ({ ...cur, courses: [] }))),
+
+      replaceActiveCourses: (courses) =>
+        set((s) =>
+          mapActive(s, (cur) => {
+            const nextCourses = rekeyCourses(courses);
+            const maxPeriod = nextCourses.reduce(
+              (max, c) => Math.max(max, c.endPeriod),
+              cur.periods.length,
+            );
+            return {
+              ...cur,
+              courses: nextCourses,
+              periods: extendPeriodsToCount(cur.periods, maxPeriod),
+            };
+          }),
+        ),
 
       applyPeriodsToAllSchedules: () => {
         const state = get();
@@ -615,6 +645,55 @@ export const createAppState: StateCreator<AppState> = (set, get) => ({
           if (error) throw new Error(error);
           const next = { ...cur, periods };
           return { ...next, courses: cur.courses.map(c => (c.startTime || c.endTime) ? { ...c, ...normalizeCoursePatch(c, {}, next) } : c) };
+        })),
+
+      addCourseTask: (draft) => {
+        const normalized = normalizeTaskDraft(draft);
+        if (!normalized) throw new Error("任务标题、截止时间或考试信息无效");
+        const id = `task-${uid()}`;
+        set((s) => ({
+          courseTasks: [...s.courseTasks, { ...normalized, id }],
+        }));
+        return id;
+      },
+
+      updateCourseTask: (id, patch) =>
+        set((s) => {
+          const target = s.courseTasks.find((t) => t.id === id);
+          if (!target) return {};
+          const merged = { ...target, ...patch };
+          const normalized = normalizeTaskDraft(merged);
+          if (!normalized) throw new Error("任务标题、截止时间或考试信息无效");
+          const updated: CourseTask = {
+            ...normalized,
+            id: target.id,
+            ...(target.completedAt ? { completedAt: target.completedAt } : {}),
+          };
+          return {
+            courseTasks: s.courseTasks.map((t) => (t.id === id ? updated : t)),
+          };
+        }),
+
+      toggleCourseTask: (id) =>
+        set((s) => ({
+          courseTasks: s.courseTasks.map((t) => {
+            if (t.id !== id) return t;
+            if (t.completedAt) {
+              const { completedAt: _done, ...rest } = t;
+              return rest;
+            }
+            return { ...t, completedAt: Date.now() };
+          }),
+        })),
+
+      removeCourseTask: (id) =>
+        set((s) => ({
+          courseTasks: s.courseTasks.filter((t) => t.id !== id),
+        })),
+
+      clearCompletedCourseTasks: () =>
+        set((s) => ({
+          courseTasks: s.courseTasks.filter((t) => !t.completedAt),
         })),
 
       addGrade: (grade) => {

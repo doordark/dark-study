@@ -2,7 +2,15 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router, useFocusEffect, useIsFocused } from "expo-router";
 import { useColorScheme } from "nativewind";
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  memo,
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   AppState,
   FlatList,
@@ -91,7 +99,7 @@ import { nowTs, uid } from "@/utils/id";
 import { getDateInfo } from "@/utils/time";
 import { pickPersonaLine } from "@/utils/whaleBehavior";
 import { describeWhaleEmotion, resolveBondStage } from "@/utils/whaleEmotion";
-import { renderPersonaText } from "@/utils/whalePersona";
+import { getWhaleAgentConfig, renderPersonaText, type WhaleThinkingMode } from "@/utils/whalePersona";
 
 
 interface WhaleQuickItem {
@@ -181,6 +189,7 @@ const SCHEDULE_TYPES = new Set([
   "update",
   "create_schedule",
   "merge_schedule",
+  "add_task",
 ]);
 const isScheduleAction = (a: AssistantAction): a is ScheduleAction =>
   SCHEDULE_TYPES.has(a.type);
@@ -602,7 +611,7 @@ const WhaleChatBubble = memo(function WhaleChatBubble({
                 }}
               >
                 {m.actions.length > 1
-                  ? `预览 ${m.actions.length} 项课表操作`
+                  ? `预览 ${m.actions.length} 项操作`
                   : m.actions[0].type === "add"
                     ? "预览添加课程"
                     : m.actions[0].type === "remove"
@@ -611,7 +620,9 @@ const WhaleChatBubble = memo(function WhaleChatBubble({
                         ? "预览课程修改"
                         : m.actions[0].type === "create_schedule"
                           ? "预览新建课表"
-                          : "预览合并课表"}
+                          : m.actions[0].type === "merge_schedule"
+                            ? "预览合并课表"
+                            : "预览新增待办"}
               </Text>
             </TactilePressable>
           ) : null}
@@ -645,10 +656,12 @@ function WhaleTypingBubble({
   whale,
   personaName,
   isDark,
+  statusText,
 }: {
   whale: boolean;
   personaName: string;
   isDark: boolean;
+  statusText?: string | null;
 }) {
   const reducedMotion = useReducedMotion();
   const active = useAnimationActive(!reducedMotion);
@@ -768,7 +781,7 @@ function WhaleTypingBubble({
                 : "#475569",
           }}
         >
-          {whale ? `${personaName}正在嚼白饭想回复…` : "正在思考…"}
+          {statusText || (whale ? `${personaName}正在嚼白饭想回复…` : "正在思考…")}
         </Text>
       </View>
     </Animated.View>
@@ -1028,6 +1041,8 @@ export function AssistantScreen() {
   const applyMood = useWhaleMemory((s) => s.applyMood);
   const bumpBond = useWhaleMemory((s) => s.bumpBond);
   const persona = useWhalePersona((s) => s.persona);
+  const updateWhaleAgent = useWhalePersona((s) => s.updateAgent);
+  const whaleAgent = useMemo(() => getWhaleAgentConfig(persona), [persona]);
   const personaName = persona.name;
   const setWhale = useWhaleMemory((s) => s.setActive);
   const archiveMemory = useWhaleMemory((s) => s.archive);
@@ -1063,11 +1078,13 @@ export function AssistantScreen() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [busyStatus, setBusyStatus] = useState<string | null>(null);
   const pendingRequest = useRef<AbortController | null>(null);
   const stopRequest = useCallback(() => {
     pendingRequest.current?.abort();
     pendingRequest.current = null;
     setBusy(false);
+    setBusyStatus(null);
   }, []);
   const [notice, setNotice] = useState<{
     type: "error" | "success";
@@ -1140,12 +1157,27 @@ export function AssistantScreen() {
   const avatarBtnScale = useSharedValue(1);
   const popoverAvatarBounce = useSharedValue(1);
   const haloPulse = useSharedValue(0);
-  // 首帧进场与径向扩散波纹期间延后次要常驻动画，并避免首次打开触发整页 FadeIn 离屏合成
+  // 首帧进场与径向扩散波纹期间保持极轻骨架，等扩散波纹完全落幕后再无感点亮次要装饰与呼吸光环
   const [mountSettled, setMountSettled] = useState(false);
 
   useEffect(() => {
-    const timer = setTimeout(() => setMountSettled(true), 280);
-    return () => clearTimeout(timer);
+    let cancelled = false;
+    let rafId: number | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    rafId = requestAnimationFrame(() => {
+      rafId = null;
+      if (cancelled) return;
+      timer = setTimeout(() => {
+        if (!cancelled) {
+          startTransition(() => setMountSettled(true));
+        }
+      }, 460);
+    });
+    return () => {
+      cancelled = true;
+      if (rafId != null) cancelAnimationFrame(rafId);
+      if (timer) clearTimeout(timer);
+    };
   }, []);
 
   // 顶栏头像情绪呼吸光环（遵守节电、前台生命周期与进场转场稳定门控）
@@ -1609,6 +1641,7 @@ export function AssistantScreen() {
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
     setBusy(true);
+    setBusyStatus(null);
     setNotice(null);
     const memoryEpoch = useWhaleMemory.getState().epoch;
 
@@ -1629,6 +1662,13 @@ export function AssistantScreen() {
         },
         apiKey,
         controller.signal,
+        {
+          onStatus: (status) => {
+            if (!controller.signal.aborted && mountedRef.current) {
+              setBusyStatus(status);
+            }
+          },
+        },
       );
       if (controller.signal.aborted || useWhaleMemory.getState().epoch !== memoryEpoch) return;
 
@@ -1644,6 +1684,7 @@ export function AssistantScreen() {
         role: "assistant",
         content: result.reply,
         actions: scheduleActions.length ? scheduleActions : undefined,
+        sources: result.sources?.length ? result.sources : undefined,
         timestamp: nowTs(),
       };
       // 文本与表情一起入库，下一轮立即可见，避免延迟补发串到下一轮。
@@ -1684,6 +1725,7 @@ export function AssistantScreen() {
       if (pendingRequest.current === controller) {
         pendingRequest.current = null;
         setBusy(false);
+        setBusyStatus(null);
       }
     }
   };
@@ -1739,7 +1781,8 @@ export function AssistantScreen() {
         const query = String(action.query ?? "").trim();
         if (!query) continue;
         try {
-          const hits = await searchWeb(query, signal);
+          setBusyStatus(`正在联网检索「${query.slice(0, 18)}」…`);
+          const hits = await searchWeb(query, signal, apiKey);
           if (!hits.length) throw new Error("没有结果");
           const answer = await answerFromSearch(userText, hits, apiKey, signal);
           if (signal.aborted || useWhaleMemory.getState().epoch !== memoryEpoch) return;
@@ -2180,9 +2223,9 @@ export function AssistantScreen() {
               </GlassContainer>
           </View>
 
-          {/* 消息区：鲸鱼模式下垫一层主题自适应的柔光漂浮贴图（进场稳定后启动漂浮动画） */}
+          {/* 消息区：鲸鱼模式下在扩散动画落幕后再挂载柔光漂浮贴图，保证进场 120fps 零卡顿 */}
           <View className="flex-1">
-            {whale ? <WhaleDeco active={mountSettled} /> : null}
+            {whale && mountSettled ? <WhaleDeco active /> : null}
 
             {selectMode ? (
               <Animated.View
@@ -2498,6 +2541,7 @@ export function AssistantScreen() {
                       whale={whale}
                       personaName={personaName}
                       isDark={isDark}
+                      statusText={busyStatus}
                     />
                   </View>
                 ) : null}
@@ -2581,8 +2625,8 @@ export function AssistantScreen() {
                 className="flex-1"
                 style={{ paddingHorizontal: 16 }}
                 contentContainerStyle={{ paddingTop: 12, paddingBottom: 18 }}
-                initialNumToRender={8}
-                maxToRenderPerBatch={6}
+                initialNumToRender={5}
+                maxToRenderPerBatch={4}
                 windowSize={5}
                 removeClippedSubviews={false}
                 overScrollMode="never"
@@ -2629,6 +2673,7 @@ export function AssistantScreen() {
                         whale={whale}
                         personaName={personaName}
                         isDark={isDark}
+                        statusText={busyStatus}
                       />
                     ) : null}
                     {notice ? (
@@ -3320,7 +3365,158 @@ export function AssistantScreen() {
                   ) : null}
                 </View>
 
-                {/* 5. 底部快捷互动三键：摸摸头 / 喂白饭 / 人设记忆 */}
+                {/* 4.5 Agent 能力快捷微调：联网搜索 / 深度思考 / 临时指令状态 */}
+                <View
+                  style={{
+                    marginTop: 10,
+                    borderRadius: 16,
+                    padding: 10,
+                    backgroundColor: isDark
+                      ? "rgba(15,23,42,0.42)"
+                      : "rgba(255,255,255,0.60)",
+                    borderWidth: 1,
+                    borderColor: isDark
+                      ? "rgba(186,230,253,0.14)"
+                      : "rgba(56,189,248,0.22)",
+                    gap: 8,
+                  }}
+                >
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <TactilePressable
+                      accessibilityRole="switch"
+                      accessibilityState={{ checked: whaleAgent.webSearchEnabled }}
+                      accessibilityLabel="DeepSeek 官方联网搜索"
+                      onPress={() => {
+                        tapHaptic();
+                        updateWhaleAgent({
+                          webSearchEnabled: !whaleAgent.webSearchEnabled,
+                        });
+                      }}
+                      style={{
+                        flex: 1,
+                        flexDirection: "row",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 5,
+                        minHeight: 34,
+                        borderRadius: 12,
+                        paddingHorizontal: 8,
+                        backgroundColor: whaleAgent.webSearchEnabled
+                          ? isDark
+                            ? "rgba(56,189,248,0.22)"
+                            : "rgba(14,165,233,0.14)"
+                          : isDark
+                            ? "rgba(255,255,255,0.06)"
+                            : "rgba(148,163,184,0.14)",
+                        borderWidth: 0.75,
+                        borderColor: whaleAgent.webSearchEnabled
+                          ? "rgba(56,189,248,0.45)"
+                          : "rgba(148,163,184,0.24)",
+                      }}
+                    >
+                      <Ionicons
+                        name="globe-outline"
+                        size={13}
+                        color={whaleAgent.webSearchEnabled ? "#38BDF8" : "#94A3B8"}
+                      />
+                      <Text
+                        numberOfLines={1}
+                        style={{
+                          fontSize: 11,
+                          fontWeight: "700",
+                          color: whaleAgent.webSearchEnabled
+                            ? isDark
+                              ? "#7DD3FC"
+                              : "#0284C7"
+                            : isDark
+                              ? "#94A3B8"
+                              : "#64748B",
+                        }}
+                      >
+                        官方联网 {whaleAgent.webSearchEnabled ? "开" : "关"}
+                      </Text>
+                    </TactilePressable>
+
+                    <TactilePressable
+                      accessibilityRole="button"
+                      accessibilityLabel="切换思考模式"
+                      onPress={() => {
+                        tapHaptic();
+                        const order: WhaleThinkingMode[] = ["auto", "enabled", "disabled"];
+                        const next =
+                          order[(order.indexOf(whaleAgent.thinkingMode) + 1) % order.length];
+                        updateWhaleAgent({ thinkingMode: next });
+                      }}
+                      style={{
+                        flex: 1,
+                        flexDirection: "row",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 5,
+                        minHeight: 34,
+                        borderRadius: 12,
+                        paddingHorizontal: 8,
+                        backgroundColor:
+                          whaleAgent.thinkingMode !== "disabled"
+                            ? isDark
+                              ? "rgba(167,139,250,0.22)"
+                              : "rgba(139,92,246,0.13)"
+                            : isDark
+                              ? "rgba(255,255,255,0.06)"
+                              : "rgba(148,163,184,0.14)",
+                        borderWidth: 0.75,
+                        borderColor:
+                          whaleAgent.thinkingMode !== "disabled"
+                            ? "rgba(167,139,250,0.45)"
+                            : "rgba(148,163,184,0.24)",
+                      }}
+                    >
+                      <Ionicons
+                        name="bulb-outline"
+                        size={13}
+                        color={
+                          whaleAgent.thinkingMode !== "disabled" ? "#A78BFA" : "#94A3B8"
+                        }
+                      />
+                      <Text
+                        numberOfLines={1}
+                        style={{
+                          fontSize: 11,
+                          fontWeight: "700",
+                          color:
+                            whaleAgent.thinkingMode !== "disabled"
+                              ? isDark
+                                ? "#DDD6FE"
+                                : "#6D28D9"
+                              : isDark
+                                ? "#94A3B8"
+                                : "#64748B",
+                        }}
+                      >
+                        思考：
+                        {whaleAgent.thinkingMode === "auto"
+                          ? "智能"
+                          : whaleAgent.thinkingMode === "enabled"
+                            ? "深思"
+                            : "极速"}
+                      </Text>
+                    </TactilePressable>
+                  </View>
+
+                  {whaleAgent.quickDirectiveEnabled && whaleAgent.quickDirective ? (
+                    <Text
+                      numberOfLines={1}
+                      style={{
+                        fontSize: 10.5,
+                        color: isDark ? "#7DD3FC" : "#0369A1",
+                      }}
+                    >
+                      ⚡ 临时指令生效中：{whaleAgent.quickDirective}
+                    </Text>
+                  ) : null}
+                </View>
+
+                {/* 5. 底部快捷互动三键：摸摸头 / 喂白饭 / Agent 设置 */}
                 <View style={{ flexDirection: "row", alignItems: "stretch", gap: 8, marginTop: 11 }}>
                   <PopoverQuickAction
                     icon="hand-left-outline"
@@ -3338,7 +3534,7 @@ export function AssistantScreen() {
                   />
                   <PopoverQuickAction
                     icon="options-outline"
-                    label="人设记忆"
+                    label="Agent 设置"
                     accent="#38BDF8"
                     isDark={isDark}
                     onPress={() => {

@@ -1,3 +1,5 @@
+import type { CourseTaskDraft } from "@/utils/courseTasks";
+
 /** 课程主题色 */
 export type CourseColor =
   | "sky"
@@ -186,7 +188,9 @@ export type ScheduleAction =
   /** 新建一份课表（如「外教课」），并切换为当前 */
   | { type: "create_schedule"; scheduleName: string }
   /** 把另一份课表的课程合并进当前课表（时间/周数自动换算） */
-  | { type: "merge_schedule"; sourceScheduleName: string };
+  | { type: "merge_schedule"; sourceScheduleName: string }
+  /** 新建课程作业、考试或复习待办（含考场/座位/开闭卷） */
+  | { type: "add_task"; task: CourseTaskDraft };
 
 /** 助手可执行的完整操作：课表操作 + 大爹专属权限 */
 export type AssistantAction = ScheduleAction | WhaleAction;

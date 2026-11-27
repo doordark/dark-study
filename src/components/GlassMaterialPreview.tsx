@@ -8,9 +8,9 @@ import { BACKGROUND_PRESETS, resolveTint } from "@/constants/backgrounds";
 import { GlassContainer, GlassTargetProvider } from "@/components/GlassContainer";
 import { NativeLiquidGlassTargetView } from "@/components/LiquidGlassNative";
 import { useReducedTransparency } from "@/hooks/useReducedTransparency";
-import { useSettings } from "@/store/useSettings";
+import { useSettings, type CardMaterial } from "@/store/useSettings";
 
-export function GlassMaterialPreview({ material }: { material: "flat" | "glass" }) {
+export function GlassMaterialPreview({ material }: { material: CardMaterial }) {
   const id = useId().replace(/[^\w-]/g, "");
   const target = useRef<ComponentRef<typeof View> | null>(null);
   const [targetId, setTargetId] = useState<number | undefined>(undefined);
@@ -25,7 +25,7 @@ export function GlassMaterialPreview({ material }: { material: "flat" | "glass" 
   const preset = BACKGROUND_PRESETS[resolveTint(backgroundTint)];
   const reduceTransparency = useReducedTransparency();
   const capture =
-    material === "glass" &&
+    (material === "glass" || material === "frosted") &&
     !reduceTransparency &&
     Platform.OS === "android" &&
     Number(Platform.Version) >= 31;
@@ -90,10 +90,10 @@ export function GlassMaterialPreview({ material }: { material: "flat" | "glass" 
         </Background>
         <GlassContainer
           material={material}
-          variant="floating"
+          variant={material === "clear" ? "surface" : "floating"}
           tint={isDark ? "dark" : "light"}
-          radius={20}
-          borderOpacity={0.26}
+          radius={18}
+          borderOpacity={material === "frosted" ? 0.32 : 0.26}
           style={styles.sample}
         >
           <View style={styles.sampleRow}>
@@ -102,13 +102,17 @@ export function GlassMaterialPreview({ material }: { material: "flat" | "glass" 
                 styles.activePill,
                 {
                   backgroundColor:
-                    material === "glass"
+                    material === "frosted"
                       ? isDark
-                        ? "rgba(255,255,255,0.9)"
-                        : "rgba(255,255,255,0.92)"
-                      : isDark
-                        ? "rgba(56,189,248,0.28)"
-                        : "rgba(14,165,233,0.18)",
+                        ? "rgba(255,255,255,0.72)"
+                        : "rgba(255,255,255,0.96)"
+                      : material === "glass" || material === "clear"
+                        ? isDark
+                          ? "rgba(255,255,255,0.9)"
+                          : "rgba(255,255,255,0.92)"
+                        : isDark
+                          ? "rgba(56,189,248,0.28)"
+                          : "rgba(14,165,233,0.18)",
                 },
               ]}
             />
@@ -143,27 +147,27 @@ export function GlassMaterialPreview({ material }: { material: "flat" | "glass" 
 
 const styles = StyleSheet.create({
   tile: {
-    aspectRatio: 1.54,
+    aspectRatio: 1.38,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 15,
     overflow: "hidden",
   },
   sample: {
-    width: "80%",
-    height: 40,
+    width: "82%",
+    height: 34,
     justifyContent: "center",
   },
   sampleRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 10,
-    gap: 8,
+    paddingHorizontal: 8,
+    gap: 6,
   },
   activePill: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
   },
   barGroup: {
     flex: 1,

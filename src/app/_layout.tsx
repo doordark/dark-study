@@ -1,4 +1,4 @@
-import { DarkTheme, DefaultTheme, Stack, ThemeProvider, usePathname } from "expo-router";
+import { DarkTheme, DefaultTheme, router, Stack, ThemeProvider, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { colorScheme as appColorScheme, useColorScheme } from "nativewind";
 import { useEffect, useRef, useState } from "react";
@@ -14,6 +14,7 @@ import { useWhalePet } from "@/store/useWhalePet";
 import { useWhaleVoice } from "@/store/useWhaleVoice";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
+import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import { CourseReminderSync } from "@/components/CourseReminderSync";
 import { CourseWidgetSync } from "@/components/CourseWidgetSync";
 import { ImportTaskOverlay } from "@/components/ImportTaskOverlay";
@@ -123,30 +124,38 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ThemeProvider value={isDark ? DarkTheme : DefaultTheme}>
-        <Stack
-          key={`navigation-${dataRevision}`}
-          screenOptions={{
-            headerShown: false,
-            animation: "slide_from_bottom",
-            contentStyle: { backgroundColor: "transparent" },
-          }}
-        >
-          <Stack.Screen name="index" />
-          <Stack.Screen name="import" options={{ presentation: "modal" }} />
-          <Stack.Screen name="assistant" options={{ presentation: "modal" }} />
-          <Stack.Screen name="grades" options={{ presentation: "modal" }} />
-          <Stack.Screen name="settings" options={{ presentation: "modal" }} />
-          <Stack.Screen name="settings/[category]" options={{ animation: "slide_from_right" }} />
-          <Stack.Screen name="whale-settings" options={{ presentation: "modal" }} />
-          <Stack.Screen
-            name="farm"
-            options={{
-              presentation: "fullScreenModal",
-              animation: "none",
-              contentStyle: { backgroundColor: "#081224" },
+        <AppErrorBoundary isDark={isDark} onGoHome={() => router.replace("/")}>
+          <Stack
+            key={`navigation-${dataRevision}`}
+            screenOptions={{
+              headerShown: false,
+              animation: "slide_from_bottom",
+              contentStyle: { backgroundColor: "transparent" },
             }}
-          />
-        </Stack>
+          >
+            <Stack.Screen name="index" />
+            <Stack.Screen name="import" options={{ presentation: "modal" }} />
+            <Stack.Screen
+              name="assistant"
+              options={{
+                animation: "fade",
+                animationDuration: 180,
+              }}
+            />
+            <Stack.Screen name="grades" options={{ presentation: "modal" }} />
+            <Stack.Screen name="settings" options={{ presentation: "modal" }} />
+            <Stack.Screen name="settings/[category]" options={{ animation: "slide_from_right" }} />
+            <Stack.Screen name="whale-settings" options={{ presentation: "modal" }} />
+            <Stack.Screen
+              name="farm"
+              options={{
+                presentation: "fullScreenModal",
+                animation: "none",
+                contentStyle: { backgroundColor: "#081224" },
+              }}
+            />
+          </Stack>
+        </AppErrorBoundary>
         {/* 全局导入任务悬浮层：分析进度弹窗 / 可拖动进度球，退出导入页后任务继续 */}
         <CourseReminderSync />
         <CourseWidgetSync />

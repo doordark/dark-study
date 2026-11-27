@@ -1,5 +1,6 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
+import { useColorScheme } from "nativewind";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -33,11 +34,17 @@ import { AfterHours, type AfterHoursKind } from "@/components/AfterHours";
 import { Backdrop } from "@/components/Backdrop";
 import { CourseCard, EmptySlotCard } from "@/components/CourseCard";
 import { CourseEditorPanel } from "@/components/CourseEditorPanel";
+import { CourseSearchStatsModal } from "@/components/CourseSearchStatsModal";
+import { CourseStudyModal } from "@/components/CourseStudyModal";
+import { CourseTaskSheet } from "@/components/CourseTaskSheet";
 import {
   GlassContainer,
   GlassTargetProvider,
 } from "@/components/GlassContainer";
+import { HolidayShiftModal } from "@/components/HolidayShiftModal";
 import { NightSky } from "@/components/NightSky";
+import { PeerCompareModal } from "@/components/PeerCompareModal";
+import { ScheduleExportModal } from "@/components/ScheduleExportModal";
 import { WeekGrid } from "@/components/WeekGrid";
 import { WhaleAvatar } from "@/components/WhaleAvatar";
 import { GravityBadge, GravityCard } from "@/components/ZeroG";
@@ -52,13 +59,26 @@ import {
   openCourseAlarm,
   openCourseCalendar,
 } from "@/services/systemCourseReminders";
+import { useDataSession } from "@/store/useDataSession";
 import { useSettings } from "@/store/useSettings";
 import { useActiveSchedule, useStore } from "@/store/useStore";
+import { useStudyProgress } from "@/store/useStudyProgress";
 import { useWhaleMemory } from "@/store/useWhaleMemory";
 import { useWhalePet } from "@/store/useWhalePet";
 import type { Course } from "@/types";
+import {
+  TASK_TYPES,
+  formatTaskCountdown,
+  getUpcomingTasks,
+} from "@/utils/courseTasks";
 import { upcomingWidgetCourses } from "@/utils/courseWidget";
 import { selectHaptic, thumpHaptic } from "@/utils/haptics";
+import {
+  computeAttendanceSummary,
+  courseIdentityKey,
+  getAttendanceRiskCourses,
+  getCourseSlotsByKey,
+} from "@/utils/studyProgress";
 import { playSfx, playStarScaleNote } from "@/services/soundEffects";
 import {
   addDays,
@@ -114,12 +134,16 @@ export function CourseScheduleScreen({
   const [undoChoice, setUndoChoice] = useState<ScheduleChange | null>(null);
   const [undoFailed, setUndoFailed] = useState<ScheduleChange | null>(null);
   const schedules = useStore((s) => s.schedules);
+  const courseTasks = useStore((s) => s.courseTasks);
   const activeScheduleId = useStore((s) => s.activeScheduleId);
   const setActiveSchedule = useStore((s) => s.setActiveSchedule);
   const addCourse = useStore((s) => s.addCourse);
   const updateCourse = useStore((s) => s.updateCourse);
   const removeCourse = useStore((s) => s.removeCourse);
   const removeCourseOnce = useStore((s) => s.removeCourseOnce);
+  const replaceActiveCourses = useStore((s) => s.replaceActiveCourses);
+  const { colorScheme } = useColorScheme();
+  const isDark = colorScheme !== "light";
 
   // 持久化的课表展示偏好
   const defaultScheduleView = useSettings((s) => s.defaultScheduleView);
@@ -196,8 +220,153 @@ export function CourseScheduleScreen({
   const [editorToken, setEditorToken] = useState(0);
   const [quickCourse, setQuickCourse] = useState<Course | null>(null);
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [taskSheetOpen, setTaskSheetOpen] = useState(false);
+  const [taskSheetCourse, setTaskSheetCourse] = useState<Course | null>(null);
+  const [taskSheetCreate, setTaskSheetCreate] = useState(false);
+  const [taskSheetToken, setTaskSheetToken] = useState(0);
+  const [taskBannerCollapsed, setTaskBannerCollapsed] = useState(false);
+  const [holidayOpen, setHolidayOpen] = useState(false);
+  const [holidayUndo, setHolidayUndo] = useState<{
+    scheduleId: string;
+    prevCourses: Course[];
+    summary: string;
+  } | null>(null);
+  const [searchStatsOpen, setSearchStatsOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [studyModalOpen, setStudyModalOpen] = useState(false);
+  const [studyCourse, setStudyCourse] = useState<Course | null>(null);
+  const [studyInitialTab, setStudyInitialTab] = useState<"focus" | "attendance">(
+    "focus",
+  );
+  const [peerCompareOpen, setPeerCompareOpen] = useState(false);
   const [nightOpen, setNightOpen] = useState(false);
   const [afterHours, setAfterHours] = useState<AfterHoursKind | null>(null);
+
+  const attendanceByCourse = useStudyProgress((s) => s.attendanceByCourse);
+  const customAbsenceLimits = useStudyProgress((s) => s.customAbsenceLimits);
+  const dataRevision = useDataSession((s) => s.revision);
+
+  // 桌面小组件单课深链（dark-study://?courseId=...&week=...）：每个参数值仅自动定位并弹一次
+  const deepLinkParams = useLocalSearchParams<{
+    courseId?: string;
+    week?: string;
+  }>();
+  const rawLinkCourseId = Array.isArray(deepLinkParams.courseId)
+    ? deepLinkParams.courseId[0]
+    : deepLinkParams.courseId;
+  const rawLinkWeek = Array.isArray(deepLinkParams.week)
+    ? deepLinkParams.week[0]
+    : deepLinkParams.week;
+  const handledDeepLinkRef = useRef<string | null>(null);
+  useEffect(() => {
+    const courseId = rawLinkCourseId?.trim() ?? "";
+    const weekStr = rawLinkWeek?.trim() ?? "";
+    if (!courseId && !weekStr) return;
+    const token = `${courseId}|${weekStr}`;
+    if (handledDeepLinkRef.current === token) return;
+
+    const parsedWeek = weekStr ? Number.parseInt(weekStr, 10) : Number.NaN;
+    const validWeek =
+      Number.isInteger(parsedWeek) &&
+      parsedWeek >= 1 &&
+      parsedWeek <= totalWeeks
+        ? parsedWeek
+        : null;
+
+    if (courseId) {
+      const matched = schedule.courses.find((c) => c.id === courseId);
+      if (!matched && !useStore.persist.hasHydrated()) return;
+      const timer = setTimeout(() => {
+        if (handledDeepLinkRef.current === token) return;
+        handledDeepLinkRef.current = token;
+        if (!matched) {
+          if (validWeek !== null) setWeekIndex(validWeek);
+          return;
+        }
+        if (validWeek !== null) {
+          setWeekIndex(validWeek);
+        } else if (matched.weeks.length) {
+          setWeekIndex(Math.min(Math.max(matched.weeks[0], 1), totalWeeks));
+        }
+        setWeekday(matched.weekday);
+        setQuickCourse(matched);
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+
+    const timer = setTimeout(() => {
+      if (handledDeepLinkRef.current === token) return;
+      handledDeepLinkRef.current = token;
+      if (validWeek !== null) setWeekIndex(validWeek);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [rawLinkCourseId, rawLinkWeek, schedule.courses, setWeekday, totalWeeks]);
+
+  // 勾掉作业/复习/考试时自动掉落星露坡奖励（过滤备份恢复与重复勾选）
+  const prevTasksMapRef = useRef<Map<string, boolean> | null>(null);
+  const prevRevisionRef = useRef(dataRevision);
+  const rewardedTaskIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (
+      useDataSession.getState().restoring ||
+      prevRevisionRef.current !== dataRevision
+    ) {
+      prevRevisionRef.current = dataRevision;
+      prevTasksMapRef.current = new Map(
+        courseTasks.map((t) => [t.id, Boolean(t.completedAt)]),
+      );
+      return;
+    }
+    const prevMap = prevTasksMapRef.current;
+    if (prevMap) {
+      for (const task of courseTasks) {
+        const wasDone = prevMap.get(task.id);
+        const isDone = Boolean(task.completedAt);
+        if (
+          wasDone === false &&
+          isDone &&
+          !rewardedTaskIdsRef.current.has(task.id)
+        ) {
+          rewardedTaskIdsRef.current.add(task.id);
+          useStudyProgress.getState().queueTaskReward(task.type, task.title);
+        }
+      }
+    }
+    prevTasksMapRef.current = new Map(
+      courseTasks.map((t) => [t.id, Boolean(t.completedAt)]),
+    );
+  }, [courseTasks, dataRevision]);
+
+  const attendanceRiskCount = useMemo(
+    () =>
+      getAttendanceRiskCourses(
+        schedule,
+        attendanceByCourse,
+        customAbsenceLimits,
+      ).length,
+    [schedule, attendanceByCourse, customAbsenceLimits],
+  );
+
+  const quickCourseAttendance = useMemo(() => {
+    if (!quickCourse) return null;
+    const key = courseIdentityKey(quickCourse);
+    const slots = getCourseSlotsByKey(schedule, key);
+    return computeAttendanceSummary(
+      slots.length ? slots : quickCourse,
+      attendanceByCourse[key],
+      customAbsenceLimits[key],
+    );
+  }, [quickCourse, schedule, attendanceByCourse, customAbsenceLimits]);
+
+  const openStudyModal = useCallback(
+    (targetCourse: Course | null = null, tab: "focus" | "attendance" = "focus") => {
+      selectHaptic();
+      setStudyCourse(targetCourse);
+      setStudyInitialTab(tab);
+      setStudyModalOpen(true);
+    },
+    [],
+  );
 
   // 第二个彩蛋：静默触发
   const [gravityToken, setGravityToken] = useState(0);
@@ -296,6 +465,75 @@ export function CourseScheduleScreen({
     [schedule.courses, activeWeek, schedule.periods],
   );
 
+  // 近期未完成作业/考试与按课程统计角标
+  const nowMs = now.getTime();
+  const upcomingTasks = useMemo(
+    () => getUpcomingTasks(courseTasks, nowMs, 5),
+    [courseTasks, nowMs],
+  );
+  const pendingTaskCount = useMemo(
+    () => courseTasks.reduce((n, t) => n + (t.completedAt ? 0 : 1), 0),
+    [courseTasks],
+  );
+  const taskCountByCourseId = useMemo(() => {
+    const map = new Map<string, number>();
+    const pending = courseTasks.filter((t) => !t.completedAt && t.course);
+    if (!pending.length) return map;
+    for (const c of schedule.courses) {
+      let count = 0;
+      for (const t of pending) {
+        if (
+          t.course?.scheduleId === schedule.id &&
+          (t.course.courseId === c.id || t.course.courseName === c.name)
+        ) {
+          count += 1;
+        }
+      }
+      if (count > 0) map.set(c.id, count);
+    }
+    return map;
+  }, [courseTasks, schedule.courses, schedule.id]);
+
+  const openTaskSheet = useCallback(
+    (presetCourse?: Course | null, createDirectly = false) => {
+      selectHaptic();
+      setTaskSheetCourse(presetCourse ?? null);
+      setTaskSheetCreate(createDirectly);
+      setTaskSheetToken((t) => t + 1);
+      setTaskSheetOpen(true);
+    },
+    [],
+  );
+
+  const handleApplyHolidayShift = useCallback(
+    (nextCourses: Course[], summary: string) => {
+      const prevCourses = schedule.courses.map((c) => ({
+        ...c,
+        weeks: [...c.weeks],
+      }));
+      replaceActiveCourses(nextCourses);
+      setHolidayUndo({
+        scheduleId: schedule.id,
+        prevCourses,
+        summary,
+      });
+      setHolidayOpen(false);
+    },
+    [replaceActiveCourses, schedule.courses, schedule.id],
+  );
+
+  const handleUndoHolidayShift = useCallback(() => {
+    if (!holidayUndo) return;
+    if (holidayUndo.scheduleId !== activeScheduleId) {
+      setHolidayUndo(null);
+      Alert.alert("已切换课表", "当前课表已切换，无法直接撤销上次调休。");
+      return;
+    }
+    selectHaptic();
+    replaceActiveCourses(holidayUndo.prevCourses);
+    setHolidayUndo(null);
+  }, [activeScheduleId, holidayUndo, replaceActiveCourses]);
+
   // 日视图课程按真实开始分钟稳定排序（同节次不同精确时间顺序明确）
   const dayCourses = useMemo(
     () =>
@@ -312,6 +550,21 @@ export function CourseScheduleScreen({
         }),
     [schedule.courses, schedule.periods, weekday, activeWeek],
   );
+
+  // 真实今天的课程数（不随用户翻看的周/日变化），供夜空感知课业松紧
+  const realTodayCourseCount = useMemo(() => {
+    if (semesterStatus.phase !== "active") return 0;
+    return schedule.courses.filter(
+      (c) =>
+        c.weekday === dateInfo.weekday &&
+        c.weeks.includes(dateInfo.weekIndex),
+    ).length;
+  }, [
+    semesterStatus.phase,
+    schedule.courses,
+    dateInfo.weekday,
+    dateInfo.weekIndex,
+  ]);
 
   /* ---------------- 日视图：左右滑动切换星期 ---------------- */
   const liftDistance = Math.round(Math.min(winH * 0.07, 64));
@@ -589,6 +842,36 @@ export function CourseScheduleScreen({
             </View>
           ) : null}
 
+          {holidayUndo && holidayUndo.scheduleId === activeScheduleId ? (
+            <View className="mb-2 flex-row items-center gap-2 rounded-xl border border-amber-400/35 bg-amber-500/12 px-3 py-1.5">
+              <Ionicons name="swap-horizontal" size={14} color="#F59E0B" />
+              <Text
+                className="flex-1 text-xs text-slate-700 dark:text-slate-200"
+                numberOfLines={2}
+              >
+                {holidayUndo.summary}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={handleUndoHolidayShift}
+                className="rounded-lg bg-amber-500/20 px-2.5 py-1"
+              >
+                <Text className="text-xs font-bold text-amber-700 dark:text-amber-300">
+                  撤销
+                </Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="关闭提示"
+                onPress={() => setHolidayUndo(null)}
+                hitSlop={6}
+                className="p-1"
+              >
+                <Ionicons name="close" size={14} color="#94A3B8" />
+              </Pressable>
+            </View>
+          ) : null}
+
           <Animated.View
             entering={
               reducedMotion
@@ -714,27 +997,65 @@ export function CourseScheduleScreen({
                 <GlassContainer
                   radius={13}
                   intensity={42}
-                  borderOpacity={0.2 + secretCharge * 0.015}
+                  borderOpacity={0.2 + secretCharge * 0.045}
                 >
                   <Pressable
                     onPress={handleClockTap}
                     className="flex-row items-center px-2.5 py-1.5"
+                    style={
+                      secretCharge > 0
+                        ? {
+                            backgroundColor: `rgba(56,189,248,${0.04 + secretCharge * 0.025})`,
+                          }
+                        : undefined
+                    }
                   >
                     <Ionicons
-                      name="time-outline"
+                      name={secretCharge >= 5 ? "sparkles" : "time-outline"}
                       size={12}
-                      color={secretCharge >= 4 ? "#7DD3FC" : "#38BDF8"}
+                      color={secretCharge >= 3 ? "#7DD3FC" : "#38BDF8"}
                     />
                     <Text
                       numberOfLines={1}
                       className={`ml-1 text-[11px] font-semibold ${
-                        secretCharge >= 4
+                        secretCharge >= 3
                           ? "text-sky-500 dark:text-sky-300"
                           : "text-slate-600 dark:text-slate-300"
                       }`}
                     >
                       {formatClock(now)}
                     </Text>
+                    {secretCharge > 0 ? (
+                      <View
+                        pointerEvents="none"
+                        style={{
+                          position: "absolute",
+                          left: 8,
+                          right: 8,
+                          bottom: 2,
+                          flexDirection: "row",
+                          justifyContent: "center",
+                          gap: 3,
+                        }}
+                      >
+                        {Array.from({ length: Math.min(secretCharge, 6) }).map(
+                          (_, idx) => (
+                            <View
+                              key={idx}
+                              style={{
+                                width: 2.5,
+                                height: 2.5,
+                                borderRadius: 2,
+                                backgroundColor:
+                                  idx >= 4
+                                    ? "rgba(253,230,138,0.9)"
+                                    : "rgba(125,211,252,0.85)",
+                              }}
+                            />
+                          ),
+                        )}
+                      </View>
+                    ) : null}
                   </Pressable>
                 </GlassContainer>
               </View>
@@ -789,6 +1110,213 @@ export function CourseScheduleScreen({
             })}
           </ScrollView>
         </Animated.View>
+
+        {/* ---------- 快捷工具胶囊条（待办 / 搜索统计 / 调休 / 导出壁纸） ---------- */}
+        <View className="pt-1.5">
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 16, gap: 6 }}
+          >
+            <Pressable
+              onPress={() => openTaskSheet()}
+              accessibilityRole="button"
+              className="flex-row items-center rounded-full border border-white/25 bg-white/30 px-2.5 py-1 dark:border-white/10 dark:bg-white/[0.06]"
+            >
+              <Ionicons name="checkbox-outline" size={12} color="#F43F5E" />
+              <Text className="ml-1 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
+                待办/考试
+              </Text>
+              {pendingTaskCount > 0 ? (
+                <View className="ml-1 rounded-full bg-rose-500/85 px-1.5 py-[1px]">
+                  <Text className="text-[9.5px] font-bold text-white">
+                    {pendingTaskCount}
+                  </Text>
+                </View>
+              ) : null}
+            </Pressable>
+
+            <Pressable
+              onPress={() => openStudyModal(null, "focus")}
+              accessibilityRole="button"
+              className="flex-row items-center rounded-full border border-white/25 bg-white/30 px-2.5 py-1 dark:border-white/10 dark:bg-white/[0.06]"
+            >
+              <Ionicons name="timer-outline" size={12} color="#10B981" />
+              <Text className="ml-1 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
+                专注 / 考勤
+              </Text>
+              {attendanceRiskCount > 0 ? (
+                <View className="ml-1 rounded-full bg-rose-500/85 px-1.5 py-[1px]">
+                  <Text className="text-[9.5px] font-bold text-white">
+                    {attendanceRiskCount}
+                  </Text>
+                </View>
+              ) : null}
+            </Pressable>
+
+            <Pressable
+              onPress={() => {
+                selectHaptic();
+                setPeerCompareOpen(true);
+              }}
+              accessibilityRole="button"
+              className="flex-row items-center rounded-full border border-white/25 bg-white/30 px-2.5 py-1 dark:border-white/10 dark:bg-white/[0.06]"
+            >
+              <Ionicons name="people-outline" size={12} color="#06B6D4" />
+              <Text className="ml-1 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
+                空课对比
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => {
+                selectHaptic();
+                setSearchStatsOpen(true);
+              }}
+              accessibilityRole="button"
+              className="flex-row items-center rounded-full border border-white/25 bg-white/30 px-2.5 py-1 dark:border-white/10 dark:bg-white/[0.06]"
+            >
+              <Ionicons name="search-outline" size={12} color="#38BDF8" />
+              <Text className="ml-1 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
+                搜索与统计
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => {
+                selectHaptic();
+                setHolidayOpen(true);
+              }}
+              accessibilityRole="button"
+              className="flex-row items-center rounded-full border border-white/25 bg-white/30 px-2.5 py-1 dark:border-white/10 dark:bg-white/[0.06]"
+            >
+              <Ionicons name="swap-horizontal-outline" size={12} color="#F59E0B" />
+              <Text className="ml-1 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
+                节假日调休
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => {
+                selectHaptic();
+                setExportOpen(true);
+              }}
+              accessibilityRole="button"
+              className="flex-row items-center rounded-full border border-white/25 bg-white/30 px-2.5 py-1 dark:border-white/10 dark:bg-white/[0.06]"
+            >
+              <Ionicons name="share-outline" size={12} color="#8B5CF6" />
+              <Text className="ml-1 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
+                导出与壁纸
+              </Text>
+            </Pressable>
+          </ScrollView>
+        </View>
+
+        {/* ---------- 考试 / DDL 倒计时条（有未完成任务时显示，可折叠） ---------- */}
+        {upcomingTasks.length > 0 ? (() => {
+          const topTask = upcomingTasks[0];
+          const countdown = formatTaskCountdown(topTask.dueAt, nowMs);
+          return (
+            <View className="px-4 pt-1.5">
+              {taskBannerCollapsed ? (
+                <Pressable
+                  onPress={() => {
+                    selectHaptic();
+                    setTaskBannerCollapsed(false);
+                  }}
+                  className="flex-row items-center justify-between self-start rounded-full border border-white/25 bg-white/30 px-3 py-1 dark:border-white/10 dark:bg-white/[0.06]"
+                >
+                  <Ionicons name="alarm-outline" size={11.5} color="#F43F5E" />
+                  <Text className="ml-1 text-[10.5px] font-semibold text-slate-600 dark:text-slate-300">
+                    倒计时 · {upcomingTasks.length} 项待办
+                  </Text>
+                  <Ionicons
+                    name="chevron-down"
+                    size={11}
+                    color="#94A3B8"
+                    style={{ marginLeft: 4 }}
+                  />
+                </Pressable>
+              ) : (
+                <GlassContainer radius={16} intensity={40} borderOpacity={0.22}>
+                  <View className="flex-row items-center px-3 py-2">
+                    <Pressable
+                      onPress={() => openTaskSheet()}
+                      className="min-w-0 flex-1 flex-row items-center"
+                    >
+                      <View
+                        className={`mr-2 rounded-md border px-1.5 py-0.5 ${
+                          topTask.type === "exam"
+                            ? "border-rose-400/45 bg-rose-500/15"
+                            : topTask.type === "review"
+                              ? "border-violet-400/45 bg-violet-500/15"
+                              : "border-sky-400/45 bg-sky-500/15"
+                        }`}
+                      >
+                        <Text
+                          className={`text-[9.5px] font-bold ${
+                            topTask.type === "exam"
+                              ? "text-rose-700 dark:text-rose-300"
+                              : topTask.type === "review"
+                                ? "text-violet-700 dark:text-violet-300"
+                                : "text-sky-700 dark:text-sky-300"
+                          }`}
+                        >
+                          {TASK_TYPES[topTask.type]}
+                        </Text>
+                      </View>
+                      <Text
+                        numberOfLines={1}
+                        className="flex-1 text-[12px] font-bold text-slate-800 dark:text-slate-100"
+                      >
+                        {topTask.title}
+                        {topTask.location ? ` · ${topTask.location}` : ""}
+                      </Text>
+                      <View
+                        className={`ml-2 shrink-0 rounded-full border px-2 py-0.5 ${
+                          countdown.overdue
+                            ? "border-rose-500/45 bg-rose-500/20"
+                            : countdown.urgent
+                              ? "border-amber-400/45 bg-amber-500/20"
+                              : "border-sky-400/35 bg-sky-500/15"
+                        }`}
+                      >
+                        <Text
+                          className={`text-[10px] font-bold ${
+                            countdown.overdue
+                              ? "text-rose-700 dark:text-rose-300"
+                              : countdown.urgent
+                                ? "text-amber-700 dark:text-amber-300"
+                                : "text-sky-700 dark:text-sky-300"
+                          }`}
+                        >
+                          {countdown.label}
+                        </Text>
+                      </View>
+                      {upcomingTasks.length > 1 ? (
+                        <Text className="ml-1.5 text-[10px] font-semibold text-slate-400 dark:text-slate-500">
+                          +{upcomingTasks.length - 1}
+                        </Text>
+                      ) : null}
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        selectHaptic();
+                        setTaskBannerCollapsed(true);
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel="折叠倒计时条"
+                      hitSlop={8}
+                      className="ml-1.5 p-1"
+                    >
+                      <Ionicons name="chevron-up" size={13} color="#94A3B8" />
+                    </Pressable>
+                  </View>
+                </GlassContainer>
+              )}
+            </View>
+          );
+        })() : null}
 
         {/* ---------- 星期选择（仅日视图） ---------- */}
         {mode === "day" ? (
@@ -964,6 +1492,7 @@ export function CourseScheduleScreen({
                               active={courseActive}
                               finished={courseFinished}
                               countdownLabel={countdownLabel}
+                              taskBadgeCount={taskCountByCourseId.get(course.id)}
                               onPress={openEdit}
                               onLongPress={openQuickActions}
                             />
@@ -1074,12 +1603,36 @@ export function CourseScheduleScreen({
                   <View className="px-5 pt-5">
                     <View className="mb-3 flex-row items-center justify-between">
                       <View className="flex-1 pr-3">
-                        <Text
-                          numberOfLines={1}
-                          className="text-[16px] font-bold text-slate-800 dark:text-white"
-                        >
-                          {quickCourse.name}
-                        </Text>
+                        <View className="flex-row items-center gap-2">
+                          <Text
+                            numberOfLines={1}
+                            className="shrink text-[16px] font-bold text-slate-800 dark:text-white"
+                          >
+                            {quickCourse.name}
+                          </Text>
+                          {quickCourseAttendance &&
+                          quickCourseAttendance.riskLevel !== "safe" ? (
+                            <View
+                              className={`shrink-0 rounded-full border px-2 py-0.5 ${
+                                quickCourseAttendance.riskLevel === "danger"
+                                  ? "border-rose-500/45 bg-rose-500/18"
+                                  : "border-amber-400/45 bg-amber-500/18"
+                              }`}
+                            >
+                              <Text
+                                className={`text-[9.5px] font-bold ${
+                                  quickCourseAttendance.riskLevel === "danger"
+                                    ? "text-rose-700 dark:text-rose-300"
+                                    : "text-amber-700 dark:text-amber-300"
+                                }`}
+                              >
+                                {quickCourseAttendance.riskLevel === "danger"
+                                  ? `缺勤红线 ${quickCourseAttendance.absent}/${quickCourseAttendance.redline}`
+                                  : `缺勤预警 · 剩1次`}
+                              </Text>
+                            </View>
+                          ) : null}
+                        </View>
                         <Text className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
                           {WEEKDAY_LABELS[quickCourse.weekday - 1]} · 第
                           {quickCourse.startPeriod}
@@ -1101,6 +1654,45 @@ export function CourseScheduleScreen({
                     </View>
 
                     <View className="gap-y-2">
+                      <Pressable
+                        onPress={() => {
+                          const target = quickCourse;
+                          const preferAttendance =
+                            quickCourseAttendance?.riskLevel !== undefined &&
+                            quickCourseAttendance.riskLevel !== "safe";
+                          setQuickCourse(null);
+                          openStudyModal(
+                            target,
+                            preferAttendance ? "attendance" : "focus",
+                          );
+                        }}
+                        className="flex-row items-center justify-between rounded-2xl border border-emerald-400/35 bg-emerald-500/10 px-4 py-3 dark:border-emerald-400/25 dark:bg-emerald-500/12"
+                      >
+                        <View className="flex-row items-center">
+                          <Ionicons
+                            name="timer-outline"
+                            size={17}
+                            color="#10B981"
+                          />
+                          <Text className="ml-3 text-[13.5px] font-semibold text-slate-800 dark:text-slate-100">
+                            学科专注 / 考勤打卡
+                          </Text>
+                        </View>
+                        {quickCourseAttendance &&
+                        quickCourseAttendance.riskLevel !== "safe" ? (
+                          <Text
+                            className={`text-[11px] font-bold ${
+                              quickCourseAttendance.riskLevel === "danger"
+                                ? "text-rose-600 dark:text-rose-300"
+                                : "text-amber-600 dark:text-amber-300"
+                            }`}
+                          >
+                            {quickCourseAttendance.riskLevel === "danger"
+                              ? "已触红线"
+                              : "注意考勤"}
+                          </Text>
+                        ) : null}
+                      </Pressable>
                       <Pressable
                         onPress={() => {
                           const target = quickCourse;
@@ -1187,6 +1779,24 @@ export function CourseScheduleScreen({
                           </Pressable>
                         </View>
                       ) : null}
+
+                      <Pressable
+                        onPress={() => {
+                          const target = quickCourse;
+                          setQuickCourse(null);
+                          openTaskSheet(target, true);
+                        }}
+                        className="flex-row items-center rounded-2xl border border-slate-300/30 bg-white/30 px-4 py-3 dark:border-white/10 dark:bg-white/[0.06]"
+                      >
+                        <Ionicons
+                          name="checkbox-outline"
+                          size={17}
+                          color="#F43F5E"
+                        />
+                        <Text className="ml-3 text-[13.5px] font-semibold text-slate-800 dark:text-slate-100">
+                          添加作业 / 考试
+                        </Text>
+                      </Pressable>
 
                       <Pressable
                         onPress={() => {
@@ -1353,6 +1963,88 @@ export function CourseScheduleScreen({
         }}
       />
 
+      {/* ---------- 作业与考试倒计时面板 ---------- */}
+      <CourseTaskSheet
+        key={taskSheetToken}
+        visible={taskSheetOpen}
+        schedule={schedule}
+        initialCourse={taskSheetCourse}
+        initialCreate={taskSheetCreate}
+        onClose={() => {
+          setTaskSheetOpen(false);
+          setTaskSheetCourse(null);
+          setTaskSheetCreate(false);
+        }}
+      />
+
+      {/* ---------- 节假日调休弹窗 ---------- */}
+      {holidayOpen ? (
+        <HolidayShiftModal
+          visible
+          schedule={schedule}
+          onClose={() => setHolidayOpen(false)}
+          onApplyCourses={handleApplyHolidayShift}
+        />
+      ) : null}
+
+      {/* ---------- 课程搜索与学期统计弹窗 ---------- */}
+      {searchStatsOpen ? (
+        <CourseSearchStatsModal
+          visible
+          schedule={schedule}
+          currentWeek={activeWeek}
+          onClose={() => setSearchStatsOpen(false)}
+          onSelectCourse={(course, targetWeek) => {
+            setSearchStatsOpen(false);
+            if (targetWeek && targetWeek >= 1 && targetWeek <= totalWeeks) {
+              setWeekIndex(targetWeek);
+            } else if (course.weeks.length) {
+              setWeekIndex(Math.min(Math.max(course.weeks[0], 1), totalWeeks));
+            }
+            setWeekday(course.weekday);
+            setQuickCourse(course);
+          }}
+        />
+      ) : null}
+
+      {/* ---------- 课表导出与壁纸预览弹窗 ---------- */}
+      {exportOpen ? (
+        <ScheduleExportModal
+          visible
+          schedule={schedule}
+          currentWeek={activeWeek}
+          isDark={isDark}
+          onClose={() => setExportOpen(false)}
+        />
+      ) : null}
+
+      {/* ---------- 学科专注与考勤红线弹窗 ---------- */}
+      {studyModalOpen ? (
+        <CourseStudyModal
+          visible
+          course={studyCourse}
+          schedule={schedule}
+          isDark={isDark}
+          initialTab={studyInitialTab}
+          onVisitFarm={onFarm}
+          onClose={() => {
+            setStudyModalOpen(false);
+            setStudyCourse(null);
+          }}
+        />
+      ) : null}
+
+      {/* ---------- 好友课表共享与多人空课雷达 ---------- */}
+      {peerCompareOpen ? (
+        <PeerCompareModal
+          visible
+          schedule={schedule}
+          currentWeek={activeWeek}
+          isDark={isDark}
+          onClose={() => setPeerCompareOpen(false)}
+        />
+      ) : null}
+
       {/* ---------- 隐藏的夜空 ---------- */}
       {afterHours ? (
         <AfterHours kind={afterHours} onClose={() => setAfterHours(null)} />
@@ -1362,6 +2054,7 @@ export function CourseScheduleScreen({
           onClose={() => setNightOpen(false)}
           onEnterFarm={() => onFarm?.()}
           courseNames={schedule.courses.map((c) => c.name)}
+          todayCourseCount={realTodayCourseCount}
         />
       ) : null}
     </View>

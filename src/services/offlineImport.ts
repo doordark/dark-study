@@ -13,6 +13,11 @@ import type {
 } from "@/types";
 import { normalizeParsedPeriods } from "@/utils/courseEditing";
 import { cleanHtmlToText, parseIcsSchedule } from "@/utils/documentParser";
+import {
+  parseEduCourses,
+  parseEduGrades,
+  parseEduPeriods,
+} from "@/utils/eduAdapters";
 import { normalizeGradeInput, resolveGradeTypeId } from "@/utils/grades";
 import {
   addDays,
@@ -663,6 +668,10 @@ export function parseScheduleTextCourses(
     if (icsCourses.length) return icsCourses;
   }
 
+  // 1.5) 教务系统（新正方 JSON / 强智·青果 HTML）与 WakeUp 导出快车道
+  const fromEdu = parseEduCourses(rawText, totalWeeks);
+  if (fromEdu.length) return fromEdu;
+
   // 2) JSON 直解析
   const fromJson = parseScheduleJson(rawText, totalWeeks);
   if (fromJson.length) return fromJson;
@@ -730,8 +739,11 @@ export function parseScheduleTextCourses(
 
 const NON_CLASS_PERIOD_RE = /午休|午饭|午餐|晚饭|晚餐|眼保健操|早读|晚自习|自习|课间休息|休息/;
 
-/** 离线解析作息表文本（支持表格、粘贴通知、HTML/XLSX 转换文本） */
+/** 离线解析作息表文本（支持表格、粘贴通知、HTML/XLSX 转换文本、WakeUp 时间节点） */
 export function recognizePeriodsFromTextOffline(rawText: string): Period[] {
+  const fromEduPeriods = parseEduPeriods(rawText);
+  if (fromEduPeriods.length) return fromEduPeriods;
+
   const text = /<(?:html|table|tr|td)\b/i.test(rawText)
     ? cleanHtmlToText(rawText)
     : rawText;
@@ -1329,12 +1341,15 @@ function dedupeGrades(list: GradeDraft[]): GradeDraft[] {
   });
 }
 
-/** 纯文本 / CSV / XLSX-TSV / HTML 成绩解析 */
+/** 纯文本 / CSV / XLSX-TSV / XLS / PDF / HTML / 教务 JSON 成绩解析 */
 export function recognizeGradesFromTextOffline(
   rawText: string,
   fallbackSemester: SemesterKind = "fall",
   opts?: OfflineGradeOptions,
 ): GradeDraft[] {
+  const fromEdu = parseEduGrades(rawText, fallbackSemester, opts);
+  if (fromEdu.length) return dedupeGrades(fromEdu);
+
   const text = /<(?:html|table|tr|td)\b/i.test(rawText)
     ? cleanHtmlToText(rawText)
     : rawText;

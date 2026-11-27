@@ -17,7 +17,6 @@ import {
   setTtsApiKey,
   type TtsCredentialProvider,
 } from "@/services/whaleVoiceCredentials";
-import { useSoundEffects } from "@/store/useSoundEffects";
 import { useWhaleVoice, type WhaleVoiceEngine } from "@/store/useWhaleVoice";
 
 const inputClass =
@@ -186,9 +185,6 @@ export function WhaleVoiceSettings() {
   const config = useWhaleVoice((s) => s.config);
   const setConfig = useWhaleVoice((s) => s.setConfig);
 
-  const sfxOn = useSoundEffects((s) => s.on);
-  const setSfxOn = useSoundEffects((s) => s.setOn);
-
   const [hasBreezeKey, setHasBreezeKey] = useState(false);
   const [hasSiliconKey, setHasSiliconKey] = useState(false);
   const [breezeVoices, setBreezeVoices] = useState<BreezeVoiceItem[]>([]);
@@ -209,7 +205,6 @@ export function WhaleVoiceSettings() {
   useEffect(() => {
     let alive = true;
     void useWhaleVoice.getState().hydrate();
-    void useSoundEffects.getState().hydrate();
     void Promise.all([
       getTtsApiKey("breezeblue"),
       getTtsApiKey("siliconflow"),
@@ -279,7 +274,7 @@ export function WhaleVoiceSettings() {
     <>
       {/* 1. 总开关 */}
       <Card>
-        <Text className="text-[15px] font-bold text-slate-800 dark:text-white">声音与互动开关</Text>
+        <Text className="text-[15px] font-bold text-slate-800 dark:text-white">语音开关</Text>
         <View className="mt-3 flex-row items-center justify-between rounded-2xl border border-sky-300/20 bg-white/25 px-3.5 py-2.5 dark:bg-white/[0.04]">
           <View className="mr-3 flex-1">
             <Text className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">大肥鱼鱼语</Text>
@@ -291,24 +286,6 @@ export function WhaleVoiceSettings() {
             accessibilityLabel="大肥鱼鱼语开关"
             value={voiceOn}
             onValueChange={toggleVoice}
-            trackColor={{ true: "#38BDF8", false: "#64748B" }}
-          />
-        </View>
-
-        <View className="mt-2.5 flex-row items-center justify-between rounded-2xl border border-sky-300/20 bg-white/25 px-3.5 py-2.5 dark:bg-white/[0.04]">
-          <View className="mr-3 flex-1">
-            <Text className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">农场与彩蛋互动音效</Text>
-            <Text className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-              种菜浇水、钓鱼抓虫、恐怖徐睡阴、夜空摘星、放学后三彩蛋、失重与桌宠音效（全包 183 KB）
-            </Text>
-          </View>
-          <Switch
-            accessibilityLabel="农场与彩蛋互动音效开关"
-            value={sfxOn}
-            onValueChange={(next) => {
-              setSfxOn(next);
-              if (next) playSfx("whale_cute_happy", { ignoreCooldown: true, bypassToggle: true });
-            }}
             trackColor={{ true: "#38BDF8", false: "#64748B" }}
           />
         </View>

@@ -10,6 +10,10 @@ export interface WhaleLiveStudySnapshot {
   todayCourses?: string;
   nextCourseHint?: string;
   pendingTasks?: string;
+  freeSlots?: string;
+  gradesSummary?: string;
+  attendanceAlerts?: string;
+  focusSummary?: string;
 }
 
 const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"] as const;
@@ -23,11 +27,15 @@ export function formatTimeContext(now = Date.now()): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${WEEKDAYS[d.getDay()]} ${String(h).padStart(2, "0")}:${min}（${period}）`;
 }
 
-function buildLiveContextBlock(snapshot?: WhaleLiveStudySnapshot, now = Date.now()): string {
+export function buildLiveContextBlock(snapshot?: WhaleLiveStudySnapshot, now = Date.now()): string {
   const lines = [`- 当前时间：${snapshot?.nowLabel ?? formatTimeContext(now)}`];
   if (snapshot?.nextCourseHint) lines.push(`- 近期课程提醒：${snapshot.nextCourseHint}`);
   if (snapshot?.todayCourses) lines.push(`- 今日课程概览：${snapshot.todayCourses}`);
   if (snapshot?.pendingTasks) lines.push(`- 未完成课程待办：${snapshot.pendingTasks}`);
+  if (snapshot?.freeSlots) lines.push(`- 本周空课安排：${snapshot.freeSlots}`);
+  if (snapshot?.gradesSummary) lines.push(`- 成绩与绩点概况：${snapshot.gradesSummary}`);
+  if (snapshot?.attendanceAlerts) lines.push(`- 考勤红线预警：${snapshot.attendanceAlerts}`);
+  if (snapshot?.focusSummary) lines.push(`- 近期学习专注：${snapshot.focusSummary}`);
   return `【现实时间与生活感知（用于自然接话、提醒或关心作息，不生硬播报）】\n${lines.join("\n")}`;
 }
 

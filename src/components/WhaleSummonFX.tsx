@@ -307,7 +307,6 @@ function ActiveWaveScene({
   const bgTint = useSettings((s) => s.backgroundTint);
   const quality = useSettings((s) => s.renderQuality);
   const reduced = useReducedMotion();
-  const uid = useId().replace(/[^a-zA-Z0-9_-]/g, "");
 
   const qualitySpec = renderQuality(quality);
   const isSmooth = !qualitySpec.idleAnimation;
@@ -343,13 +342,14 @@ function ActiveWaveScene({
       : "#7DD3FC";
   const sparkleColor = isDark ? "#E0F2FE" : `rgb(${primaryRgb})`;
 
+  // 进场与主题切换统一采用干脆轻盈的 480ms 曲线，零拖尾冲突
   const duration = reduced
-    ? 220
+    ? 200
     : isSmooth
-      ? 380
+      ? 340
       : isRetreat
-        ? 500
-        : 600;
+        ? 460
+        : 480;
 
   const p = useSharedValue(0);
   const finishRef = useRef(onFinish);
@@ -456,7 +456,7 @@ function ActiveWaveScene({
       importantForAccessibility="no-hide-descendants"
       style={[StyleSheet.absoluteFill, { overflow: "hidden", zIndex: 35 }]}
     >
-      {/* 第一层：硬件纹理缓存的轻量径向光晕（128px 一次光栅化，纯 GPU 缩放合成，杜绝逐帧 saveLayerAlpha） */}
+      {/* 第一层：纯原生同心柔光晕（零首帧 SVG 构造与光栅化，直接由 GPU 硬件纹理缩放合成） */}
       <Animated.View
         renderToHardwareTextureAndroid
         shouldRasterizeIOS
@@ -467,27 +467,26 @@ function ActiveWaveScene({
             top: oy - BLOOM_BASE / 2,
             width: BLOOM_BASE,
             height: BLOOM_BASE,
+            borderRadius: BLOOM_BASE / 2,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: `rgba(${primaryRgb},${isDark ? 0.16 : 0.14})`,
+            borderWidth: 10,
+            borderColor: `rgba(${secondaryRgb},${isDark ? 0.24 : 0.26})`,
           },
           bloomStyle,
         ]}
       >
-        <Svg width={BLOOM_BASE} height={BLOOM_BASE} viewBox={`0 0 ${BLOOM_BASE} ${BLOOM_BASE}`}>
-          <Defs>
-            <RadialGradient id={`${uid}-wave-bloom`} cx="50%" cy="50%" r="50%">
-              <Stop offset="0" stopColor={coreColor} stopOpacity="0.16" />
-              <Stop offset="0.46" stopColor={`rgb(${primaryRgb})`} stopOpacity="0.28" />
-              <Stop offset="0.74" stopColor={`rgb(${secondaryRgb})`} stopOpacity="0.54" />
-              <Stop offset="0.88" stopColor="#FFFFFF" stopOpacity={isDark ? 0.46 : 0.62} />
-              <Stop offset="1" stopColor={`rgb(${primaryRgb})`} stopOpacity="0" />
-            </RadialGradient>
-          </Defs>
-          <Circle
-            cx={BLOOM_BASE / 2}
-            cy={BLOOM_BASE / 2}
-            r={BLOOM_BASE / 2}
-            fill={`url(#${uid}-wave-bloom)`}
-          />
-        </Svg>
+        <View
+          style={{
+            width: BLOOM_BASE * 0.68,
+            height: BLOOM_BASE * 0.68,
+            borderRadius: (BLOOM_BASE * 0.68) / 2,
+            backgroundColor: `rgba(${secondaryRgb},${isDark ? 0.18 : 0.16})`,
+            borderWidth: 4,
+            borderColor: `rgba(255,255,255,${isDark ? 0.24 : 0.38})`,
+          }}
+        />
       </Animated.View>
 
       {/* 第二层：主水波纹光环（GPU 纹理缓存避免超大圆环逐帧路径细分） */}
@@ -530,7 +529,7 @@ function ActiveWaveScene({
         />
       ) : null}
 
-      {/* 起点珍珠微光脉冲 + 纯原生星闪水珠飞溅（流畅档自动省略） */}
+      {/* 起点珍珠微光脉冲 + 纯原生星闪水珠飞溅（全部纯原生 View，零 SVG 构造开销） */}
       {!isSmooth ? (
         <>
           <Animated.View
@@ -543,29 +542,23 @@ function ActiveWaveScene({
                 top: oy - ORIGIN_FLASH_BASE / 2,
                 width: ORIGIN_FLASH_BASE,
                 height: ORIGIN_FLASH_BASE,
+                borderRadius: ORIGIN_FLASH_BASE / 2,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: `rgba(${primaryRgb},0.22)`,
               },
               originFlashStyle,
             ]}
           >
-            <Svg
-              width={ORIGIN_FLASH_BASE}
-              height={ORIGIN_FLASH_BASE}
-              viewBox={`0 0 ${ORIGIN_FLASH_BASE} ${ORIGIN_FLASH_BASE}`}
-            >
-              <Defs>
-                <RadialGradient id={`${uid}-origin`} cx="50%" cy="50%" r="50%">
-                  <Stop offset="0" stopColor="#FFFFFF" stopOpacity="0.92" />
-                  <Stop offset="0.48" stopColor={coreColor} stopOpacity="0.56" />
-                  <Stop offset="1" stopColor={coreColor} stopOpacity="0" />
-                </RadialGradient>
-              </Defs>
-              <Circle
-                cx={ORIGIN_FLASH_BASE / 2}
-                cy={ORIGIN_FLASH_BASE / 2}
-                r={ORIGIN_FLASH_BASE / 2}
-                fill={`url(#${uid}-origin)`}
-              />
-            </Svg>
+            <View
+              style={{
+                width: ORIGIN_FLASH_BASE * 0.54,
+                height: ORIGIN_FLASH_BASE * 0.54,
+                borderRadius: (ORIGIN_FLASH_BASE * 0.54) / 2,
+                backgroundColor: coreColor,
+                opacity: 0.72,
+              }}
+            />
           </Animated.View>
           {WAVE_SPARKLES.map((spec, index) => (
             <WaveSparkle

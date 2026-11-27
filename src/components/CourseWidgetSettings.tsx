@@ -31,12 +31,14 @@ import { useWidgetSettings } from "@/store/useWidgetSettings";
 import {
   todayWidgetCourses,
   upcomingWidgetCourses,
+  weekWidgetDays,
   WIDGET_DISPLAY_MODES,
   WIDGET_SHAPES,
   WIDGET_SURFACE_STYLES,
   widgetAccentColors,
   widgetDayLabel,
   widgetMeta,
+  type WeekWidgetDay,
   type WidgetCourse,
   type WidgetDisplayMode,
   type WidgetShape,
@@ -108,6 +110,56 @@ function buildDemoCourses(now: Date): WidgetCourse[] {
       time: "08:00–09:45",
       color: "amber",
     },
+  ];
+}
+
+function buildDemoWeekDays(now: Date): WeekWidgetDay[] {
+  const todayWeekday = now.getDay() === 0 ? 7 : now.getDay();
+  return [
+    {
+      weekday: 1,
+      dayLabel: "周一",
+      isToday: todayWeekday === 1,
+      courses: [
+        { id: "demo-w1", name: "高等数学", startTime: "08:00", classroom: "教三-201", color: "sky" },
+        { id: "demo-w2", name: "线性代数", startTime: "10:05", classroom: "教二-104", color: "cyan" },
+      ],
+    },
+    {
+      weekday: 2,
+      dayLabel: "周二",
+      isToday: todayWeekday === 2,
+      courses: [
+        { id: "demo-w3", name: "数据结构与算法", startTime: "10:05", classroom: "信息楼 B305", color: "violet" },
+      ],
+    },
+    {
+      weekday: 3,
+      dayLabel: "周三",
+      isToday: todayWeekday === 3,
+      courses: [
+        { id: "demo-w4", name: "大学物理实验", startTime: "14:00", classroom: "实验楼 A402", color: "emerald" },
+        { id: "demo-w5", name: "形势与政策", startTime: "16:00", classroom: "博学楼 302", color: "rose" },
+      ],
+    },
+    {
+      weekday: 4,
+      dayLabel: "周四",
+      isToday: todayWeekday === 4,
+      courses: [
+        { id: "demo-w6", name: "计算机组成原理", startTime: "08:00", classroom: "教一-108", color: "amber" },
+      ],
+    },
+    {
+      weekday: 5,
+      dayLabel: "周五",
+      isToday: todayWeekday === 5,
+      courses: [
+        { id: "demo-w7", name: "软件工程导论", startTime: "14:00", classroom: "信息楼 A201", color: "sky" },
+      ],
+    },
+    { weekday: 6, dayLabel: "周六", isToday: todayWeekday === 6, courses: [] },
+    { weekday: 7, dayLabel: "周日", isToday: todayWeekday === 7, courses: [] },
   ];
 }
 
@@ -277,6 +329,8 @@ export function CourseWidgetSettings() {
   const selectedShape = WIDGET_SHAPES.find((s) => s.key === shape) ?? WIDGET_SHAPES[1];
   const selectedStyleMeta =
     WIDGET_SURFACE_STYLES.find((s) => s.key === style) ?? WIDGET_SURFACE_STYLES[0];
+  const selectedModeMeta =
+    WIDGET_DISPLAY_MODES.find((m) => m.key === mode) ?? WIDGET_DISPLAY_MODES[0];
   const selectedAccentMeta = widgetAccent(accent);
   const widgetDark = theme === "dark" || (theme === "system" && systemDark);
   const colors = widgetAccentColors(accent, theme, systemDark, style);
@@ -284,6 +338,8 @@ export function CourseWidgetSettings() {
   const upcoming = useMemo(() => upcomingWidgetCourses(schedule, now), [schedule, now]);
   const todayList = useMemo(() => todayWidgetCourses(upcoming, now), [upcoming, now]);
   const demoList = useMemo(() => buildDemoCourses(now), [now]);
+  const liveWeekDays = useMemo(() => weekWidgetDays(schedule, now), [schedule, now]);
+  const demoWeekDays = useMemo(() => buildDemoWeekDays(now), [now]);
 
   const effectivePreviewCourses = useMemo(() => {
     if (previewLens === "empty") return [];
@@ -291,6 +347,19 @@ export function CourseWidgetSettings() {
     const source = mode === "today" ? todayList : upcoming;
     return source.slice(0, Math.min(count, selectedShape.capacity));
   }, [previewLens, demoList, mode, todayList, upcoming, count, selectedShape.capacity]);
+
+  const effectiveWeekDays = useMemo(() => {
+    if (previewLens === "empty") return [];
+    return previewLens === "demo" ? demoWeekDays : liveWeekDays;
+  }, [previewLens, demoWeekDays, liveWeekDays]);
+
+  const activeWeekDays = useMemo(
+    () =>
+      effectiveWeekDays
+        .filter((d) => d.courses.length > 0)
+        .slice(0, selectedShape.capacity),
+    [effectiveWeekDays, selectedShape.capacity],
+  );
 
   const compactCard = shape === "square";
   const fullMeta = useMemo(() => widgetMeta(schedule, now, false), [schedule, now]);
@@ -306,7 +375,7 @@ export function CourseWidgetSettings() {
     if (previewLens === "empty") {
       return "下节 · 明天 08:00 高等数学 (上)";
     }
-    if (mode === "today" && upcoming.length > 0) {
+    if ((mode === "today" || mode === "week") && upcoming.length > 0) {
       const next = upcoming[0];
       const startClock = next.time.split("–")[0] ?? next.time;
       return `下节 · ${widgetDayLabel(next.start, now)} ${startClock} ${next.name}`;
@@ -691,8 +760,220 @@ export function CourseWidgetSettings() {
                     </Text>
                   </View>
 
-                  {/* 课程列表 / 可爱空态 */}
-                  {effectivePreviewCourses.length > 0 ? (
+                  {/* 课程列表 / 本周一览 / 可爱空态 */}
+                  {mode === "week" ? (
+                    activeWeekDays.length > 0 ? (
+                      <View style={{ flex: 1, gap: 5, justifyContent: "center" }}>
+                        {!compactCard && effectiveWeekDays.length === 7 ? (
+                          <View
+                            style={{
+                              flexDirection: "row",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              marginBottom: 1,
+                              paddingHorizontal: 2,
+                            }}
+                          >
+                            {effectiveWeekDays.map((day) => {
+                              const hasClass = day.courses.length > 0;
+                              return (
+                                <View
+                                  key={day.weekday}
+                                  style={{
+                                    flex: 1,
+                                    alignItems: "center",
+                                    paddingVertical: 2,
+                                    borderRadius: 7,
+                                    backgroundColor: day.isToday
+                                      ? `${colors.brand}${widgetDark ? "2B" : "1F"}`
+                                      : "transparent",
+                                  }}
+                                >
+                                  <Text
+                                    style={{
+                                      fontSize: 9,
+                                      fontWeight: day.isToday ? "800" : "600",
+                                      color: day.isToday ? colors.brand : colors.muted,
+                                    }}
+                                  >
+                                    {day.dayLabel.replace("周", "")}
+                                  </Text>
+                                  <View
+                                    style={{
+                                      marginTop: 2,
+                                      width: 4,
+                                      height: 4,
+                                      borderRadius: 2,
+                                      backgroundColor: hasClass
+                                        ? day.isToday
+                                          ? colors.brand
+                                          : (coursePalette[day.courses[0].color] ?? coursePalette.sky).solid
+                                        : widgetDark
+                                          ? "rgba(255,255,255,0.14)"
+                                          : "rgba(15,23,42,0.12)",
+                                    }}
+                                  />
+                                </View>
+                              );
+                            })}
+                          </View>
+                        ) : null}
+
+                        {activeWeekDays.map((day) => {
+                          const primary = day.courses[0];
+                          const solid = (coursePalette[primary.color] ?? coursePalette.sky).solid;
+                          const readableBadgeInk = widgetDark
+                            ? solid
+                            : (LIGHT_BADGE_TEXT[primary.color] ?? solid);
+                          const joined = day.courses.map((c) => c.name).join(" / ");
+                          const badgeText = day.isToday
+                            ? day.courses.length > 1
+                              ? `今天 · ${day.courses.length}节`
+                              : "今天"
+                            : day.courses.length > 1
+                              ? `${day.courses.length}节`
+                              : day.dayLabel;
+
+                          return (
+                            <View
+                              key={day.weekday}
+                              style={{
+                                flexDirection: "row",
+                                alignItems: "center",
+                                borderRadius: 13,
+                                paddingHorizontal: compactCard ? 7 : 9,
+                                paddingVertical: compactCard ? 5.5 : 6,
+                                backgroundColor: day.isToday
+                                  ? `${solid}${widgetDark ? "36" : "2B"}`
+                                  : `${solid}${widgetDark ? "20" : "18"}`,
+                                borderWidth: 1,
+                                borderColor: day.isToday
+                                  ? `${solid}${widgetDark ? "88" : "73"}`
+                                  : `${solid}${widgetDark ? "36" : "2E"}`,
+                              }}
+                            >
+                              <View
+                                style={{
+                                  width: compactCard ? 3 : 3.5,
+                                  alignSelf: "stretch",
+                                  marginVertical: 1.5,
+                                  borderRadius: 4,
+                                  backgroundColor: solid,
+                                }}
+                              />
+                              <View style={{ flex: 1, paddingLeft: compactCard ? 6 : 8 }}>
+                                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                                  <Text
+                                    numberOfLines={1}
+                                    style={{
+                                      flex: 1,
+                                      color: colors.ink,
+                                      fontSize: compactCard ? 11 : 12,
+                                      fontWeight: "700",
+                                    }}
+                                  >
+                                    {compactCard || day.courses.length > 1
+                                      ? `${day.dayLabel} · ${joined}`
+                                      : primary.name}
+                                  </Text>
+                                  {!compactCard ? (
+                                    <View
+                                      style={{
+                                        marginLeft: 6,
+                                        paddingHorizontal: 6,
+                                        paddingVertical: 1.5,
+                                        borderRadius: 8,
+                                        backgroundColor: day.isToday
+                                          ? solid
+                                          : `${solid}${widgetDark ? "30" : "24"}`,
+                                      }}
+                                    >
+                                      <Text
+                                        style={{
+                                          fontSize: 8.5,
+                                          fontWeight: "700",
+                                          color: day.isToday ? "#FFFFFF" : readableBadgeInk,
+                                        }}
+                                      >
+                                        {badgeText}
+                                      </Text>
+                                    </View>
+                                  ) : null}
+                                </View>
+                                <Text
+                                  numberOfLines={1}
+                                  style={{
+                                    marginTop: 2,
+                                    fontSize: compactCard ? 9.5 : 10,
+                                    color: day.isToday ? readableBadgeInk : colors.muted,
+                                    fontWeight: day.isToday ? "600" : "500",
+                                  }}
+                                >
+                                  {day.courses.length === 1
+                                    ? `${compactCard ? "" : `${day.dayLabel} `}${primary.startTime} · ${primary.classroom || "教室待定"}`
+                                    : `${primary.startTime} 起 · 共 ${day.courses.length} 门课`}
+                                </Text>
+                              </View>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    ) : (
+                      <View
+                        style={{
+                          flex: 1,
+                          alignItems: "center",
+                          justifyContent: "center",
+                          paddingVertical: 10,
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: compactCard ? 14 : 16.5,
+                            color: colors.emptyKaomoji,
+                            letterSpacing: 0.5,
+                          }}
+                        >
+                          {previewLens === "live" && schedule.courses.length === 0
+                            ? "(っ˘ω˘ς)"
+                            : "(〃'▽'〃)"}
+                        </Text>
+                        <Text
+                          style={{
+                            marginTop: 6,
+                            fontSize: 12,
+                            fontWeight: "500",
+                            color: colors.muted,
+                            textAlign: "center",
+                          }}
+                        >
+                          {previewLens === "live" && schedule.courses.length === 0
+                            ? "还没有课程 · 先导入课表吧"
+                            : "本周没有课啦"}
+                        </Text>
+                        {nextHint && !compactCard ? (
+                          <View
+                            style={{
+                              marginTop: 7,
+                              paddingHorizontal: 9,
+                              paddingVertical: 3,
+                              borderRadius: 10,
+                              backgroundColor: widgetDark
+                                ? "rgba(255,255,255,0.10)"
+                                : "rgba(15,23,42,0.06)",
+                            }}
+                          >
+                            <Text
+                              numberOfLines={1}
+                              style={{ fontSize: 10, color: colors.muted }}
+                            >
+                              {nextHint}
+                            </Text>
+                          </View>
+                        ) : null}
+                      </View>
+                    )
+                  ) : effectivePreviewCourses.length > 0 ? (
                     <View style={{ flex: 1, gap: 6, justifyContent: "center" }}>
                       {effectivePreviewCourses.map((course, idx) => {
                         const solid = (coursePalette[course.color] ?? coursePalette.sky).solid;
@@ -1001,124 +1282,136 @@ export function CourseWidgetSettings() {
             </View>
           </View>
 
-          {/* 深浅外观 + 展示策略 */}
-          <View className="mt-4 flex-row gap-2.5">
-            <View style={{ flex: 1.25 }}>
+          {/* 深浅外观 */}
+          <View className="mt-4">
+            <View className="flex-row items-center justify-between">
               <Text className="text-[12px] font-semibold text-slate-700 dark:text-slate-200">
                 深浅外观
               </Text>
-              <View
-                style={{
-                  marginTop: 8,
-                  flexDirection: "row",
-                  padding: 3,
-                  borderRadius: 14,
-                  backgroundColor: segBg,
-                  gap: 2,
-                }}
-              >
-                {THEME_OPTIONS.map((opt) => {
-                  const active = theme === opt.key;
-                  return (
-                    <Pressable
-                      key={opt.key}
-                      onPress={() => {
-                        hapticTap();
-                        setTheme(opt.key);
-                      }}
-                      accessibilityRole="radio"
-                      accessibilityState={{ selected: active }}
-                      style={{
-                        flex: 1,
-                        flexDirection: "row",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: 3,
-                        paddingVertical: 7,
-                        borderRadius: 11,
-                        backgroundColor: active ? segActiveBg : "transparent",
-                        borderWidth: active ? 1 : 0,
-                        borderColor: segActiveBorder,
-                      }}
-                    >
-                      <Ionicons
-                        name={opt.icon}
-                        size={12}
-                        color={
-                          active
-                            ? systemDark
-                              ? "#BAE6FD"
-                              : "#0369A1"
-                            : systemDark
-                              ? "#94A3B8"
-                              : "#64748B"
-                        }
-                      />
-                      <Text
-                        className={`text-[11px] font-semibold ${
-                          active
-                            ? "text-sky-700 dark:text-sky-200"
-                            : "text-slate-600 dark:text-slate-300"
-                        }`}
-                      >
-                        {opt.key === "system" ? "自动" : opt.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
-
-            <View style={{ flex: 1 }}>
-              <Text className="text-[12px] font-semibold text-slate-700 dark:text-slate-200">
-                课程范围
+              <Text className="text-[10.5px] text-slate-400 dark:text-slate-500">
+                可独立于应用主题设置小组件明暗
               </Text>
-              <View
-                style={{
-                  marginTop: 8,
-                  flexDirection: "row",
-                  padding: 3,
-                  borderRadius: 14,
-                  backgroundColor: segBg,
-                  gap: 2,
-                }}
-              >
-                {WIDGET_DISPLAY_MODES.map((opt) => {
-                  const active = mode === opt.key;
-                  return (
-                    <Pressable
-                      key={opt.key}
-                      onPress={() => {
-                        hapticTap();
-                        setMode(opt.key);
-                        syncExtraNow(style, opt.key);
-                      }}
-                      accessibilityRole="radio"
-                      accessibilityState={{ selected: active }}
-                      style={{
-                        flex: 1,
-                        alignItems: "center",
-                        justifyContent: "center",
-                        paddingVertical: 7,
-                        borderRadius: 11,
-                        backgroundColor: active ? segActiveBg : "transparent",
-                        borderWidth: active ? 1 : 0,
-                        borderColor: segActiveBorder,
-                      }}
+            </View>
+            <View
+              style={{
+                marginTop: 8,
+                flexDirection: "row",
+                padding: 3,
+                borderRadius: 14,
+                backgroundColor: segBg,
+                gap: 3,
+              }}
+            >
+              {THEME_OPTIONS.map((opt) => {
+                const active = theme === opt.key;
+                return (
+                  <Pressable
+                    key={opt.key}
+                    onPress={() => {
+                      hapticTap();
+                      setTheme(opt.key);
+                    }}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: active }}
+                    style={{
+                      flex: 1,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 4,
+                      paddingVertical: 7.5,
+                      borderRadius: 11,
+                      backgroundColor: active ? segActiveBg : "transparent",
+                      borderWidth: active ? 1 : 0,
+                      borderColor: segActiveBorder,
+                    }}
+                  >
+                    <Ionicons
+                      name={opt.icon}
+                      size={12.5}
+                      color={
+                        active
+                          ? systemDark
+                            ? "#BAE6FD"
+                            : "#0369A1"
+                          : systemDark
+                            ? "#94A3B8"
+                            : "#64748B"
+                      }
+                    />
+                    <Text
+                      className={`text-[12px] font-semibold ${
+                        active
+                          ? "text-sky-700 dark:text-sky-200"
+                          : "text-slate-600 dark:text-slate-300"
+                      }`}
                     >
-                      <Text
-                        className={`text-[11px] font-semibold ${
-                          active
-                            ? "text-sky-700 dark:text-sky-200"
-                            : "text-slate-600 dark:text-slate-300"
-                        }`}
-                      >
-                        {opt.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
+                      {opt.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          {/* 展示策略（智能预告 / 仅看今日 / 本周一览） */}
+          <View className="mt-4">
+            <View className="flex-row items-center justify-between gap-2">
+              <Text className="text-[12px] font-semibold text-slate-700 dark:text-slate-200">
+                展示模式
+              </Text>
+              <Text
+                numberOfLines={1}
+                className="flex-1 text-right text-[10.5px] text-slate-400 dark:text-slate-500"
+              >
+                {selectedModeMeta.desc}
+              </Text>
+            </View>
+            <View
+              style={{
+                marginTop: 8,
+                flexDirection: "row",
+                padding: 3,
+                borderRadius: 14,
+                backgroundColor: segBg,
+                gap: 3,
+              }}
+            >
+              {WIDGET_DISPLAY_MODES.map((opt) => {
+                const active = mode === opt.key;
+                return (
+                  <Pressable
+                    key={opt.key}
+                    onPress={() => {
+                      hapticTap();
+                      setMode(opt.key);
+                      syncExtraNow(style, opt.key);
+                    }}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: active }}
+                    style={{
+                      flex: 1,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      paddingVertical: 7.5,
+                      borderRadius: 11,
+                      backgroundColor: active ? segActiveBg : "transparent",
+                      borderWidth: active ? 1 : 0,
+                      borderColor: segActiveBorder,
+                    }}
+                  >
+                    <Text
+                      className={`text-[12px] font-semibold ${
+                        active
+                          ? "text-sky-700 dark:text-sky-200"
+                          : "text-slate-600 dark:text-slate-300"
+                      }`}
+                    >
+                      {opt.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
             </View>
           </View>
 
@@ -1238,9 +1531,11 @@ export function CourseWidgetSettings() {
                 最多显示课程
               </Text>
               <Text className="text-[10.5px] text-slate-400 dark:text-slate-500">
-                {count > selectedShape.capacity
-                  ? `${selectedShape.label}默认展示 ${selectedShape.capacity} 门，拉高后可显 ${count} 门`
-                  : `最多显示 ${count} 门 · 实时同步所有已添加组件`}
+                {mode === "week"
+                  ? "本周一览按卡片高度自动排布每日课程，点击单行直达对应课程"
+                  : count > selectedShape.capacity
+                    ? `${selectedShape.label}默认展示 ${selectedShape.capacity} 门，拉高后可显 ${count} 门`
+                    : `最多显示 ${count} 门 · 点击单行可直达对应课程`}
               </Text>
             </View>
             <View

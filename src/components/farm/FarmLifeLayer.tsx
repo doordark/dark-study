@@ -1,6 +1,8 @@
-import { FARM_BODY_FONT, FarmIllustration, FarmSlotFrame, FarmText as Text } from './FarmSkin';
-import { memo, useState, useSyncExternalStore } from 'react';
+import { FARM_BODY_FONT, FarmIllustration, FarmPortraitFrame, FarmText as Text } from './FarmSkin';
+import { memo, useEffect, useState, useSyncExternalStore } from 'react';
+import { playSfx } from '@/services/soundEffects';
 import { useSettings } from '@/store/useSettings';
+import { useSoundEffects } from '@/store/useSoundEffects';
 import { Modal, Pressable, ScrollView, Switch, TextInput, View } from 'react-native';
 import { FarmPersonSprite } from './FarmPersonSprite';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -331,6 +333,11 @@ export function FarmLifeLayer({
   const insets = useSafeAreaInsets();
   const farmWebSearch = useSettings(s => s.farmWebSearch);
   const setFarmWebSearch = useSettings(s => s.setFarmWebSearch);
+  const sfxOn = useSoundEffects(s => s.on);
+  const setSfxOn = useSoundEffects(s => s.setOn);
+  useEffect(() => {
+    void useSoundEffects.getState().hydrate();
+  }, []);
   const [tabOverride, setTabOverride] = useState<{ open: boolean; initial: SettingsTab; tab: SettingsTab } | null>(null);
   const settingsTab: SettingsTab =
     tabOverride && tabOverride.open === panelOpen && tabOverride.initial === initialTab
@@ -531,9 +538,20 @@ export function FarmLifeLayer({
                           hint="按四维情绪数值流畅播放开心、低落、生气、害羞、犯困动作"
                           value={emotionSpritesEnabled}
                           onChange={onToggleEmotionSprites}
-                          last
                         />
                       ) : null}
+                      <SettingSwitchRow
+                        title="互动与环境音效"
+                        hint="开启后在农场劳作与日常互动时播放轻快反馈音效"
+                        value={sfxOn}
+                        onChange={next => {
+                          setSfxOn(next);
+                          if (next) {
+                            playSfx('farm_coin', { ignoreCooldown: true, bypassToggle: true, volume: 0.72 });
+                          }
+                        }}
+                        last
+                      />
                     </View>
                   </>
                 ) : null}
@@ -671,9 +689,9 @@ export function FarmLifeLayer({
                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                             <View style={{ flexDirection: 'row', gap: 4 }}>
                               {record.participants.slice(0, 3).map(pid => (
-                                <FarmSlotFrame key={pid} size={30} rarity={1}>
-                                  <FarmPersonSprite who={pid} size={20} active={false} centered />
-                                </FarmSlotFrame>
+                                <FarmPortraitFrame key={pid} size={32}>
+                                  <FarmPersonSprite who={pid} size={19} active={false} centered />
+                                </FarmPortraitFrame>
                               ))}
                             </View>
                             <Text style={{ flex: 1, color: '#8C6C3E', fontSize: 13.5, fontWeight: '700' }}>

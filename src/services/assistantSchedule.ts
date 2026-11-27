@@ -1,6 +1,12 @@
 import { createStore } from "zustand/vanilla";
 import { create } from "zustand";
 import { createAppState, useStore } from "@/store/useStore";
+import {
+  EXAM_MODES,
+  normalizeTaskDraft,
+  TASK_TYPES,
+  type CourseTaskDraft,
+} from "@/utils/courseTasks";
 import { clampPeriods, findConflicts } from "@/utils/time";
 import type { Course, Schedule, ScheduleAction } from "@/types";
 
@@ -57,6 +63,46 @@ function resolveCourse(
     (!weeks || weeks.every(w => c.weeks.includes(w))));
   const byId = candidates.find(c => c.id === courseId);
   return byId ?? (candidates.length === 1 && courseName ? candidates[0] : undefined);
+}
+
+function formatTaskDueClock(dueAt: number): string {
+  const d = new Date(dueAt);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${d.getMonth() + 1}月${d.getDate()}日 ${hh}:${mm}`;
+}
+
+function formatTaskPreview(task: CourseTaskDraft): string {
+  const typeLabel = TASK_TYPES[task.type];
+  const meta: string[] = [];
+  if (task.course?.courseName && !task.title.includes(task.course.courseName)) {
+    meta.push(task.course.courseName);
+  }
+  if (task.location) meta.push(task.location);
+  if (task.seat) meta.push(`座位${task.seat}`);
+  if (task.examMode) meta.push(EXAM_MODES[task.examMode]);
+  meta.push(formatTaskDueClock(task.dueAt));
+  return `新增${typeLabel}待办：${task.title}（${meta.join(" · ")}）`;
+}
+
+function describeTaskDetails(task: CourseTaskDraft): string[] {
+  const details: string[] = [];
+  if (task.reminder > 0) {
+    const label =
+      task.reminder === 1440
+        ? "提前 1 天"
+        : task.reminder === 60
+          ? "提前 1 小时"
+          : `提前 ${task.reminder} 分钟`;
+    details.push(`提醒：${label}`);
+  }
+  if (task.course?.courseName) {
+    details.push(`关联课程：${task.course.courseName}`);
+  }
+  if (task.note) {
+    details.push(`备注：${task.note}`);
+  }
+  return details;
 }
 
 /** 执行一条课表操作，返回给人看的结果文案 */
@@ -117,6 +163,16 @@ export function applyScheduleAction(
           : "，无时间冲突")
       );
     }
+    case "add_task": {
+      const normalized = normalizeTaskDraft(action.task);
+      if (!normalized) return "新增待办失败：待办标题、截止时间或考试信息无效";
+      try {
+        store.addCourseTask(normalized);
+      } catch (error) {
+        return `新增待办失败：${error instanceof Error ? error.message : "待办数据无效"}`;
+      }
+      return formatTaskPreview(normalized);
+    }
   }
 }
 
@@ -149,19 +205,30 @@ function describeCourse(course: Course): string {
 }
 
 export function previewScheduleActions(actions: ScheduleAction[], schedule: Schedule) {
-  const { schedules, activeScheduleId } = useStore.getState();
+  const { schedules, activeScheduleId, courseTasks } = useStore.getState();
   const before = { schedules, activeScheduleId };
   const draft = createStore(createAppState);
-  draft.setState(before);
+  draft.setState({ schedules, activeScheduleId, courseTasks });
+  const pendingTasks: CourseTaskDraft[] = [];
   const changes = actions.map(action => {
     const initial = draft.getState();
     const current = initial.schedules.find(s => s.id === initial.activeScheduleId);
     if (!current || activeScheduleId !== schedule.id) {
       return { result: "课表已切换，请在当前课表重新确认操作", details: [] };
     }
+    const prevTaskCount = initial.courseTasks.length;
     const result = applyScheduleAction(action, current, draft);
-    const latest = draft.getState().schedules.find(s => s.id === current.id);
+    const nextState = draft.getState();
+    const latest = nextState.schedules.find(s => s.id === current.id);
     const details: string[] = [];
+    if (action.type === "add_task" && nextState.courseTasks.length > prevTaskCount) {
+      const added = nextState.courseTasks[nextState.courseTasks.length - 1];
+      if (added) {
+        const { id: _id, completedAt: _completedAt, ...taskDraft } = added;
+        pendingTasks.push(taskDraft);
+        details.push(...describeTaskDetails(taskDraft));
+      }
+    }
     if (latest && latest.courses !== current.courses) {
       const previous = new Map(current.courses.map(course => [course.id, course]));
       const updated = new Map(latest.courses.map(course => [course.id, course]));
@@ -180,15 +247,27 @@ export function previewScheduleActions(actions: ScheduleAction[], schedule: Sche
     return { result, details };
   });
   const after = { schedules: draft.getState().schedules, activeScheduleId: draft.getState().activeScheduleId };
-  return { before, after, changes, hasChanges: before.schedules !== after.schedules };
+  const hasScheduleChanges = before.schedules !== after.schedules;
+  const addedTaskIds: string[] = [];
+  return {
+    before,
+    after,
+    changes,
+    pendingTasks,
+    addedTaskIds,
+    hasChanges: hasScheduleChanges || pendingTasks.length > 0,
+  };
 }
 
 export type ScheduleActionPreview = ReturnType<typeof previewScheduleActions>;
 export interface ScheduleChange {
   before: ScheduleSnapshot;
   after: ScheduleSnapshot;
+  /** 本次提交新创建的课程待办 ID（撤销时同步删除） */
+  addedTaskIds?: string[];
 }
 export const useLastScheduleChange = create<{ change: ScheduleChange | null; label: string }>(() => ({ change: null, label: "" }));
+const committedPreviews = new WeakSet<ScheduleActionPreview>();
 
 function matches(snapshot: ScheduleSnapshot) {
   const current = useStore.getState();
@@ -196,7 +275,27 @@ function matches(snapshot: ScheduleSnapshot) {
 }
 
 export function commitSchedulePreview(preview: ScheduleActionPreview): boolean {
-  return preview.hasChanges && commitScheduleChange(preview, "鲸鱼修改了课表");
+  if (!preview.hasChanges || committedPreviews.has(preview) || !matches(preview.before)) return false;
+  committedPreviews.add(preview);
+  const hasScheduleChanges =
+    preview.before.schedules !== preview.after.schedules ||
+    preview.before.activeScheduleId !== preview.after.activeScheduleId;
+  if (hasScheduleChanges) {
+    useStore.setState(preview.after);
+  }
+  const addedTaskIds: string[] = [];
+  for (const task of preview.pendingTasks) {
+    const id = useStore.getState().addCourseTask(task);
+    addedTaskIds.push(id);
+  }
+  preview.addedTaskIds = addedTaskIds;
+  const label = hasScheduleChanges
+    ? addedTaskIds.length
+      ? "鲸鱼修改了课表与待办"
+      : "鲸鱼修改了课表"
+    : "鲸鱼新增了课程待办";
+  useLastScheduleChange.setState({ change: preview, label });
+  return true;
 }
 
 function commitScheduleChange(change: ScheduleChange, label: string): boolean {
@@ -221,16 +320,24 @@ export function undoSchedulePreview(preview: ScheduleChange): boolean {
   const before = new Map(preview.before.schedules.map(schedule => [schedule.id, schedule]));
   const affected = new Map(preview.after.schedules.filter(schedule => before.get(schedule.id) !== schedule).map(schedule => [schedule.id, schedule]));
   if ([...affected].some(([id, expected]) => current.schedules.find(schedule => schedule.id === id) !== expected)) return false;
-  const schedules = current.schedules.flatMap(schedule => {
-    if (!affected.has(schedule.id)) return [schedule];
-    const original = before.get(schedule.id);
-    return original ? [original] : [];
-  });
-  const activeScheduleId = schedules.some(schedule => schedule.id === current.activeScheduleId)
-    ? current.activeScheduleId
-    : schedules.find(schedule => schedule.id === preview.before.activeScheduleId)?.id ?? schedules[0]?.id;
-  if (!activeScheduleId) return false;
-  useStore.setState({ schedules, activeScheduleId });
+  if (affected.size > 0 || preview.after.activeScheduleId !== preview.before.activeScheduleId) {
+    const schedules = current.schedules.flatMap(schedule => {
+      if (!affected.has(schedule.id)) return [schedule];
+      const original = before.get(schedule.id);
+      return original ? [original] : [];
+    });
+    const activeScheduleId = schedules.some(schedule => schedule.id === current.activeScheduleId)
+      ? current.activeScheduleId
+      : schedules.find(schedule => schedule.id === preview.before.activeScheduleId)?.id ?? schedules[0]?.id;
+    if (!activeScheduleId) return false;
+    useStore.setState({ schedules, activeScheduleId });
+  }
+  if (preview.addedTaskIds?.length) {
+    for (const id of preview.addedTaskIds) {
+      useStore.getState().removeCourseTask(id);
+    }
+    preview.addedTaskIds = [];
+  }
   useLastScheduleChange.setState({ change: null, label: "" });
   return true;
 }

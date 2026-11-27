@@ -1,10 +1,17 @@
+import { isAiProviderId, normalizeBaseUrl } from '../constants/aiProviders';
 import { isWhaleSticker } from './whaleExpression';
 import { normalizeCourseTasks } from './courseTasks';
+import {
+  normalizeAttendanceRecord,
+  normalizeCourseFocusLog,
+  normalizePendingFarmReward,
+} from './studyProgress';
 export const BACKUP_KEYS = [
   'dark-study-storage', 'dark-study-settings', 'dark-study-whale-memory', 'dark-study-whale-persona',
   'dark-study-whale-pet', 'dark-study-widget-settings', 'dark-study-whale-voice',
   'dark-study-whale-voice-config', 'dark-study-sound-effects',
   'dark-study-farm', 'dark-study-farm-life-settings', 'dark-study-farm-life-log',
+  'dark-study-study-progress', 'dark-study-peer-schedules',
 ] as const;
 export type BackupKey = typeof BACKUP_KEYS[number];
 export interface Backup { format: 'dark-study-backup'; version: 1; createdAt: string; data: Partial<Record<BackupKey, unknown>> }
@@ -12,13 +19,15 @@ type Obj = Record<string, any>;
 const object = (value: unknown): value is Obj => !!value && typeof value === 'object' && !Array.isArray(value);
 const fields: Partial<Record<BackupKey, string[]>> = {
   'dark-study-storage': ['schedules', 'activeScheduleId', 'grades', 'gradeYears', 'activeGradeYearId', 'gradeTypes', 'gradeRules', 'activeGradeRuleId', 'activeGradeSemester', 'courseTasks'],
-  'dark-study-settings': ['farmWebSearch', 'reminderEnabled', 'reminderMinutes', 'reminderCount', 'appearance', 'material', 'backgroundDim', 'backgroundTint', 'backgroundEffect', 'defaultScheduleView', 'showWeekend', 'showOtherWeeks', 'compactWeekGrid', 'whalePhrase', 'renderQuality', 'gpaScale'],
+  'dark-study-settings': ['farmWebSearch', 'reminderEnabled', 'reminderMinutes', 'reminderCount', 'appearance', 'material', 'backgroundDim', 'backgroundTint', 'backgroundEffect', 'defaultScheduleView', 'showWeekend', 'showOtherWeeks', 'compactWeekGrid', 'whalePhrase', 'renderQuality', 'gpaScale', 'aiProvider', 'aiBaseUrl', 'aiTextModel', 'aiVisionModel', 'updateMirrorPrefix', 'whaleShareGrades', 'liveClassNotification'],
   'dark-study-whale-memory': [
     'active', 'messages', 'memory', 'petMessages', 'facts', 'episodes', 'openLoops', 'reflections',
     'emotion', 'bond', 'autoMemory', 'autoReflect', 'turnsSinceReflect', 'lastReflectedAt', 'lastInteractionAt',
   ],
   'dark-study-whale-persona': ['persona'], 'dark-study-whale-pet': ['care'],
-  'dark-study-widget-settings': ['shape', 'theme', 'accent', 'count'],
+  'dark-study-widget-settings': ['shape', 'theme', 'accent', 'style', 'mode', 'count'],
+  'dark-study-study-progress': ['attendanceByCourse', 'customAbsenceLimits', 'focusLogs', 'pendingFarmRewards'],
+  'dark-study-peer-schedules': ['peers'],
 };
 function safeTree(value: unknown, depth = 0) {
   if (depth > 24) throw new Error('备份数据嵌套过深');
@@ -110,20 +119,125 @@ function cleanModule(key: BackupKey, value: unknown): unknown {
   if (key === 'dark-study-whale-persona') check(object(state.persona), '人设数据无效');
   if (key === 'dark-study-whale-pet') check(object(state.care), '桌宠数据无效');
   if (key === 'dark-study-settings') {
-    for (const name of ['farmWebSearch', 'reminderEnabled', 'showWeekend', 'showOtherWeeks', 'compactWeekGrid']) if (name in state) check(typeof state[name] === 'boolean', '偏好设置无效');
+    for (const name of ['farmWebSearch', 'reminderEnabled', 'showWeekend', 'showOtherWeeks', 'compactWeekGrid', 'whaleShareGrades', 'liveClassNotification']) if (name in state) check(typeof state[name] === 'boolean', '偏好设置无效');
     for (const name of ['reminderMinutes', 'reminderCount']) if (name in state) check(Number.isFinite(state[name]), '提醒设置无效');
     if ('backgroundDim' in state) check(typeof state.backgroundDim === 'number' && Number.isFinite(state.backgroundDim) && state.backgroundDim >= 0 && state.backgroundDim <= 0.7, '背景遮罩设置无效');
     if ('defaultScheduleView' in state) check(['day', 'week'].includes(state.defaultScheduleView), '默认课表视图设置无效');
     if ('appearance' in state) check(['system', 'light', 'dark'].includes(state.appearance), '主题设置无效');
-    if ('material' in state) check(['flat', 'glass'].includes(state.material), '材质设置无效');
+    if ('material' in state) check(['flat', 'glass', 'frosted', 'clear'].includes(state.material), '材质设置无效');
     if ('whalePhrase' in state) check(typeof state.whalePhrase === 'string' && state.whalePhrase.length >= 2 && state.whalePhrase.length <= 12, '召唤口令无效');
     if ('renderQuality' in state) check(['smooth', 'standard', 'beautiful'].includes(state.renderQuality), '画质设置无效');
     if ('gpaScale' in state) check(['five', 'four_std', 'four_pku', 'four_three', 'four_linear'].includes(state.gpaScale), '绩点制设置无效');
+    if ('aiProvider' in state) check(isAiProviderId(state.aiProvider), 'AI 服务商设置无效');
+    if ('aiBaseUrl' in state) {
+      check(typeof state.aiBaseUrl === 'string' && state.aiBaseUrl.trim().length <= 512, 'AI 接口地址设置无效');
+      const trimmedUrl = state.aiBaseUrl.trim();
+      const normalizedUrl = trimmedUrl ? normalizeBaseUrl(trimmedUrl) : '';
+      check(!trimmedUrl || normalizedUrl, 'AI 接口地址必须为有效的 http 或 https 地址');
+      state.aiBaseUrl = normalizedUrl;
+    }
+    if ('aiTextModel' in state) {
+      check(typeof state.aiTextModel === 'string' && !/[\r\n\t\u0000-\u001f\u007f]/.test(state.aiTextModel) && state.aiTextModel.trim().length <= 160, 'AI 文本模型设置无效');
+      state.aiTextModel = state.aiTextModel.trim();
+    }
+    if ('aiVisionModel' in state) {
+      check(typeof state.aiVisionModel === 'string' && !/[\r\n\t\u0000-\u001f\u007f]/.test(state.aiVisionModel) && state.aiVisionModel.trim().length <= 160, 'AI 视觉模型设置无效');
+      state.aiVisionModel = state.aiVisionModel.trim();
+    }
+    if ('updateMirrorPrefix' in state) {
+      check(typeof state.updateMirrorPrefix === 'string' && state.updateMirrorPrefix.trim().length <= 256, '更新镜像地址设置无效');
+      const trimmedMirror = state.updateMirrorPrefix.trim();
+      const normalizedMirror = trimmedMirror ? normalizeBaseUrl(trimmedMirror) : '';
+      check(!trimmedMirror || (normalizedMirror && normalizedMirror.length < 256), '更新镜像地址必须为有效的 http 或 https 地址');
+      state.updateMirrorPrefix = normalizedMirror ? `${normalizedMirror}/` : '';
+    }
   }
   if (key === 'dark-study-widget-settings') {
     if ('shape' in state) check(['square', 'rectangle', 'large'].includes(state.shape), '小组件形状无效');
     if ('theme' in state) check(['system', 'dark', 'light'].includes(state.theme), '小组件主题无效');
+    if ('style' in state) check(['frosted', 'porcelain', 'tinted'].includes(state.style), '小组件质感无效');
+    if ('mode' in state) check(['upcoming', 'today', 'week'].includes(state.mode), '小组件模式无效');
     if ('count' in state) check(Number.isFinite(state.count) && state.count >= 1 && state.count <= 5, '小组件数量无效');
+  }
+  if (key === 'dark-study-study-progress') {
+    if ('attendanceByCourse' in state) {
+      check(object(state.attendanceByCourse), '考勤记录无效');
+      const cleanedMap: Obj = {};
+      for (const [courseKey, list] of Object.entries(state.attendanceByCourse)) {
+        check(typeof courseKey === 'string' && courseKey.length > 0 && courseKey.length <= 200 && Array.isArray(list), '考勤记录无效');
+        const cleanedList = list.map((item: unknown) => {
+          const rec = normalizeAttendanceRecord(item);
+          check(rec !== null, '考勤记录条目无效');
+          return rec;
+        });
+        cleanedMap[courseKey] = cleanedList.slice(0, 120);
+      }
+      state.attendanceByCourse = cleanedMap;
+    }
+    if ('customAbsenceLimits' in state) {
+      check(object(state.customAbsenceLimits), '缺勤红线设置无效');
+      const cleanedLimits: Obj = {};
+      for (const [courseKey, limit] of Object.entries(state.customAbsenceLimits)) {
+        check(typeof courseKey === 'string' && courseKey.length > 0 && courseKey.length <= 200 && typeof limit === 'number' && Number.isFinite(limit) && limit >= 1 && limit <= 60, '缺勤红线设置无效');
+        cleanedLimits[courseKey] = Math.floor(limit);
+      }
+      state.customAbsenceLimits = cleanedLimits;
+    }
+    if ('focusLogs' in state) {
+      check(Array.isArray(state.focusLogs), '专注记录无效');
+      state.focusLogs = state.focusLogs.map((item: unknown) => {
+        const log = normalizeCourseFocusLog(item);
+        check(log !== null, '专注记录条目无效');
+        return log;
+      }).slice(0, 500);
+    }
+    if ('pendingFarmRewards' in state) {
+      check(Array.isArray(state.pendingFarmRewards), '待结算奖励无效');
+      state.pendingFarmRewards = state.pendingFarmRewards.map((item: unknown) => {
+        const reward = normalizePendingFarmReward(item);
+        check(reward !== null, '待结算奖励条目无效');
+        return reward;
+      }).slice(0, 100);
+    }
+  }
+  if (key === 'dark-study-peer-schedules') {
+    if ('peers' in state) {
+      check(Array.isArray(state.peers), '好友课表数据无效');
+      for (const peer of state.peers) {
+        check(
+          object(peer) &&
+            typeof peer.id === 'string' &&
+            peer.id.length > 0 &&
+            typeof peer.nickname === 'string' &&
+            typeof peer.scheduleName === 'string' &&
+            Number.isFinite(peer.totalWeeks) &&
+            peer.totalWeeks >= 1 &&
+            Array.isArray(peer.courses),
+          '好友课表数据无效',
+        );
+        if (peer.active !== undefined) check(typeof peer.active === 'boolean', '好友课表状态无效');
+        if (peer.startDate !== undefined) check(typeof peer.startDate === 'string', '好友课表日期无效');
+        if (peer.color !== undefined) check(['sky', 'violet', 'emerald', 'amber', 'rose', 'cyan'].includes(peer.color), '好友课表颜色无效');
+        if (peer.importedAt !== undefined) check(typeof peer.importedAt === 'number' && Number.isFinite(peer.importedAt), '好友课表导入时间无效');
+        for (const c of peer.courses) {
+          check(
+            object(c) &&
+              typeof c.n === 'string' &&
+              Number.isInteger(c.d) &&
+              c.d >= 1 &&
+              c.d <= 7 &&
+              Number.isInteger(c.s) &&
+              c.s >= 1 &&
+              Number.isInteger(c.e) &&
+              c.e >= c.s &&
+              Array.isArray(c.w) &&
+              c.w.every((w: unknown) => Number.isInteger(w) && Number(w) > 0),
+            '好友课表课程数据无效',
+          );
+        }
+      }
+      state.peers = state.peers.slice(0, 50);
+    }
   }
   return { state, version: value.version ?? 0 };
 }
@@ -189,6 +303,56 @@ export function buildRestorePlan(backup: Backup, current: readonly (readonly [st
           }
         }
         for (const field of ['messages', 'memory', 'petMessages']) incoming.state[field].sort((a: Obj, b: Obj) => a.timestamp - b.timestamp);
+      } else if (key === 'dark-study-study-progress') {
+        const existingState = existing.state ?? {};
+        const incomingState = incoming.state ?? {};
+        const mergedAttendance: Obj = {};
+        const allKeys = new Set([
+          ...Object.keys(existingState.attendanceByCourse ?? {}),
+          ...Object.keys(incomingState.attendanceByCourse ?? {}),
+        ]);
+        for (const courseKey of allKeys) {
+          const mergedList = union(
+            existingState.attendanceByCourse?.[courseKey] ?? [],
+            incomingState.attendanceByCourse?.[courseKey] ?? [],
+            120,
+          );
+          mergedList.sort((a: Obj, b: Obj) => b.at - a.at);
+          mergedAttendance[courseKey] = mergedList;
+        }
+        const mergedFocus = union(
+          existingState.focusLogs ?? [],
+          incomingState.focusLogs ?? [],
+          500,
+        ).sort((a: Obj, b: Obj) => b.at - a.at);
+        const mergedRewards = union(
+          existingState.pendingFarmRewards ?? [],
+          incomingState.pendingFarmRewards ?? [],
+          100,
+        );
+        incoming = {
+          ...incoming,
+          state: {
+            ...incomingState,
+            ...existingState,
+            attendanceByCourse: mergedAttendance,
+            customAbsenceLimits: {
+              ...(incomingState.customAbsenceLimits ?? {}),
+              ...(existingState.customAbsenceLimits ?? {}),
+            },
+            focusLogs: mergedFocus,
+            pendingFarmRewards: mergedRewards,
+          },
+        };
+      } else if (key === 'dark-study-peer-schedules') {
+        incoming = {
+          ...incoming,
+          state: {
+            ...incoming.state,
+            ...(existing.state ?? {}),
+            peers: union(existing.state?.peers ?? [], incoming.state?.peers ?? [], 50),
+          },
+        };
       } else return [key, existingRaw!] as [string, string];
     }
     return [key, RAW_STRING_KEYS.has(key) ? String(incoming) : JSON.stringify(incoming)];

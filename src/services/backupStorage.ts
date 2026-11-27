@@ -5,6 +5,8 @@ import { useWhaleMemory } from '@/store/useWhaleMemory';
 import { useWhalePersona } from '@/store/useWhalePersona';
 import { useWhalePet } from '@/store/useWhalePet';
 import { useWidgetSettings } from '@/store/useWidgetSettings';
+import { useStudyProgress } from '@/store/useStudyProgress';
+import { usePeerSchedules } from '@/store/usePeerSchedules';
 import { normalizeWhaleVoiceConfig, useWhaleVoice, VOICE_CONFIG_KEY, VOICE_KEY } from '@/store/useWhaleVoice';
 import { SOUND_EFFECTS_KEY, useSoundEffects } from '@/store/useSoundEffects';
 import { useDataSession } from '@/store/useDataSession';
@@ -15,7 +17,7 @@ import { aiRequests } from '@/utils/requestCoordinator';
 import { commitRestore, recoverInterruptedRestore } from './restoreTransaction';
 
 export async function hydrateBackupStores() {
-  const stores = [useStore, useSettings, useWhaleMemory, useWhalePersona, useWhalePet, useWidgetSettings];
+  const stores = [useStore, useSettings, useWhaleMemory, useWhalePersona, useWhalePet, useWidgetSettings, useStudyProgress, usePeerSchedules];
   await Promise.all(stores.map(store => store.persist.rehydrate()));
   if (stores.some(store => !store.persist.hasHydrated())) throw new Error('部分数据无法重新加载，正在恢复原数据');
   const [voice, voiceConfigRaw, sfx] = await Promise.all([
@@ -32,7 +34,7 @@ export async function hydrateBackupStores() {
 }
 export async function collectBackup() {
   await flushPendingWrites();
-  const stores = [useStore, useSettings, useWhaleMemory, useWhalePersona, useWhalePet, useWidgetSettings];
+  const stores = [useStore, useSettings, useWhaleMemory, useWhalePersona, useWhalePet, useWidgetSettings, useStudyProgress, usePeerSchedules];
   await Promise.all(stores.filter(store => !store.persist.hasHydrated()).map(store => store.persist.rehydrate()));
   if (stores.some(store => !store.persist.hasHydrated())) throw new Error('数据尚未读取完成，请稍后重试');
   const records = new Map(await AsyncStorage.multiGet([...BACKUP_KEYS]));
@@ -43,6 +45,8 @@ export async function collectBackup() {
   records.set('dark-study-whale-persona', JSON.stringify({ state: useWhalePersona.getState(), version: 0 }));
   records.set('dark-study-whale-pet', JSON.stringify({ state: useWhalePet.getState(), version: 0 }));
   records.set('dark-study-widget-settings', JSON.stringify({ state: useWidgetSettings.getState(), version: 0 }));
+  records.set('dark-study-study-progress', JSON.stringify({ state: useStudyProgress.getState(), version: 0 }));
+  records.set('dark-study-peer-schedules', JSON.stringify({ state: usePeerSchedules.getState(), version: 0 }));
   await Promise.all([useWhaleVoice.getState().hydrate(), useSoundEffects.getState().hydrate()]);
   records.set(VOICE_KEY, useWhaleVoice.getState().on ? '1' : '0');
   records.set(VOICE_CONFIG_KEY, JSON.stringify(useWhaleVoice.getState().config));

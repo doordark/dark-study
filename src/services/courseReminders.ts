@@ -1,11 +1,12 @@
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import type { Schedule } from "@/types";
+import { EXAM_MODES, type CourseTask } from "@/utils/courseTasks";
 import { addDays, mondayOf, parseIsoDate, toIsoDate } from "@/utils/time";
 
 const CHANNEL = "course-reminders";
 const MARKER = "dark-study-course-reminder";
-const LEGACY_TASK_MARKER = "dark-study-course-task";
+const TASK_MARKER = "dark-study-course-task";
 
 if (Platform.OS !== "web") {
   Notifications.setNotificationHandler({ handleNotification: async () => ({
@@ -20,6 +21,15 @@ export async function prepareReminderChannel() {
     name: "上课提醒", importance: Notifications.AndroidImportance.HIGH,
     sound: "default", vibrationPattern: [0, 250, 150, 250],
   });
+}
+
+/** 请求系统通知权限（供任务/提醒保存时静默确保权限就绪） */
+export async function ensureReminderPermission(): Promise<boolean> {
+  if (Platform.OS === "web") return false;
+  await prepareReminderChannel();
+  let perm = await Notifications.getPermissionsAsync();
+  if (!perm.granted && perm.canAskAgain) perm = await Notifications.requestPermissionsAsync();
+  return perm.granted;
 }
 
 export function buildCourseReminders(schedule: Schedule, minutes: number, count: number, now = new Date()) {
@@ -45,6 +55,64 @@ export function buildCourseReminders(schedule: Schedule, minutes: number, count:
         result.push({ date, title: `${course.name} 即将上课`, body: `${offset} 分钟后 · ${time}${course.classroom ? ` · ${course.classroom}` : ""}` });
       }
     }
+  }
+  return result.sort((a, b) => a.date.getTime() - b.date.getTime());
+}
+
+export interface CourseTaskReminderItem {
+  taskId: string;
+  date: Date;
+  title: string;
+  body: string;
+}
+
+function formatTaskDueTime(dueAt: number): string {
+  const d = new Date(dueAt);
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const min = String(d.getMinutes()).padStart(2, "0");
+  return `${mm}/${dd} ${hh}:${min}`;
+}
+
+function formatReminderLead(minutes: number): string {
+  if (minutes >= 1440) return `${Math.round(minutes / 1440)} 天`;
+  if (minutes >= 60) return `${Math.round(minutes / 60)} 小时`;
+  return `${minutes} 分钟`;
+}
+
+/** 为未完成且开启提前提醒的作业/考试/复习待办生成本地通知计划 */
+export function buildCourseTaskReminders(
+  tasks: readonly CourseTask[],
+  now = new Date(),
+): CourseTaskReminderItem[] {
+  const result: CourseTaskReminderItem[] = [];
+  const nowMs = now.getTime();
+  for (const task of tasks) {
+    if (task.completedAt) continue;
+    if (!Number.isFinite(task.dueAt) || !Number.isFinite(task.reminder) || task.reminder <= 0) continue;
+    const triggerMs = task.dueAt - task.reminder * 60000;
+    if (!Number.isFinite(triggerMs) || triggerMs <= nowMs) continue;
+    const prefix =
+      task.type === "exam"
+        ? "[考试倒计时]"
+        : task.type === "homework"
+          ? "[作业提醒]"
+          : "[复习提醒]";
+    const parts: string[] = [
+      `${formatTaskDueTime(task.dueAt)} ${task.type === "exam" ? "开考" : "截止"}`,
+      `提前 ${formatReminderLead(task.reminder)}`,
+    ];
+    if (task.course?.courseName) parts.push(task.course.courseName);
+    if (task.location) parts.push(`考场 ${task.location}`);
+    if (task.seat) parts.push(`座位 ${task.seat}`);
+    if (task.examMode) parts.push(EXAM_MODES[task.examMode]);
+    result.push({
+      taskId: task.id,
+      date: new Date(triggerMs),
+      title: `${prefix} ${task.title}`,
+      body: parts.join(" · "),
+    });
   }
   return result.sort((a, b) => a.date.getTime() - b.date.getTime());
 }
@@ -114,33 +182,76 @@ export async function sendTestCourseReminder(minutes: number): Promise<void> {
   });
 }
 
+interface PlannedNotification {
+  kind: typeof MARKER | typeof TASK_MARKER;
+  date: Date;
+  title: string;
+  body: string;
+}
+
 let queue = Promise.resolve();
 let generation = 0;
-export function syncCourseReminders(schedule: Schedule | undefined, enabled: boolean, minutes: number, count: number) {
+export function syncCourseReminders(
+  schedule: Schedule | undefined,
+  enabled: boolean,
+  minutes: number,
+  count: number,
+  tasks: readonly CourseTask[] = [],
+) {
   if (Platform.OS === "web") return;
   const current = ++generation;
   queue = queue.catch(() => {}).then(async () => {
     if (current !== generation) return;
     const existing = await Notifications.getAllScheduledNotificationsAsync();
     const allowed = (await Notifications.getPermissionsAsync()).granted;
-    const reminders = allowed && enabled && schedule ? buildCourseReminders(schedule, minutes, count) : [];
-    const desired = new Map<string, typeof reminders[number]>();
-    for (const item of reminders) {
-      if (desired.size >= (Platform.OS === "ios" ? 60 : 450)) break;
-      desired.set(JSON.stringify([MARKER, item.date.getTime(), item.title, item.body]), item);
+    const limit = Platform.OS === "ios" ? 60 : 450;
+    const courseReminders = allowed && enabled && schedule ? buildCourseReminders(schedule, minutes, count) : [];
+    const taskReminders = allowed && tasks.length ? buildCourseTaskReminders(tasks) : [];
+
+    // 为作业/考试倒计时保留合理配额，避免大量未来课表提醒在 iOS 60 条上限下挤掉考试提醒
+    const taskQuota = Math.min(
+      taskReminders.length,
+      Math.max(limit - courseReminders.length, Math.floor(limit / 3)),
+    );
+    const chosenTasks = taskReminders.slice(0, taskQuota);
+    const chosenCourses = courseReminders.slice(0, Math.max(0, limit - chosenTasks.length));
+
+    const desired = new Map<string, PlannedNotification>();
+    for (const item of chosenCourses) {
+      if (desired.size >= limit) break;
+      desired.set(JSON.stringify([MARKER, item.date.getTime(), item.title, item.body]), {
+        kind: MARKER,
+        date: item.date,
+        title: item.title,
+        body: item.body,
+      });
+    }
+    for (const item of chosenTasks) {
+      if (desired.size >= limit) break;
+      desired.set(JSON.stringify([TASK_MARKER, item.taskId, item.date.getTime(), item.title, item.body]), {
+        kind: TASK_MARKER,
+        date: item.date,
+        title: item.title,
+        body: item.body,
+      });
     }
     if (current !== generation) return;
     for (const scheduled of existing) {
       const data = scheduled.content.data;
-      if (data?.kind !== MARKER && data?.kind !== LEGACY_TASK_MARKER) continue;
-      if (data.kind === MARKER && typeof data.key === "string" && desired.delete(data.key)) continue;
+      if (data?.kind !== MARKER && data?.kind !== TASK_MARKER) continue;
+      const key = typeof data.key === "string" ? data.key : null;
+      const target = key ? desired.get(key) : undefined;
+      if (key && target && target.kind === data.kind) {
+        desired.delete(key);
+        continue;
+      }
       await Notifications.cancelScheduledNotificationAsync(scheduled.identifier);
     }
     if (desired.size) await prepareReminderChannel();
     for (const [key, item] of desired) {
       if (current !== generation) return;
       await Notifications.scheduleNotificationAsync({
-        content: { title: item.title, body: item.body, sound: "default", data: { kind: MARKER, key } },
+        content: { title: item.title, body: item.body, sound: "default", data: { kind: item.kind, key } },
         trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: item.date, channelId: CHANNEL },
       });
     }

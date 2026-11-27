@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.TypedValue
@@ -162,7 +163,17 @@ object CourseWidgetEngine {
   private const val WIDE_MIN_ROW_HEIGHT = 48
   private const val COMPACT_BASE_ROW_HEIGHT = 47
   private const val COMPACT_MIN_ROW_HEIGHT = 46
-  private data class Lesson(val name: String, val room: String, val start: Long, val end: Long, val time: String, val color: String)
+  private data class Lesson(
+    val courseId: String,
+    val week: Int,
+    val weekday: Int,
+    val name: String,
+    val room: String,
+    val start: Long,
+    val end: Long,
+    val time: String,
+    val color: String,
+  )
   private val providers = listOf(SquareCourseWidget::class.java, RectangleCourseWidget::class.java, LargeCourseWidget::class.java)
   private val validCourseColors = setOf("sky", "violet", "emerald", "amber", "rose", "cyan")
 
@@ -205,7 +216,29 @@ object CourseWidgetEngine {
       a.get(Calendar.DAY_OF_YEAR) == b.get(Calendar.DAY_OF_YEAR)
   }
 
-  private fun lessons(schedule: JSONObject?, now: Long): List<Lesson> {
+  private fun weekdayShort(weekday: Int): String = when (weekday) {
+    1 -> "周一"
+    2 -> "周二"
+    3 -> "周三"
+    4 -> "周四"
+    5 -> "周五"
+    6 -> "周六"
+    7 -> "周日"
+    else -> "周日"
+  }
+
+  private fun activeWeek(schedule: JSONObject?, now: Long): Int? {
+    if (schedule == null) return null
+    val monday = parseDate(schedule.optString("startDate")) ?: return null
+    monday.add(Calendar.DAY_OF_MONTH, -((monday.get(Calendar.DAY_OF_WEEK) + 5) % 7))
+    val today = Calendar.getInstance().apply { timeInMillis = now }
+    val days = daysBetween(monday, today)
+    val week = Math.floor(days.toDouble() / 7.0).toInt() + 1
+    val total = schedule.optInt("totalWeeks", 0)
+    return if (week in 1..total) week else null
+  }
+
+  private fun expandLessons(schedule: JSONObject?, now: Long?, targetWeek: Int?): List<Lesson> {
     if (schedule == null) return emptyList()
     val startDate = schedule.optString("startDate")
     val endDate = schedule.optString("endDate")
@@ -230,11 +263,13 @@ object CourseWidgetEngine {
       val endMinutes = minutes(to) ?: continue
       if (endMinutes <= startMinutes) continue
       val weeks = course.optJSONArray("weeks") ?: continue
+      val courseId = nonBlank(course, "id") ?: ""
       val seen = mutableSetOf<Int>()
       for (j in 0 until weeks.length()) {
         val rawWeek = weeks.optDouble(j, Double.NaN)
         val week = rawWeek.toInt()
         if (rawWeek != week.toDouble() || week !in 1..schedule.optInt("totalWeeks") || !seen.add(week)) continue
+        if (targetWeek != null && week != targetWeek) continue
         val day = (monday.clone() as Calendar).apply { add(Calendar.DAY_OF_MONTH, (week - 1) * 7 + weekday - 1) }
         val iso = dateFormat.format(day.time)
         if (iso < startDate || iso > endDate) continue
@@ -246,10 +281,52 @@ object CourseWidgetEngine {
           set(Calendar.HOUR_OF_DAY, endMinutes / 60); set(Calendar.MINUTE, endMinutes % 60)
           set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
         }.timeInMillis
-        if (end > now) result.add(Lesson(course.optString("name"), course.optString("classroom"), start, end, "$from–$to", course.optString("color", "sky")))
+        if (now == null || end > now) {
+          result.add(
+            Lesson(
+              courseId = courseId,
+              week = week,
+              weekday = weekday,
+              name = course.optString("name"),
+              room = course.optString("classroom"),
+              start = start,
+              end = end,
+              time = "$from–$to",
+              color = course.optString("color", "sky"),
+            ),
+          )
+        }
       }
     }
-    return result.sortedWith(compareBy<Lesson> { it.start }.thenBy { it.name })
+    return result
+  }
+
+  private fun lessons(schedule: JSONObject?, now: Long): List<Lesson> =
+    expandLessons(schedule, now, null).sortedWith(compareBy<Lesson> { it.start }.thenBy { it.name })
+
+  private fun weekLessons(schedule: JSONObject?, now: Long): List<Lesson> {
+    val week = activeWeek(schedule, now) ?: return emptyList()
+    return expandLessons(schedule, null, week).sortedWith(
+      compareBy<Lesson> { it.weekday }.thenBy { it.start }.thenBy { it.name },
+    )
+  }
+
+  private fun courseClickIntent(context: Context, lesson: Lesson, requestCode: Int): PendingIntent {
+    val uri = if (lesson.courseId.isNotBlank()) {
+      Uri.parse("dark-study://?courseId=${Uri.encode(lesson.courseId)}&week=${lesson.week}")
+    } else {
+      Uri.parse("dark-study:///")
+    }
+    val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+      setPackage(context.packageName)
+      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+    }
+    return PendingIntent.getActivity(
+      context,
+      requestCode,
+      intent,
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
   }
 
   private fun dayLabel(start: Long, now: Long): String {
@@ -315,7 +392,7 @@ object CourseWidgetEngine {
     val now = System.currentTimeMillis()
     val width = if (provider == SquareCourseWidget::class.java) 140 else 280
     val height = if (provider == LargeCourseWidget::class.java) 280 else 140
-    return renderWidget(context, payload, provider, width, height, now)
+    return renderWidget(context, payload, provider, width, height, now, 0)
   }
 
   private fun renderWidget(
@@ -325,6 +402,7 @@ object CourseWidgetEngine {
     width: Int,
     height: Int,
     now: Long,
+    appWidgetId: Int = 0,
   ): RemoteViews {
     val schedule = payload.optJSONObject("schedule")
     val upcoming = lessons(schedule, now)
@@ -337,7 +415,7 @@ object CourseWidgetEngine {
     }
     val accent = payload.optString("accent", "default").takeIf { Regex("[a-z]+").matches(it) } ?: "default"
     val surfaceStyle = payload.optString("style", "frosted").takeIf { it in setOf("frosted", "porcelain", "tinted") } ?: "frosted"
-    val displayMode = payload.optString("mode", "upcoming").takeIf { it in setOf("upcoming", "today") } ?: "upcoming"
+    val displayMode = payload.optString("mode", "upcoming").takeIf { it in setOf("upcoming", "today", "week") } ?: "upcoming"
     val mode = if (dark) "dark" else "light"
     val ink = Color.parseColor(if (dark) "#F8FAFC" else "#172033")
     val muted = Color.parseColor(if (dark) "#9EB0C9" else "#64748B")
@@ -364,114 +442,242 @@ object CourseWidgetEngine {
     view.setViewVisibility(R.id.widget_meta, if (compact && width in 1..125) View.GONE else View.VISIBLE)
     view.removeAllViews(R.id.widget_courses)
 
+    val weekMode = displayMode == "week"
     val todayOnly = upcoming.filter { sameDay(it.start, now) }
     val sourceList = if (displayMode == "today") todayOnly else upcoming
+    val weekDayGroups = if (weekMode) {
+      val allWeek = weekLessons(schedule, now)
+      (1..7).mapNotNull { wd ->
+        val dayItems = allWeek.filter { it.weekday == wd }
+        if (dayItems.isEmpty()) null else wd to dayItems
+      }
+    } else {
+      emptyList()
+    }
     val defaultCapacity = if (provider == LargeCourseWidget::class.java) 5 else 2
     val available = if (height > 0) height - CHROME_HEIGHT else 0
     val baseRowHeight = if (compact) COMPACT_BASE_ROW_HEIGHT else WIDE_BASE_ROW_HEIGHT
     val minRowHeight = if (compact) COMPACT_MIN_ROW_HEIGHT else WIDE_MIN_ROW_HEIGHT
     val rowMin = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) minRowHeight else baseRowHeight
-    val capacity = if (available > 0) (available / rowMin).coerceIn(1, 5) else defaultCapacity
-    val visible = sourceList.take(minOf(count, capacity))
+    val maxSlots = if (weekMode) 7 else 5
+    val capacity = if (available > 0) (available / rowMin).coerceIn(1, maxSlots) else defaultCapacity
+    val visible = if (weekMode) emptyList() else sourceList.take(minOf(count, capacity))
+    val visibleWeekDays = if (weekMode) weekDayGroups.take(capacity) else emptyList()
+    val rowCount = if (weekMode) visibleWeekDays.size else visible.size
 
-    val stretch = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && available > 0 && visible.isNotEmpty()
-    val rawSlotHeight = if (stretch) available.toFloat() / visible.size else baseRowHeight.toFloat()
+    val stretch = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && available > 0 && rowCount > 0
+    val rawSlotHeight = if (stretch) available.toFloat() / rowCount else baseRowHeight.toFloat()
     val rowCardHeight = if (compact) {
       (rawSlotHeight - 4f).coerceIn(42f, 64f)
     } else {
       (rawSlotHeight - 4f).coerceIn(44f, 74f)
     }
     val textScale = (rowCardHeight / 46f).coerceIn(0.96f, 1.15f)
+    val providerSlot = when (provider) {
+      SquareCourseWidget::class.java -> 1
+      RectangleCourseWidget::class.java -> 2
+      else -> 3
+    }
+    val rowRequestBase = 7500 + ((appWidgetId and 0x0FFF) * 32) + providerSlot * 8
 
     view.setTextViewTextSize(R.id.widget_title, TypedValue.COMPLEX_UNIT_SP, if (compact) 12f else 13.5f)
     view.setTextViewTextSize(R.id.widget_meta, TypedValue.COMPLEX_UNIT_SP, if (compact) 10f else 11f)
     view.setTextViewTextSize(R.id.widget_weekday, TypedValue.COMPLEX_UNIT_SP, if (compact) 10.5f else 11f)
 
-    for ((index, lesson) in visible.withIndex()) {
-      val colorKey = safeColorKey(lesson.color)
-      val accentColor = courseColor(colorPalette, colorKey)
-      val readableAccent = badgeTextColor(colorKey, dark, accentColor)
-      val ongoing = lesson.start <= now
-      val isNextHighlight = index == 0 && (ongoing || sameDay(lesson.start, now))
-      val itemDrawable = drawableResource(
-        context,
-        "course_widget_item_${colorKey}_${if (isNextHighlight) "active_" else ""}$mode",
-        if (dark) R.drawable.course_widget_item_sky_dark else R.drawable.course_widget_item_sky_light,
-      )
-      val barDrawable = drawableResource(context, "course_widget_bar_$colorKey", R.drawable.course_widget_bar_sky)
+    if (weekMode) {
+      for ((index, pair) in visibleWeekDays.withIndex()) {
+        val (weekday, dayLessons) = pair
+        val primary = dayLessons.firstOrNull { it.start <= now && it.end > now }
+          ?: dayLessons.firstOrNull { it.end > now }
+          ?: dayLessons.first()
+        val colorKey = safeColorKey(primary.color)
+        val accentColor = courseColor(colorPalette, colorKey)
+        val readableAccent = badgeTextColor(colorKey, dark, accentColor)
+        val ongoing = primary.start <= now && primary.end > now
+        val isTodayRow = sameDay(primary.start, now)
+        val isNextHighlight = ongoing || isTodayRow
+        val itemDrawable = drawableResource(
+          context,
+          "course_widget_item_${colorKey}_${if (isNextHighlight) "active_" else ""}$mode",
+          if (dark) R.drawable.course_widget_item_sky_dark else R.drawable.course_widget_item_sky_light,
+        )
+        val barDrawable = drawableResource(context, "course_widget_bar_$colorKey", R.drawable.course_widget_bar_sky)
+        val dayTag = weekdayShort(weekday)
+        val joinedNames = dayLessons.joinToString(" / ") { it.name }
+        val firstStart = dayLessons.first().time.substringBefore("–")
+        val lastEnd = (dayLessons.maxByOrNull { it.end } ?: dayLessons.last()).time.substringAfter("–")
+        val clickIntent = courseClickIntent(context, primary, rowRequestBase + index)
 
-      if (compact) {
-        val row = RemoteViews(context.packageName, R.layout.course_widget_row_compact)
-        row.setInt(R.id.widget_course_row, "setBackgroundResource", itemDrawable)
-        row.setInt(R.id.widget_course_bar, "setBackgroundResource", barDrawable)
-        row.setTextViewText(R.id.widget_course_name, lesson.name)
-        val startClock = lesson.time.substringBefore("–")
-        val roomLabel = lesson.room.ifBlank { "教室待定" }
-        val compactSub = if (ongoing) {
-          "上课中 · $roomLabel"
-        } else if (sameDay(lesson.start, now)) {
-          "$startClock · $roomLabel"
+        if (compact) {
+          val row = RemoteViews(context.packageName, R.layout.course_widget_row_compact)
+          row.setInt(R.id.widget_course_row, "setBackgroundResource", itemDrawable)
+          row.setInt(R.id.widget_course_bar, "setBackgroundResource", barDrawable)
+          row.setTextViewText(R.id.widget_course_name, "$dayTag · $joinedNames")
+          val roomLabel = primary.room.ifBlank { "教室待定" }
+          val compactSub = when {
+            ongoing -> "上课中 · $roomLabel"
+            dayLessons.size == 1 -> "$firstStart · $roomLabel"
+            else -> "$firstStart · 共${dayLessons.size}节"
+          }
+          row.setTextViewText(R.id.widget_course_time, compactSub)
+          row.setTextColor(R.id.widget_course_name, ink)
+          row.setTextColor(R.id.widget_course_time, if (ongoing || isTodayRow) readableAccent else muted)
+          row.setOnClickPendingIntent(R.id.widget_course_row, clickIntent)
+          if (stretch && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            row.setViewLayoutHeight(R.id.widget_course_row, rowCardHeight, TypedValue.COMPLEX_UNIT_DIP)
+            row.setTextViewTextSize(R.id.widget_course_name, TypedValue.COMPLEX_UNIT_SP, (11.5f * textScale).coerceIn(11f, 13.5f))
+            row.setTextViewTextSize(R.id.widget_course_time, TypedValue.COMPLEX_UNIT_SP, (9.5f * textScale).coerceIn(9f, 11f))
+          }
+          view.addView(R.id.widget_courses, row)
         } else {
-          "${dayLabel(lesson.start, now)} $startClock"
-        }
-        row.setTextViewText(R.id.widget_course_time, compactSub)
-        row.setTextColor(R.id.widget_course_name, ink)
-        row.setTextColor(R.id.widget_course_time, if (ongoing) readableAccent else muted)
-        if (stretch && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-          row.setViewLayoutHeight(R.id.widget_course_row, rowCardHeight, TypedValue.COMPLEX_UNIT_DIP)
-          row.setTextViewTextSize(R.id.widget_course_name, TypedValue.COMPLEX_UNIT_SP, (11.5f * textScale).coerceIn(11f, 13.5f))
-          row.setTextViewTextSize(R.id.widget_course_time, TypedValue.COMPLEX_UNIT_SP, (9.5f * textScale).coerceIn(9f, 11f))
-        }
-        view.addView(R.id.widget_courses, row)
-      } else {
-        val row = RemoteViews(context.packageName, R.layout.course_widget_row)
-        row.setInt(R.id.widget_course_row, "setBackgroundResource", itemDrawable)
-        row.setInt(R.id.widget_course_bar, "setBackgroundResource", barDrawable)
-        row.setTextViewText(R.id.widget_course_name, lesson.name)
-        row.setTextViewText(R.id.widget_course_time, lesson.time)
-        row.setTextViewText(R.id.widget_course_room, lesson.room.ifBlank { "教室待定" })
-        row.setTextColor(R.id.widget_course_name, ink)
-        row.setTextColor(R.id.widget_course_time, muted)
-        row.setTextColor(R.id.widget_course_room, muted)
-        row.setTextColor(R.id.widget_course_dot, accentColor)
-
-        val badgeText = when {
-          ongoing -> "上课中"
-          index == 0 && sameDay(lesson.start, now) -> "下节课"
-          else -> dayLabel(lesson.start, now)
-        }
-        row.setTextViewText(R.id.widget_course_badge, badgeText)
-        if (ongoing) {
-          row.setInt(R.id.widget_course_badge, "setBackgroundResource", barDrawable)
-          row.setTextColor(R.id.widget_course_badge, Color.WHITE)
-        } else {
-          val badgeDrawable = drawableResource(
-            context,
-            "course_widget_badge_${colorKey}_$mode",
-            if (dark) R.drawable.course_widget_badge_sky_dark else R.drawable.course_widget_badge_sky_light,
+          val row = RemoteViews(context.packageName, R.layout.course_widget_row)
+          row.setInt(R.id.widget_course_row, "setBackgroundResource", itemDrawable)
+          row.setInt(R.id.widget_course_bar, "setBackgroundResource", barDrawable)
+          row.setTextViewText(
+            R.id.widget_course_name,
+            if (dayLessons.size == 1) primary.name else "$dayTag · $joinedNames",
           )
-          row.setInt(R.id.widget_course_badge, "setBackgroundResource", badgeDrawable)
-          row.setTextColor(R.id.widget_course_badge, readableAccent)
-        }
+          row.setTextViewText(
+            R.id.widget_course_time,
+            if (dayLessons.size == 1) "$dayTag ${primary.time}" else "$firstStart–$lastEnd",
+          )
+          row.setTextViewText(
+            R.id.widget_course_room,
+            if (dayLessons.size == 1) primary.room.ifBlank { "教室待定" } else primary.room.ifBlank { "共 ${dayLessons.size} 门课" },
+          )
+          row.setTextColor(R.id.widget_course_name, ink)
+          row.setTextColor(R.id.widget_course_time, muted)
+          row.setTextColor(R.id.widget_course_room, muted)
+          row.setTextColor(R.id.widget_course_dot, accentColor)
 
-        if (stretch && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-          row.setViewLayoutHeight(R.id.widget_course_row, rowCardHeight, TypedValue.COMPLEX_UNIT_DIP)
-          row.setTextViewTextSize(R.id.widget_course_name, TypedValue.COMPLEX_UNIT_SP, (12.5f * textScale).coerceIn(12f, 15.5f))
-          row.setTextViewTextSize(R.id.widget_course_time, TypedValue.COMPLEX_UNIT_SP, (10f * textScale).coerceIn(9.5f, 12f))
-          row.setTextViewTextSize(R.id.widget_course_room, TypedValue.COMPLEX_UNIT_SP, (10f * textScale).coerceIn(9.5f, 12f))
-          row.setTextViewTextSize(R.id.widget_course_badge, TypedValue.COMPLEX_UNIT_SP, (9f * textScale).coerceIn(8.5f, 10.5f))
+          val badgeText = when {
+            ongoing -> "上课中"
+            isTodayRow && dayLessons.size > 1 -> "今天 · ${dayLessons.size}节"
+            isTodayRow -> "今天"
+            dayLessons.size > 1 -> "${dayLessons.size}节"
+            else -> dayTag
+          }
+          row.setTextViewText(R.id.widget_course_badge, badgeText)
+          if (ongoing) {
+            row.setInt(R.id.widget_course_badge, "setBackgroundResource", barDrawable)
+            row.setTextColor(R.id.widget_course_badge, Color.WHITE)
+          } else {
+            val badgeDrawable = drawableResource(
+              context,
+              "course_widget_badge_${colorKey}_$mode",
+              if (dark) R.drawable.course_widget_badge_sky_dark else R.drawable.course_widget_badge_sky_light,
+            )
+            row.setInt(R.id.widget_course_badge, "setBackgroundResource", badgeDrawable)
+            row.setTextColor(R.id.widget_course_badge, readableAccent)
+          }
+          row.setOnClickPendingIntent(R.id.widget_course_row, clickIntent)
+
+          if (stretch && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            row.setViewLayoutHeight(R.id.widget_course_row, rowCardHeight, TypedValue.COMPLEX_UNIT_DIP)
+            row.setTextViewTextSize(R.id.widget_course_name, TypedValue.COMPLEX_UNIT_SP, (12.5f * textScale).coerceIn(12f, 15.5f))
+            row.setTextViewTextSize(R.id.widget_course_time, TypedValue.COMPLEX_UNIT_SP, (10f * textScale).coerceIn(9.5f, 12f))
+            row.setTextViewTextSize(R.id.widget_course_room, TypedValue.COMPLEX_UNIT_SP, (10f * textScale).coerceIn(9.5f, 12f))
+            row.setTextViewTextSize(R.id.widget_course_badge, TypedValue.COMPLEX_UNIT_SP, (9f * textScale).coerceIn(8.5f, 10.5f))
+          }
+          view.addView(R.id.widget_courses, row)
         }
-        view.addView(R.id.widget_courses, row)
+      }
+    } else {
+      for ((index, lesson) in visible.withIndex()) {
+        val colorKey = safeColorKey(lesson.color)
+        val accentColor = courseColor(colorPalette, colorKey)
+        val readableAccent = badgeTextColor(colorKey, dark, accentColor)
+        val ongoing = lesson.start <= now
+        val isNextHighlight = index == 0 && (ongoing || sameDay(lesson.start, now))
+        val itemDrawable = drawableResource(
+          context,
+          "course_widget_item_${colorKey}_${if (isNextHighlight) "active_" else ""}$mode",
+          if (dark) R.drawable.course_widget_item_sky_dark else R.drawable.course_widget_item_sky_light,
+        )
+        val barDrawable = drawableResource(context, "course_widget_bar_$colorKey", R.drawable.course_widget_bar_sky)
+        val clickIntent = courseClickIntent(context, lesson, rowRequestBase + index)
+
+        if (compact) {
+          val row = RemoteViews(context.packageName, R.layout.course_widget_row_compact)
+          row.setInt(R.id.widget_course_row, "setBackgroundResource", itemDrawable)
+          row.setInt(R.id.widget_course_bar, "setBackgroundResource", barDrawable)
+          row.setTextViewText(R.id.widget_course_name, lesson.name)
+          val startClock = lesson.time.substringBefore("–")
+          val roomLabel = lesson.room.ifBlank { "教室待定" }
+          val compactSub = if (ongoing) {
+            "上课中 · $roomLabel"
+          } else if (sameDay(lesson.start, now)) {
+            "$startClock · $roomLabel"
+          } else {
+            "${dayLabel(lesson.start, now)} $startClock"
+          }
+          row.setTextViewText(R.id.widget_course_time, compactSub)
+          row.setTextColor(R.id.widget_course_name, ink)
+          row.setTextColor(R.id.widget_course_time, if (ongoing) readableAccent else muted)
+          row.setOnClickPendingIntent(R.id.widget_course_row, clickIntent)
+          if (stretch && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            row.setViewLayoutHeight(R.id.widget_course_row, rowCardHeight, TypedValue.COMPLEX_UNIT_DIP)
+            row.setTextViewTextSize(R.id.widget_course_name, TypedValue.COMPLEX_UNIT_SP, (11.5f * textScale).coerceIn(11f, 13.5f))
+            row.setTextViewTextSize(R.id.widget_course_time, TypedValue.COMPLEX_UNIT_SP, (9.5f * textScale).coerceIn(9f, 11f))
+          }
+          view.addView(R.id.widget_courses, row)
+        } else {
+          val row = RemoteViews(context.packageName, R.layout.course_widget_row)
+          row.setInt(R.id.widget_course_row, "setBackgroundResource", itemDrawable)
+          row.setInt(R.id.widget_course_bar, "setBackgroundResource", barDrawable)
+          row.setTextViewText(R.id.widget_course_name, lesson.name)
+          row.setTextViewText(R.id.widget_course_time, lesson.time)
+          row.setTextViewText(R.id.widget_course_room, lesson.room.ifBlank { "教室待定" })
+          row.setTextColor(R.id.widget_course_name, ink)
+          row.setTextColor(R.id.widget_course_time, muted)
+          row.setTextColor(R.id.widget_course_room, muted)
+          row.setTextColor(R.id.widget_course_dot, accentColor)
+
+          val badgeText = when {
+            ongoing -> "上课中"
+            index == 0 && sameDay(lesson.start, now) -> "下节课"
+            else -> dayLabel(lesson.start, now)
+          }
+          row.setTextViewText(R.id.widget_course_badge, badgeText)
+          if (ongoing) {
+            row.setInt(R.id.widget_course_badge, "setBackgroundResource", barDrawable)
+            row.setTextColor(R.id.widget_course_badge, Color.WHITE)
+          } else {
+            val badgeDrawable = drawableResource(
+              context,
+              "course_widget_badge_${colorKey}_$mode",
+              if (dark) R.drawable.course_widget_badge_sky_dark else R.drawable.course_widget_badge_sky_light,
+            )
+            row.setInt(R.id.widget_course_badge, "setBackgroundResource", badgeDrawable)
+            row.setTextColor(R.id.widget_course_badge, readableAccent)
+          }
+          row.setOnClickPendingIntent(R.id.widget_course_row, clickIntent)
+
+          if (stretch && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            row.setViewLayoutHeight(R.id.widget_course_row, rowCardHeight, TypedValue.COMPLEX_UNIT_DIP)
+            row.setTextViewTextSize(R.id.widget_course_name, TypedValue.COMPLEX_UNIT_SP, (12.5f * textScale).coerceIn(12f, 15.5f))
+            row.setTextViewTextSize(R.id.widget_course_time, TypedValue.COMPLEX_UNIT_SP, (10f * textScale).coerceIn(9.5f, 12f))
+            row.setTextViewTextSize(R.id.widget_course_room, TypedValue.COMPLEX_UNIT_SP, (10f * textScale).coerceIn(9.5f, 12f))
+            row.setTextViewTextSize(R.id.widget_course_badge, TypedValue.COMPLEX_UNIT_SP, (9f * textScale).coerceIn(8.5f, 10.5f))
+          }
+          view.addView(R.id.widget_courses, row)
+        }
       }
     }
 
-    val empty = visible.isEmpty()
+    val empty = rowCount == 0
     view.setViewVisibility(R.id.widget_courses, if (empty) View.GONE else View.VISIBLE)
     view.setViewVisibility(R.id.widget_empty_box, if (empty) View.VISIBLE else View.GONE)
     if (empty) {
       val (kaomoji, emptyTitle, hint) = when {
         schedule == null -> Triple("(｡•ᴗ•｡)", "打开 Dark Study 同步课表", null)
         (schedule.optJSONArray("courses")?.length() ?: 0) == 0 -> Triple("(っ˘ω˘ς)", "还没有课程 · 先导入课表吧", null)
+        displayMode == "week" && upcoming.isNotEmpty() -> {
+          val next = upcoming.first()
+          val startClock = next.time.substringBefore("–")
+          Triple("(〃'▽'〃)", "本周没有课啦", "下节 · ${dayLabel(next.start, now)} $startClock ${next.name}")
+        }
+        displayMode == "week" -> Triple("(〃'▽'〃)", "本周没有课啦", "本学期暂无后续课程 · 享受自由时间")
         displayMode == "today" && upcoming.isNotEmpty() -> {
           val next = upcoming.first()
           val startClock = next.time.substringBefore("–")
@@ -501,7 +707,7 @@ object CourseWidgetEngine {
     if (launch != null) {
       // A URI also navigates an already-running app back to the timetable.
       launch.action = Intent.ACTION_VIEW
-      launch.data = android.net.Uri.parse("dark-study:///")
+      launch.data = Uri.parse("dark-study:///")
       view.setOnClickPendingIntent(
         android.R.id.background,
         PendingIntent.getActivity(context, 7402, launch, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE),
@@ -539,7 +745,7 @@ object CourseWidgetEngine {
       val options = manager.getAppWidgetOptions(id)
       val height = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 0)
       val width = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0)
-      val view = renderWidget(context, payload, provider, width, height, now)
+      val view = renderWidget(context, payload, provider, width, height, now, id)
       manager.updateAppWidget(id, view)
     }
 

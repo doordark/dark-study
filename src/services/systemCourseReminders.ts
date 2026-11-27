@@ -63,8 +63,134 @@ export async function importCourseAlarms(courses: WidgetCourse[], minutes: numbe
   return result;
 }
 
+const CALENDAR_TITLE = "Dark Study 课程";
 const CALENDAR_NAME = "dark-study-courses";
+const CALENDAR_COLOR = "#38BDF8";
 const MARKER_PREFIX = "DarkStudy:";
+
+function assertCalendarPlatform() {
+  if (Platform.OS === "web") {
+    throw new Error("网页端不支持写入系统日历，可使用 .ics 导出功能");
+  }
+  if (Platform.OS !== "android" && Platform.OS !== "ios") {
+    throw new Error("当前平台不支持写入系统日历，可使用 .ics 导出功能");
+  }
+}
+
+type LegacyCalendarModule = typeof import("expo-calendar/legacy");
+
+function findCourseCalendarId(
+  calendars: Awaited<ReturnType<LegacyCalendarModule["getCalendarsAsync"]>>,
+): string | undefined {
+  if (Platform.OS === "android") {
+    return calendars.find(
+      (c) => c.name === CALENDAR_NAME && c.allowsModifications,
+    )?.id;
+  }
+  return calendars.find(
+    (c) =>
+      c.allowsModifications &&
+      (c.title === CALENDAR_TITLE || c.name === CALENDAR_NAME),
+  )?.id;
+}
+
+async function resolveIosCalendarSource(
+  Calendar: LegacyCalendarModule,
+  calendars: Awaited<ReturnType<LegacyCalendarModule["getCalendarsAsync"]>>,
+) {
+  if (typeof Calendar.getDefaultCalendarAsync === "function") {
+    try {
+      const def = await Calendar.getDefaultCalendarAsync();
+      if (def?.source && def.allowsModifications !== false) {
+        return def.source;
+      }
+    } catch {
+      // 某些未开启默认日历的设备可能抛错，继续尝试其他可写源
+    }
+  }
+
+  const writable = calendars.filter((c) => c.allowsModifications && c.source);
+  const preferredCalendar =
+    writable.find(
+      (c) =>
+        c.source.type === Calendar.SourceType?.CALDAV ||
+        /icloud/i.test(c.source.name ?? ""),
+    ) ??
+    writable.find((c) => c.source.type === Calendar.SourceType?.LOCAL) ??
+    writable[0];
+  if (preferredCalendar?.source) {
+    return preferredCalendar.source;
+  }
+
+  if (typeof Calendar.getSourcesAsync === "function") {
+    try {
+      const sources = await Calendar.getSourcesAsync();
+      const nonReadOnly = sources.filter(
+        (s) =>
+          s.type !== Calendar.SourceType?.SUBSCRIBED &&
+          s.type !== Calendar.SourceType?.BIRTHDAYS,
+      );
+      return (
+        nonReadOnly.find(
+          (s) =>
+            s.type === Calendar.SourceType?.CALDAV ||
+            /icloud/i.test(s.name ?? ""),
+        ) ??
+        nonReadOnly.find((s) => s.type === Calendar.SourceType?.LOCAL) ??
+        nonReadOnly[0] ??
+        null
+      );
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+async function ensureCourseCalendarId(
+  Calendar: LegacyCalendarModule,
+): Promise<string> {
+  const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
+  const existingId = findCourseCalendarId(calendars);
+  if (existingId) return existingId;
+
+  if (Platform.OS === "android") {
+    return Calendar.createCalendarAsync({
+      title: CALENDAR_TITLE,
+      name: CALENDAR_NAME,
+      color: CALENDAR_COLOR,
+      entityType: Calendar.EntityTypes.EVENT,
+      source: {
+        isLocalAccount: true,
+        name: "Dark Study",
+        type: Calendar.SourceType.LOCAL,
+      },
+      ownerAccount: "Dark Study",
+      accessLevel: Calendar.CalendarAccessLevel.OWNER,
+    });
+  }
+
+  const iosSource = await resolveIosCalendarSource(Calendar, calendars);
+  if (iosSource) {
+    return Calendar.createCalendarAsync({
+      title: CALENDAR_TITLE,
+      name: CALENDAR_NAME,
+      color: CALENDAR_COLOR,
+      entityType: Calendar.EntityTypes.EVENT,
+      sourceId: iosSource.id,
+      source: iosSource,
+      ownerAccount: "personal",
+      accessLevel: Calendar.CalendarAccessLevel.OWNER,
+    });
+  }
+
+  const fallbackWritable = calendars.find((c) => c.allowsModifications)?.id;
+  if (fallbackWritable) return fallbackWritable;
+
+  throw new Error(
+    "未找到可写入的 iOS 系统日历账户，请在系统设置开启本地或 iCloud 日历，或改用 .ics 导出功能。",
+  );
+}
 
 function parseMarkerScheduleId(notes: string | undefined): string | null {
   const firstLine = notes?.split(/\r?\n/)[0]?.trim();
@@ -79,17 +205,11 @@ function parseMarkerScheduleId(notes: string | undefined): string | null {
 
 /** Own calendar + full-day batch lookup makes retries & same-day time shifts idempotent without duplicates. */
 export async function importCourseCalendar(courses: WidgetCourse[], minutes: number, scheduleId: string): Promise<CourseImportResult> {
-  if (Platform.OS !== "android") throw new Error("当前仅支持 Android 系统日历");
+  assertCalendarPlatform();
   const Calendar = await import("expo-calendar/legacy");
   const permission = await Calendar.requestCalendarPermissionsAsync();
   if (!permission.granted) throw new Error("请允许访问系统日历后重试；如果已禁止询问，可在系统应用权限中开启日历权限。");
-  const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
-  let calendarId = calendars.find(c => c.name === CALENDAR_NAME && c.allowsModifications)?.id;
-  if (!calendarId) calendarId = await Calendar.createCalendarAsync({
-    title: "Dark Study 课程", name: CALENDAR_NAME, color: "#38BDF8",
-    entityType: Calendar.EntityTypes.EVENT, source: { isLocalAccount: true, name: "Dark Study", type: Calendar.SourceType.LOCAL },
-    ownerAccount: "Dark Study", accessLevel: Calendar.CalendarAccessLevel.OWNER,
-  });
+  const calendarId = await ensureCourseCalendarId(Calendar);
   const result: CourseImportResult = { completed: 0, skipped: 0, failures: [] };
   const now = Date.now();
   const pending: WidgetCourse[] = [];
@@ -141,12 +261,12 @@ export async function importCourseCalendar(courses: WidgetCourse[], minutes: num
 
 /** 清空 Dark Study 专属系统日历中的课程快照（传入 scheduleId 时仅清理该课表）。 */
 export async function clearCourseCalendar(scheduleId?: string): Promise<number> {
-  if (Platform.OS !== "android") throw new Error("当前仅支持 Android 系统日历");
+  assertCalendarPlatform();
   const Calendar = await import("expo-calendar/legacy");
   const permission = await Calendar.requestCalendarPermissionsAsync();
   if (!permission.granted) throw new Error("请允许访问系统日历后重试。");
   const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
-  const calendarId = calendars.find(c => c.name === CALENDAR_NAME && c.allowsModifications)?.id;
+  const calendarId = findCourseCalendarId(calendars);
   if (!calendarId) return 0;
   const now = Date.now();
   const rangeStart = new Date(now - 365 * 86400000);

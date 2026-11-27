@@ -2,8 +2,11 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
+  Alert,
+  Platform,
   Pressable,
   ScrollView,
+  Share,
   Text,
   View,
   type ScrollViewInstance,
@@ -20,6 +23,7 @@ import {
 } from "@/services/importRunner";
 import type { TaskKind } from "@/store/useImportTask";
 import { useStore } from "@/store/useStore";
+import { EDU_EXTRACT_SNIPPET } from "@/utils/eduAdapters";
 import { GRADE_SEMESTERS, semesterLabel } from "@/utils/grades";
 
 /** 统一导入方式行：相册识图 / 拍照识别 / 文档导入 / 粘贴文本，三个模块一致 */
@@ -68,9 +72,48 @@ export function ImportScreen() {
   const setActiveGradeSemester = useStore((s) => s.setActiveGradeSemester);
 
   const [pasteKind, setPasteKind] = useState<TaskKind | null>(null);
+  const [eduGuideOpen, setEduGuideOpen] = useState(false);
+  const [snippetCopied, setSnippetCopied] = useState(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<ScrollViewInstance>(null);
   const [periodsY, setPeriodsY] = useState<number | null>(null);
   const [gradesY, setGradesY] = useState<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
+
+  const handleCopyEduSnippet = async () => {
+    try {
+      if (
+        Platform.OS === "web" &&
+        typeof navigator !== "undefined" &&
+        navigator.clipboard?.writeText
+      ) {
+        await navigator.clipboard.writeText(EDU_EXTRACT_SNIPPET);
+        setSnippetCopied(true);
+        if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+        copyTimerRef.current = setTimeout(() => setSnippetCopied(false), 2000);
+        return;
+      }
+      const res = await Share.share({
+        title: "Dark Study 教务只读提取脚本",
+        message: EDU_EXTRACT_SNIPPET,
+      });
+      if (res.action !== Share.dismissedAction) {
+        setSnippetCopied(true);
+        if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+        copyTimerRef.current = setTimeout(() => setSnippetCopied(false), 2000);
+      }
+    } catch {
+      Alert.alert(
+        "提示",
+        "可长按下方脚本框全选复制，在电脑浏览器打开教务页面后粘贴到控制台运行",
+      );
+    }
+  };
 
   useEffect(() => {
     if (focusTarget === "periods" && periodsY != null) {
@@ -138,7 +181,7 @@ export function ImportScreen() {
             <View className="mt-2.5 flex-row items-center rounded-2xl border border-white/25 bg-white/35 px-3.5 py-2.5 dark:border-white/10 dark:bg-white/[0.05]">
               <Ionicons name="information-circle" size={14} color="#94A3B8" />
               <Text className="ml-1.5 flex-1 text-[11px] leading-4 text-slate-600 dark:text-slate-300">
-                全部模块均支持「相册（多选）/ 拍照 / 文档（xlsx、csv、ics、html、json、txt）/ 粘贴文本」。联网且有 API Key 优先走 AI，断网、无 Key 或云端波动时自动切换本地离线识别
+                全部模块均支持「相册（多选）/ 拍照 / 文档（pdf、xls、xlsx、csv、ics、html、json、txt）/ 粘贴文本（WakeUp、新正方、强智直导）」。联网且有 API Key 优先走 AI，断网或无 Key 自动切换本地离线识别
               </Text>
             </View>
           </Animated.View>
@@ -160,7 +203,7 @@ export function ImportScreen() {
                       课程表识别
                     </Text>
                     <Text className="text-[11px] text-slate-500 dark:text-slate-400">
-                      支持教务截图、手写课表、Excel / ICS 日历与文本（默认保留当前作息）
+                      支持教务截图、PDF / XLS / XLSX / ICS 日历、WakeUp 与正方·强智直导（默认保留当前作息）
                     </Text>
                   </View>
                 </View>
@@ -236,7 +279,7 @@ export function ImportScreen() {
                       成绩识别
                     </Text>
                     <Text className="text-[11px] text-slate-500 dark:text-slate-400">
-                      教务截图 / 成绩单照片 / Excel 表格 / 粘贴文本，自动匹配类型与防重
+                      教务截图 / PDF 成绩单 / XLS·XLSX 表格 / 教务 JSON，自动匹配类型与防重
                     </Text>
                   </View>
                 </View>
@@ -313,6 +356,105 @@ export function ImportScreen() {
                 </View>
 
                 <MethodRow onPick={(from) => handlePick("grades", from)} />
+              </View>
+            </GlassContainer>
+          </Animated.View>
+
+          {/* 教务系统 / WakeUp 快速直导说明（折叠卡） */}
+          <Animated.View
+            entering={FadeInDown.delay(240).springify()}
+            className="mt-3.5"
+          >
+            <GlassContainer radius={24} intensity={38} borderOpacity={0.2}>
+              <View className="px-4 py-3.5">
+                <Pressable
+                  onPress={() => setEduGuideOpen((v) => !v)}
+                  className="flex-row items-center justify-between"
+                >
+                  <View className="flex-1 flex-row items-center">
+                    <View className="h-8 w-8 items-center justify-center rounded-[11px] bg-emerald-400/20">
+                      <Ionicons name="school-outline" size={16} color="#10B981" />
+                    </View>
+                    <View className="ml-2.5 flex-1">
+                      <Text className="text-[13.5px] font-bold text-slate-800 dark:text-white">
+                        教务系统 / WakeUp 快速直导说明
+                      </Text>
+                      <Text className="text-[10.5px] text-slate-500 dark:text-slate-400">
+                        支持 .pdf / .xls / .xlsx / .ics / WakeUp / 新正方 / 强智
+                      </Text>
+                    </View>
+                  </View>
+                  <Ionicons
+                    name={eduGuideOpen ? "chevron-up" : "chevron-down"}
+                    size={16}
+                    color="#94A3B8"
+                  />
+                </Pressable>
+
+                {eduGuideOpen ? (
+                  <View className="mt-3 gap-2.5 border-t border-white/20 pt-3 dark:border-white/10">
+                    <View className="flex-row flex-wrap gap-1.5">
+                      {[
+                        ".pdf 成绩单/课表",
+                        ".xls / .xlsx",
+                        ".ics 日历",
+                        "WakeUp 导出",
+                        "新正方 JSON",
+                        "强智 / 青果 HTML",
+                      ].map((tag) => (
+                        <View
+                          key={tag}
+                          className="rounded-full border border-emerald-400/25 bg-emerald-500/10 px-2.5 py-0.5"
+                        >
+                          <Text className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
+                            {tag}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+
+                    <Text className="text-[11px] leading-[17px] text-slate-600 dark:text-slate-300">
+                      • 教务导出的 .pdf / .xls（含伪装 HTML、XML 及旧版二进制）/ .xlsx / .ics 直接点「文档导入」。{"\n"}
+                      • WakeUp 5 行分享数据、新正方接口 JSON 或强智课表 HTML 直接点「粘贴文本」离线直导。{"\n"}
+                      • 电脑浏览器打开正方 / 强智 / 青果页面后，按 F12 粘贴运行下方只读脚本，将复制结果粘回 App 即可。
+                    </Text>
+
+                    <View className="rounded-2xl border border-white/25 bg-slate-900/5 p-2.5 dark:border-white/10 dark:bg-black/30">
+                      <Text
+                        selectable
+                        numberOfLines={3}
+                        className="font-mono text-[10px] leading-4 text-slate-600 dark:text-slate-300"
+                      >
+                        {EDU_EXTRACT_SNIPPET}
+                      </Text>
+                    </View>
+
+                    <View className="flex-row items-center justify-between gap-2">
+                      <Text className="flex-1 text-[10px] text-slate-500 dark:text-slate-400">
+                        纯只读脚本：仅读取当前页表格，不联网、不读取账号密码
+                      </Text>
+                      <Pressable
+                        onPress={() => {
+                          void handleCopyEduSnippet();
+                        }}
+                        className="flex-row items-center gap-1 rounded-xl bg-emerald-500/85 px-3 py-1.5"
+                      >
+                        <Ionicons
+                          name={snippetCopied ? "checkmark" : "copy-outline"}
+                          size={13}
+                          color="#FFFFFF"
+                        />
+                        <Text className="text-[11px] font-bold text-white">
+                          {snippetCopied
+                            ? "已复制"
+                            : Platform.OS === "web"
+                              ? "复制脚本"
+                              : "复制 / 发电脑"}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                ) : null}
               </View>
             </GlassContainer>
           </Animated.View>

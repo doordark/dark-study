@@ -157,10 +157,11 @@ export const AssistantMessage = memo(function AssistantMessage({ message: m, wha
                       ? "预览删除课程"
                       : m.actions[0].type === "update"
                         ? "预览课程修改"
-                        : m.actions[0].type ===
-                          "create_schedule"
+                        : m.actions[0].type === "create_schedule"
                           ? "预览新建课表"
-                          : "预览合并课表"}
+                          : m.actions[0].type === "merge_schedule"
+                            ? "预览合并课表"
+                            : "预览新增待办"}
               </Text>
             </Pressable>
           ) : null}

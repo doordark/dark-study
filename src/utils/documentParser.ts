@@ -20,6 +20,38 @@ const COLOR_VALUES: CourseColor[] = [
 /* -------------------------------------------------------------------------- */
 
 export function decodeTextBytes(bytes: Uint8Array): string {
+  // 处理 UTF-16LE / UTF-16BE BOM（部分教务导出的 Unicode 表格文本）
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
+    const view = bytes.subarray(2);
+    if (typeof TextDecoder !== "undefined") {
+      try {
+        return new TextDecoder("utf-16le").decode(view);
+      } catch {
+        // 兜底手动解码
+      }
+    }
+    let out = "";
+    for (let i = 0; i + 1 < view.length; i += 2) {
+      out += String.fromCharCode(view[i] | (view[i + 1] << 8));
+    }
+    return out;
+  }
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    const view = bytes.subarray(2);
+    if (typeof TextDecoder !== "undefined") {
+      try {
+        return new TextDecoder("utf-16be").decode(view);
+      } catch {
+        // 兜底手动解码
+      }
+    }
+    let out = "";
+    for (let i = 0; i + 1 < view.length; i += 2) {
+      out += String.fromCharCode((view[i] << 8) | view[i + 1]);
+    }
+    return out;
+  }
+
   const hasBom =
     bytes.length >= 3 &&
     bytes[0] === 0xef &&
@@ -55,7 +87,7 @@ export function decodeTextBytes(bytes: Uint8Array): string {
 /*  HTML 表格与网页清洗（剔除 style/script，还原表格为紧凑 TSV）                 */
 /* -------------------------------------------------------------------------- */
 
-function decodeEntities(input: string): string {
+export function decodeEntities(input: string): string {
   return input
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")

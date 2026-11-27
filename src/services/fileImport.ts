@@ -7,6 +7,8 @@ import {
   decodeTextBytes,
   parseXlsxToTsv,
 } from "@/utils/documentParser";
+import { parsePdfToText } from "@/utils/pdfParser";
+import { parseXlsToTsv } from "@/utils/xlsParser";
 export { readImageBase64 } from "@/utils/readImageBase64";
 
 export class PermissionDeniedError extends Error {
@@ -25,7 +27,15 @@ export interface PickedImage {
   uri: string;
 }
 
-export type DocumentFormat = "text" | "csv" | "json" | "html" | "xlsx" | "ics";
+export type DocumentFormat =
+  | "text"
+  | "csv"
+  | "json"
+  | "html"
+  | "xlsx"
+  | "xls"
+  | "pdf"
+  | "ics";
 
 export interface PickedDocument {
   text: string;
@@ -144,10 +154,14 @@ const SUPPORTED_EXTENSIONS = new Set([
   "log",
   "ics",
   "xlsx",
+  "xls",
+  "pdf",
 ]);
 
-function detectFormat(ext: string, mimeType?: string): DocumentFormat | null {
+export function detectFormat(ext: string, mimeType?: string): DocumentFormat | null {
+  if (ext === "pdf" || mimeType === "application/pdf") return "pdf";
   if (ext === "xlsx" || mimeType?.includes("spreadsheetml")) return "xlsx";
+  if (ext === "xls" || mimeType === "application/vnd.ms-excel") return "xls";
   if (ext === "ics" || mimeType === "text/calendar") return "ics";
   if (ext === "html" || ext === "htm" || ext === "xhtml" || mimeType === "text/html") {
     return "html";
@@ -160,7 +174,7 @@ function detectFormat(ext: string, mimeType?: string): DocumentFormat | null {
   return null;
 }
 
-/** 打开系统文档选择器，自动解析 txt / csv(含GBK) / xlsx / ics / html / json 等常见教务导出文件 */
+/** 打开系统文档选择器，自动解析 pdf / xls / xlsx / csv(含GBK) / ics / html / json / txt 等常见教务导出文件 */
 export async function pickTextDocument(): Promise<PickedDocument | null> {
   const result = await DocumentPicker.getDocumentAsync({
     copyToCacheDirectory: true,
@@ -171,6 +185,8 @@ export async function pickTextDocument(): Promise<PickedDocument | null> {
       "text/csv",
       "application/xml",
       "text/calendar",
+      "application/pdf",
+      "application/vnd.ms-excel",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "*/*",
     ],
@@ -183,13 +199,17 @@ export async function pickTextDocument(): Promise<PickedDocument | null> {
   const format = detectFormat(ext, asset.mimeType);
   if (!format) {
     throw new Error(
-      "暂支持 txt / csv / xlsx / ics / json / html / md 文件；图片请走「相册识图 / 拍照识别」",
+      "暂支持 pdf / xls / xlsx / csv / ics / json / html / txt / md 文件；图片请走「相册识图 / 拍照识别」",
     );
   }
 
   const bytes = new Uint8Array(await new File(asset.uri).arrayBuffer());
   let text: string;
-  if (format === "xlsx") {
+  if (format === "pdf") {
+    text = parsePdfToText(bytes);
+  } else if (format === "xls") {
+    text = parseXlsToTsv(bytes);
+  } else if (format === "xlsx") {
     text = parseXlsxToTsv(bytes);
   } else {
     const decoded = decodeTextBytes(bytes);

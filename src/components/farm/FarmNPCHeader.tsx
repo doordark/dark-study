@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useState, type ReactNode } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
-import { FarmText } from './FarmSkin';
+import { FarmPortraitFrame, FarmText } from './FarmSkin';
 
 /** 居民 / 商贩对话面板共用的底色、描边与文字色 */
 export const FARM_NPC_SURFACE = '#FFF7ED';
@@ -27,7 +27,6 @@ export function FarmNPCHeader({
   portrait,
   name,
   meta,
-  subtitle,
   badges = [],
   actions,
   onClose,
@@ -35,29 +34,15 @@ export function FarmNPCHeader({
   portrait: ReactNode;
   name: string;
   meta: string;
-  subtitle?: string;
   badges?: readonly FarmNPCBadge[];
   actions?: ReactNode;
   onClose: () => void;
 }) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingTop: 10, paddingBottom: 10, gap: 10 }}>
-      <View
-        style={{
-          width: 46,
-          height: 56,
-          alignItems: 'center',
-          justifyContent: 'center',
-          borderRadius: 14,
-          borderCurve: 'continuous',
-          backgroundColor: '#F5ECD8',
-          borderWidth: 1,
-          borderColor: LINE,
-          overflow: 'hidden',
-        }}
-      >
+      <FarmPortraitFrame size={52}>
         {portrait}
-      </View>
+      </FarmPortraitFrame>
       <View style={{ flex: 1, minWidth: 0 }}>
         <FarmText variant="title" numberOfLines={1} style={{ color: INK, fontSize: 15, fontWeight: '800', letterSpacing: 0.5 }}>
           {name}
@@ -73,11 +58,6 @@ export function FarmNPCHeader({
             </View>
           ))}
         </View>
-        {subtitle ? (
-          <FarmText numberOfLines={1} style={{ color: SUB, fontSize: 10, marginTop: 3 }}>
-            {subtitle}
-          </FarmText>
-        ) : null}
       </View>
       {actions ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>{actions}</View> : null}
       <Pressable

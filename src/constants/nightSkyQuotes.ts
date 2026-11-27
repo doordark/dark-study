@@ -21,7 +21,7 @@ export const QUOTE_CATEGORY_LABELS: Record<NightSkyQuoteCategory, string> = {
  * 长度控制在 10～54 字，适配星空底部卡片 2～3 行排版，避免空洞 AI 套话与伪托名言。
  */
 export const NIGHT_SKY_QUOTES: readonly NightSkyQuote[] = [
-  // ── 书摘（22 句） ──────────────────────────────────────────────────────────
+  // ── 书摘（26 句） ──────────────────────────────────────────────────────────
   {
     id: "book-camus-summer",
     text: "在隆冬，我终于知道，我身上有一个不可战胜的夏天。",
@@ -176,8 +176,36 @@ export const NIGHT_SKY_QUOTES: readonly NightSkyQuote[] = [
     work: "人类群星闪耀时",
     category: "book",
   },
+  {
+    id: "book-luxun-hometown",
+    text: "其实地上本没有路，走的人多了，也便成了路。",
+    author: "鲁迅",
+    work: "故乡",
+    category: "book",
+  },
+  {
+    id: "book-bingxin-flower",
+    text: "成功的花，人们只惊羡她现时的明艳！然而当初她的芽儿，浸透了奋斗的泪泉，洒遍了牺牲的血雨。",
+    author: "冰心",
+    work: "繁星·春水",
+    category: "book",
+  },
+  {
+    id: "book-liucixin-threebody",
+    text: "给岁月以文明，而不是给文明以岁月。",
+    author: "刘慈欣",
+    work: "三体",
+    category: "book",
+  },
+  {
+    id: "book-thoreau-walden",
+    text: "如果一个人没有跟上同伴的脚步，也许是因为他听到了不同的鼓声。",
+    author: "亨利·大卫·梭罗",
+    work: "瓦尔登湖",
+    category: "book",
+  },
 
-  // ── 随笔（4 句） ───────────────────────────────────────────────────────────
+  // ── 随笔（12 句） ──────────────────────────────────────────────────────────
   {
     id: "essay-wangzengqi-winter",
     text: "家人闲坐，灯火可亲。",
@@ -206,8 +234,64 @@ export const NIGHT_SKY_QUOTES: readonly NightSkyQuote[] = [
     work: "说给自己听",
     category: "essay",
   },
+  {
+    id: "essay-zhuziqing-lotus",
+    text: "虽然是满月，天上却有一层淡淡的云，所以不能朗照；但我以为这恰是到了好处。",
+    author: "朱自清",
+    work: "荷塘月色",
+    category: "essay",
+  },
+  {
+    id: "essay-zhuziqing-spring",
+    text: "一年之计在于春，刚起头儿，有的是工夫，有的是希望。",
+    author: "朱自清",
+    work: "春",
+    category: "essay",
+  },
+  {
+    id: "essay-luxun-refeng",
+    text: "有一分热，发一分光，就令萤火一般，也可以在黑暗里发一点光，不必等候炬火。",
+    author: "鲁迅",
+    work: "热风·随感录四十一",
+    category: "essay",
+  },
+  {
+    id: "essay-sushi-chibi",
+    text: "惟江上之清风，与山间之明月，耳得之而为声，目遇之而成色，取之无禁，用之不竭。",
+    author: "苏轼",
+    work: "前赤壁赋",
+    category: "essay",
+  },
+  {
+    id: "essay-sushi-chengtian",
+    text: "何夜无月？何处无竹柏？但少闲人如吾两人者耳。",
+    author: "苏轼",
+    work: "记承天寺夜游",
+    category: "essay",
+  },
+  {
+    id: "essay-bajin-stars",
+    text: "望着星天，我就会忘记一切，仿佛回到了母亲的怀里似的。",
+    author: "巴金",
+    work: "繁星",
+    category: "essay",
+  },
+  {
+    id: "essay-taoyuanming-return",
+    text: "悟已往之不谏，知来者之可追。实迷途其未远，觉今是而昨非。",
+    author: "陶渊明",
+    work: "归去来兮辞",
+    category: "essay",
+  },
+  {
+    id: "essay-libai-spring-night",
+    text: "夫天地者，万物之逆旅也；光阴者，百代之过客也。",
+    author: "李白",
+    work: "春夜宴从弟桃花园序",
+    category: "essay",
+  },
 
-  // ── 影视（14 句） ──────────────────────────────────────────────────────────
+  // ── 影视（16 句） ──────────────────────────────────────────────────────────
   {
     id: "film-shawshank-hope",
     text: "希望是美好的，也许是人间至善，而美好的事物永不消逝。",
@@ -293,8 +377,20 @@ export const NIGHT_SKY_QUOTES: readonly NightSkyQuote[] = [
     work: "放牛班的春天",
     category: "film",
   },
+  {
+    id: "film-truman-goodnight",
+    text: "假如再也碰不见你，祝你早安、午安、晚安。",
+    work: "楚门的世界",
+    category: "film",
+  },
+  {
+    id: "film-forrest-chocolates",
+    text: "生活就像一盒巧克力，你永远不知道下一颗是什么味道。",
+    work: "阿甘正传",
+    category: "film",
+  },
 
-  // ── 动画（8 句） ───────────────────────────────────────────────────────────
+  // ── 动画（10 句） ──────────────────────────────────────────────────────────
   {
     id: "anime-spirited-away",
     text: "曾经发生过的事情不可能忘记，只是暂时想不起来而已。",
@@ -343,6 +439,115 @@ export const NIGHT_SKY_QUOTES: readonly NightSkyQuote[] = [
     work: "葬送的芙莉莲",
     category: "anime",
   },
+  {
+    id: "anime-slamdunk-nevergiveup",
+    text: "如果现在放弃的话，比赛就提前结束了。",
+    work: "灌篮高手",
+    category: "anime",
+  },
+  {
+    id: "anime-yourname-meet",
+    text: "无论你在世界的哪个地方，我一定会再去见你。",
+    work: "你的名字。",
+    category: "anime",
+  },
+];
+
+export interface BloodMoonQuote {
+  id: string;
+  text: string;
+  work: string;
+  author?: string;
+}
+
+/**
+ * 血月禁域专属暗黑哥特 / 诡秘文学摘录（与普通夜空语录隔离）。
+ */
+export const BLOOD_MOON_QUOTES: readonly BloodMoonQuote[] = [
+  {
+    id: "gothic-poe-raven",
+    text: "我久久凝望着那片深沉的黑暗，既惊愕又恐惧，做着凡人从未敢做过的梦。",
+    author: "埃德加·爱伦·坡",
+    work: "乌鸦",
+  },
+  {
+    id: "gothic-poe-dream",
+    text: "我们所见的一切，以及看似存在的一切，不过是梦中之梦。",
+    author: "埃德加·爱伦·坡",
+    work: "梦中之梦",
+  },
+  {
+    id: "gothic-lovecraft-fear",
+    text: "人类最古老而强烈的情感是恐惧，而最古老最强烈的恐惧是对未知的恐惧。",
+    author: "H.P.洛夫克拉夫特",
+    work: "文学中的超自然恐怖",
+  },
+  {
+    id: "gothic-lovecraft-cthulhu",
+    text: "世间最仁慈的事，莫过于人类思维无法将一切事物串联起来。",
+    author: "H.P.洛夫克拉夫特",
+    work: "克苏鲁的呼唤",
+  },
+  {
+    id: "gothic-nietzsche-abyss",
+    text: "当你长久地凝视深渊，深渊也在凝视着你。",
+    author: "弗里德里希·尼采",
+    work: "善恶的彼岸",
+  },
+  {
+    id: "gothic-dante-inferno",
+    text: "进入此门者，当放弃一切希望。",
+    author: "但丁·阿利盖里",
+    work: "神曲·地狱篇",
+  },
+  {
+    id: "gothic-eliot-dust",
+    text: "我将在一把尘土中，向你展示何为恐惧。",
+    author: "T.S.艾略特",
+    work: "荒原",
+  },
+  {
+    id: "gothic-macbeth-stars",
+    text: "星辰啊，藏起你们的微光，别让光亮照见我幽暗的渴望。",
+    author: "威廉·莎士比亚",
+    work: "麦克白",
+  },
+  {
+    id: "gothic-shelley-frankenstein",
+    text: "小心吧，因为我已无所畏惧，而无所畏惧正是最可怕的力量。",
+    author: "玛丽·雪莱",
+    work: "弗兰肯斯坦",
+  },
+  {
+    id: "gothic-stoker-dracula",
+    text: "听啊，黑夜的孩子们，正在荒野里奏响何等凄厉的乐章。",
+    author: "布莱姆·斯托克",
+    work: "德古拉",
+  },
+  {
+    id: "gothic-luxun-tomb",
+    text: "于浩歌狂热之际中寒；于天上看见深渊。于一切眼中看见无所有。",
+    author: "鲁迅",
+    work: "野草·墓碣文",
+  },
+  {
+    id: "gothic-luxun-shadow",
+    text: "我不过一个影，要别你而沉没在黑暗里了。然而黑暗又会吞并我。",
+    author: "鲁迅",
+    work: "野草·影的告别",
+  },
+  {
+    id: "gothic-lihe-owl",
+    text: "百年老鸮成木魅，笑声碧火巢中起。",
+    author: "李贺",
+    work: "神弦曲",
+  },
+  {
+    id: "gothic-wilde-dorian",
+    text: "我们每个人的心中，都同时藏着天堂与地狱。",
+    author: "奥斯卡·王尔德",
+    work: "道林·格雷的画像",
+  },
 ];
 
 const WRAP_QUOTE_RE = /^[“"「『《]+|[”"」』》]+$/g;
@@ -363,11 +568,11 @@ export function formatQuoteAttribution(
  * 洗牌袋：每轮 Fisher-Yates 洗牌，确保连续切换走完一轮绝不重复，
  * 且新一轮首句自动避开上一句。
  */
-export function createQuoteBag(
-  quotes: readonly NightSkyQuote[] = NIGHT_SKY_QUOTES,
+export function createQuoteBag<T extends { id: string } = NightSkyQuote>(
+  quotes: readonly T[] = NIGHT_SKY_QUOTES as unknown as readonly T[],
   rng: () => number = Math.random,
 ) {
-  let queue: NightSkyQuote[] = [];
+  let queue: T[] = [];
 
   const refill = (excludeId?: string) => {
     const copy = [...quotes];
@@ -387,7 +592,7 @@ export function createQuoteBag(
   };
 
   return {
-    next(excludeId?: string): NightSkyQuote {
+    next(excludeId?: string): T {
       if (queue.length === 0) refill(excludeId);
       const picked = queue.shift()!;
       if (excludeId && picked.id === excludeId && quotes.length > 1) {

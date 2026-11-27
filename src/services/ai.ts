@@ -1,11 +1,14 @@
 import {
   chat,
+  chatAgentTurn,
   chatJson,
+  DeepSeekError,
   imagePart,
   TEXT_MODEL,
   VISION_MODEL,
   type ChatContent,
 } from "@/services/deepseek";
+import { runWhaleAgent } from "@/services/whaleAgent";
 import { DEFAULT_PERIODS } from "@/constants/sample";
 import {
   resolveSemester,
@@ -21,7 +24,10 @@ import type {
   CourseColor,
   GpaScaleId,
   GradeDraft,
+  GradeRecord,
+  GradeRule,
   GradeType,
+  GradeYear,
   Period,
   PetActionKind,
   Schedule,
@@ -41,6 +47,20 @@ import { recentWhaleHistory, type WhaleHistoryMessage } from "@/utils/whaleMemor
 import { buildWhalePersonaPrompt, renderPersonaText } from "@/utils/whalePersona";
 import { useWhalePersona } from "@/store/useWhalePersona";
 import { normalizeParsedPeriods, validClock } from "@/utils/courseEditing";
+import {
+  formatTaskBrief,
+  getUpcomingTasks,
+  type CourseTask,
+} from "@/utils/courseTasks";
+import {
+  computeWeeklyFreeSlots,
+  sanitizeAddTaskAction,
+  summarizeAttendanceRisks,
+  summarizeGradesForCopilot,
+  summarizeRecentFocus,
+  type AttendanceEntryLike,
+  type FocusLogLike,
+} from "@/utils/studyCopilot";
 import { resolveWhaleSticker, WHALE_EXPRESSION_INSTRUCTIONS, type WhaleStickerId } from "@/utils/whaleExpression";
 
 const COLOR_VALUES: CourseColor[] = [
@@ -483,6 +503,20 @@ export interface AssistantContext {
   schedules: { id: string; name: string }[];
   /** 作者 door 召唤后开启的「蓝色大肥鱼」人格 */
   persona?: "whale";
+  /** 可选：显式传入课程任务列表；省略时自动读取 useStore 中的 courseTasks */
+  courseTasks?: readonly CourseTask[];
+  /** 可选：显式覆盖是否允许向大肥鱼传入成绩摘要；省略时读取 useSettings.whaleShareGrades */
+  shareGrades?: boolean;
+  /** 可选：显式传入成绩上下文（测试环境安全） */
+  grades?: readonly GradeRecord[];
+  gradeYears?: readonly GradeYear[];
+  gradeTypes?: readonly GradeType[];
+  gradeRule?: GradeRule;
+  gpaScale?: GpaScaleId;
+  /** 可选：显式传入考勤与专注记录（测试环境安全） */
+  attendanceByCourse?: Readonly<Record<string, readonly AttendanceEntryLike[]>>;
+  customAbsenceLimits?: Readonly<Record<string, number>>;
+  focusLogs?: readonly FocusLogLike[];
 }
 
 export interface AssistantResult {
@@ -490,6 +524,11 @@ export interface AssistantResult {
   sticker?: WhaleStickerId | null;
   /** 课表操作 + 用户专属的额外操作（仅在 whale 人格下可能出现） */
   actions: AssistantAction[];
+  /** DeepSeek 官方联网搜索返回的参考来源（一步到位，无需二次气泡） */
+  sources?: { title: string; url: string }[];
+  /** 是否在本轮启用了深度思考或官方联网检索 */
+  usedThinking?: boolean;
+  usedWebSearch?: boolean;
   /**
    * 人格切换意图：由模型按语义判断，不依赖固定口令。
    * - summon：普通状态下识别到用户在召唤大肥鱼
@@ -498,45 +537,300 @@ export interface AssistantResult {
   intent?: "summon" | "dismiss";
 }
 
-/** 从课表上下文提取今日课程与近期下节课摘要（零额外依赖，测试环境安全） */
-function buildLiveSnapshotFromCtx(ctx?: AssistantContext): WhaleLiveStudySnapshot {
-  const now = new Date();
-  const snapshot: WhaleLiveStudySnapshot = { nowLabel: formatTimeContext(now.getTime()) };
-  if (!ctx?.schedule?.courses?.length) return snapshot;
-  const weekday = now.getDay() === 0 ? 7 : now.getDay();
-  const todayList = ctx.schedule.courses
-    .filter((c) => c.weekday === weekday && c.weeks.includes(ctx.weekIndex))
-    .map((c) => ({
-      course: c,
-      time: getCourseTime(ctx.schedule.periods ?? [], c.startPeriod, c.endPeriod, c),
-    }))
-    .sort((a, b) => a.time.startMinutes - b.time.startMinutes);
-  if (!todayList.length) {
-    snapshot.todayCourses = "今天没有排课";
-    return snapshot;
+function readCourseTasksSafe(ctx?: AssistantContext): readonly CourseTask[] {
+  if (ctx?.courseTasks) return ctx.courseTasks;
+  try {
+    // 延迟加载避免仅测试课表解析器的孤立 Node 环境触发 AsyncStorage / RN 依赖
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require("@/store/useStore") as {
+      useStore?: { getState?: () => { courseTasks?: CourseTask[] } };
+    };
+    const list = mod?.useStore?.getState?.().courseTasks;
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
   }
-  snapshot.todayCourses = todayList
-    .slice(0, 6)
-    .map(({ course, time }) => `${course.name}(${time.startTime}${course.classroom ? `@${course.classroom}` : ""})`)
-    .join("、");
-  const nowMin = now.getHours() * 60 + now.getMinutes();
-  const upcoming = todayList.find(({ time }) => time.startMinutes > nowMin);
-  if (upcoming) {
-    const diff = upcoming.time.startMinutes - nowMin;
-    if (diff <= 90) {
-      snapshot.nextCourseHint = `${diff} 分钟后是「${upcoming.course.name}」${upcoming.course.classroom ? `（${upcoming.course.classroom}）` : ""}`;
+}
+
+function readWhaleShareGradesSafe(ctx?: AssistantContext): boolean {
+  if (typeof ctx?.shareGrades === "boolean") return ctx.shareGrades;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require("@/store/useSettings") as {
+      useSettings?: { getState?: () => { whaleShareGrades?: boolean } };
+    };
+    const value = mod?.useSettings?.getState?.().whaleShareGrades;
+    return typeof value === "boolean" ? value : true;
+  } catch {
+    return true;
+  }
+}
+
+function readGradesContextSafe(ctx?: AssistantContext): {
+  grades: readonly GradeRecord[];
+  gradeYears: readonly GradeYear[];
+  gradeTypes: readonly GradeType[];
+  rule?: GradeRule;
+  scale: GpaScaleId;
+} {
+  let scale: GpaScaleId = ctx?.gpaScale ?? "five";
+  if (!ctx?.gpaScale) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const settingsMod = require("@/store/useSettings") as {
+        useSettings?: { getState?: () => { gpaScale?: GpaScaleId } };
+      };
+      const storeScale = settingsMod?.useSettings?.getState?.().gpaScale;
+      if (storeScale) scale = storeScale;
+    } catch {
+      // 忽略孤立测试环境
     }
   }
+
+  if (ctx?.grades) {
+    return {
+      grades: ctx.grades,
+      gradeYears: ctx.gradeYears ?? [],
+      gradeTypes: ctx.gradeTypes ?? [],
+      rule: ctx.gradeRule,
+      scale,
+    };
+  }
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const storeMod = require("@/store/useStore") as {
+      useStore?: {
+        getState?: () => {
+          grades?: GradeRecord[];
+          gradeYears?: GradeYear[];
+          gradeTypes?: GradeType[];
+          gradeRules?: GradeRule[];
+          activeGradeRuleId?: string;
+        };
+      };
+    };
+    const st = storeMod?.useStore?.getState?.();
+    const rules = Array.isArray(st?.gradeRules) ? st.gradeRules : [];
+    const rule =
+      ctx?.gradeRule ??
+      rules.find((r) => r.id === st?.activeGradeRuleId) ??
+      rules[0];
+    return {
+      grades: Array.isArray(st?.grades) ? st.grades : [],
+      gradeYears: ctx?.gradeYears ?? (Array.isArray(st?.gradeYears) ? st.gradeYears : []),
+      gradeTypes: ctx?.gradeTypes ?? (Array.isArray(st?.gradeTypes) ? st.gradeTypes : []),
+      rule,
+      scale,
+    };
+  } catch {
+    return { grades: [], gradeYears: [], gradeTypes: [], scale };
+  }
+}
+
+function readStudyProgressSafe(ctx?: AssistantContext): {
+  attendanceByCourse?: Readonly<Record<string, readonly AttendanceEntryLike[]>>;
+  customAbsenceLimits?: Readonly<Record<string, number>>;
+  focusLogs?: readonly FocusLogLike[];
+} {
+  if (
+    ctx?.attendanceByCourse !== undefined ||
+    ctx?.customAbsenceLimits !== undefined ||
+    ctx?.focusLogs !== undefined
+  ) {
+    return {
+      attendanceByCourse: ctx.attendanceByCourse,
+      customAbsenceLimits: ctx.customAbsenceLimits,
+      focusLogs: ctx.focusLogs,
+    };
+  }
+  try {
+    // 延迟读取学习进度 store（若尚未落地或处于精简 Node 单测中则安全降级为空）
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require("@/store/useStudyProgress") as {
+      useStudyProgress?: {
+        getState?: () => {
+          attendanceByCourse?: Record<string, AttendanceEntryLike[]>;
+          customAbsenceLimits?: Record<string, number>;
+          focusLogs?: FocusLogLike[];
+        };
+      };
+    };
+    const st = mod?.useStudyProgress?.getState?.();
+    if (!st) return {};
+    return {
+      attendanceByCourse: st.attendanceByCourse,
+      customAbsenceLimits: st.customAbsenceLimits,
+      focusLogs: st.focusLogs,
+    };
+  } catch {
+    return {};
+  }
+}
+
+export { sanitizeAddTaskAction };
+
+const SCHEDULE_ACTION_TYPES = new Set([
+  "add",
+  "remove",
+  "update",
+  "create_schedule",
+  "merge_schedule",
+  "add_task",
+]);
+
+const WHALE_ACTION_TYPES = new Set([
+  "set_summon_phrase",
+  "set_background",
+  "web_search",
+  "generate_image",
+  "summon_pet",
+  "dismiss_pet",
+  "forget_memory",
+]);
+
+function filterAssistantActions(
+  rawList: readonly unknown[],
+  allowWhale: boolean,
+  schedule?: Schedule,
+): AssistantAction[] {
+  const out: AssistantAction[] = [];
+  for (const item of rawList) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const type = (item as Record<string, unknown>).type;
+    if (typeof type !== "string") continue;
+    if (type === "add_task") {
+      const sanitized = sanitizeAddTaskAction(item, schedule);
+      if (sanitized) out.push(sanitized);
+      continue;
+    }
+    if (SCHEDULE_ACTION_TYPES.has(type) || (allowWhale && WHALE_ACTION_TYPES.has(type))) {
+      out.push(item as AssistantAction);
+    }
+  }
+  return out;
+}
+
+/** 从课表上下文、成绩与学习进度提取今日课程、下节课、近期作业/考试、空课、成绩、考勤预警与专注摘要（测试环境安全） */
+export function buildLiveSnapshotFromCtx(
+  ctx?: AssistantContext,
+  now = new Date(),
+): WhaleLiveStudySnapshot {
+  const nowMs = now.getTime();
+  const snapshot: WhaleLiveStudySnapshot = { nowLabel: formatTimeContext(nowMs) };
+  const upcomingTasks = getUpcomingTasks(readCourseTasksSafe(ctx), nowMs, 5);
+  if (upcomingTasks.length) {
+    snapshot.pendingTasks = upcomingTasks
+      .map((t) => formatTaskBrief(t, nowMs))
+      .join("；");
+  }
+
+  if (ctx?.schedule) {
+    const freeSlots = computeWeeklyFreeSlots(ctx.schedule, ctx.weekIndex);
+    if (freeSlots) snapshot.freeSlots = freeSlots;
+  }
+
+  if (readWhaleShareGradesSafe(ctx)) {
+    const { grades, gradeYears, gradeTypes, rule, scale } = readGradesContextSafe(ctx);
+    const gradesSummary = summarizeGradesForCopilot(
+      grades,
+      gradeYears,
+      gradeTypes,
+      rule,
+      scale,
+    );
+    if (gradesSummary) snapshot.gradesSummary = gradesSummary;
+  }
+
+  const progress = readStudyProgressSafe(ctx);
+  if (ctx?.schedule && progress.attendanceByCourse) {
+    const alerts = summarizeAttendanceRisks(
+      ctx.schedule,
+      progress.attendanceByCourse,
+      progress.customAbsenceLimits,
+    );
+    if (alerts) snapshot.attendanceAlerts = alerts;
+  }
+  if (progress.focusLogs?.length) {
+    const focusSummary = summarizeRecentFocus(progress.focusLogs, nowMs);
+    if (focusSummary) snapshot.focusSummary = focusSummary;
+  }
+
+  if (ctx?.schedule?.courses?.length) {
+    const weekday = now.getDay() === 0 ? 7 : now.getDay();
+    const todayList = ctx.schedule.courses
+      .filter((c) => c.weekday === weekday && c.weeks.includes(ctx.weekIndex))
+      .map((c) => ({
+        course: c,
+        time: getCourseTime(ctx.schedule.periods ?? [], c.startPeriod, c.endPeriod, c),
+      }))
+      .sort((a, b) => a.time.startMinutes - b.time.startMinutes);
+    if (!todayList.length) {
+      snapshot.todayCourses = "今天没有排课";
+    } else {
+      snapshot.todayCourses = todayList
+        .slice(0, 6)
+        .map(
+          ({ course, time }) =>
+            `${course.name}(${time.startTime}${course.classroom ? `@${course.classroom}` : ""})`,
+        )
+        .join("、");
+      const nowMin = now.getHours() * 60 + now.getMinutes();
+      const upcoming = todayList.find(({ time }) => time.startMinutes > nowMin);
+      if (upcoming) {
+        const diff = upcoming.time.startMinutes - nowMin;
+        if (diff <= 90) {
+          snapshot.nextCourseHint = `${diff} 分钟后是「${upcoming.course.name}」${upcoming.course.classroom ? `（${upcoming.course.classroom}）` : ""}`;
+        }
+      }
+    }
+  }
+
   return snapshot;
 }
 
-/** 自然语言改课表：模型返回对话文本 + 可一键应用的操作（支持批量） */
+/** 自然语言改课表：模型返回对话文本 + 可一键应用的操作（支持批量）；大肥鱼模式优先走 DeepSeek 原生 Tool-Calling Agent */
 export async function askAssistant(
   history: WhaleHistoryMessage[],
   ctx: AssistantContext,
   apiKey: string,
   signal?: AbortSignal,
+  opts?: { onStatus?: (status: string) => void },
 ): Promise<AssistantResult> {
+  // 大肥鱼人格在具备原生 Agent 传输能力时，优先使用 DeepSeek 官方内置搜索 + 原生 Function Calling Agent
+  if (ctx.persona === "whale" && typeof chatAgentTurn === "function") {
+    try {
+      const agentRes = await runWhaleAgent(history, apiKey, {
+        scheduleCtx: {
+          schedule: ctx.schedule,
+          weekIndex: ctx.weekIndex,
+          schedules: ctx.schedules,
+        },
+        liveSnapshot: buildLiveSnapshotFromCtx(ctx),
+        signal,
+        onStatus: opts?.onStatus,
+      });
+      return {
+        reply: agentRes.reply,
+        sticker: agentRes.sticker,
+        actions: agentRes.actions,
+        sources: agentRes.sources,
+        usedThinking: agentRes.usedThinking,
+        usedWebSearch: agentRes.usedWebSearch,
+        intent: agentRes.intent,
+      };
+    } catch (err) {
+      // 仅在第三方网关完全不支持 tools 返回 400 时才优雅降级到旧 JSON 协议，其余错误直接抛出
+      if (
+        signal?.aborted ||
+        !(err instanceof DeepSeekError) ||
+        err.status !== 400
+      ) {
+        throw err;
+      }
+    }
+  }
+
   const whaleContext =
     ctx.persona === "whale" ? createWhaleContext(history, true, buildLiveSnapshotFromCtx(ctx)) : undefined;
   const coursesBrief = ctx.schedule.courses
@@ -611,6 +905,7 @@ actions 是操作数组，一次可以放多个（用户一句话提出多件事
   修改课程：{"type":"update","courseId":"...","courseName":"...","targetWeeks":[8],"targetWeekday":3,"patch":{仅需改动的字段}}
   新建课表：{"type":"create_schedule","scheduleName":"外教课"}
   合并课表：{"type":"merge_schedule","sourceScheduleName":"外教课"}（把那份课表的课程并入当前课表）
+  新增待办/考试：{"type":"add_task","task":{"title":"高数期末","type":"exam","dueAt":1797728400000,"reminder":60,"location":"教三204","seat":"15","examMode":"closed","note":"带学生证","course":{"scheduleId":"${ctx.schedule.id}","courseId":"...","courseName":"高等数学"}}}（type 取 "homework"|"exam"|"review"；dueAt 为毫秒时间戳；reminder 取 0|15|60|1440；examMode 取 "closed"|"open"|"paper"；location/seat/examMode/note/course 可省略）
 
 规则：
 - course.weeks 是开课周次数组；用户没说周次时默认整学期 [1..${ctx.schedule.totalWeeks}]
@@ -648,31 +943,13 @@ actions 是操作数组，一次可以放多个（用户一句话提出多件事
 
   // 兼容 action（单个）与 actions（数组）两种返回
   const raw = parsed?.actions ?? parsed?.action;
-  const list = (Array.isArray(raw) ? raw : raw ? [raw] : []).filter(
-    (a: any) => a && typeof a.type === "string",
+  const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  // 额外权限只在鲸鱼人格下放行，普通助手即使被诱导也不会执行；add_task 必须经严格字段清洗校验
+  const actions = filterAssistantActions(
+    list,
+    ctx.persona === "whale",
+    ctx.schedule,
   );
-  const scheduleTypes = [
-    "add",
-    "remove",
-    "update",
-    "create_schedule",
-    "merge_schedule",
-  ];
-  const whaleTypes = [
-    "set_summon_phrase",
-    "set_background",
-    "web_search",
-    "generate_image",
-    "summon_pet",
-    "dismiss_pet",
-    "forget_memory",
-  ];
-  // 额外权限只在鲸鱼人格下放行，普通助手即使被诱导也不会执行
-  const actions = list.filter(
-    (a: any) =>
-      scheduleTypes.includes(a.type) ||
-      (ctx.persona === "whale" && whaleTypes.includes(a.type)),
-  ) as AssistantAction[];
 
   // 人格切换意图：普通状态只放行 summon，鲸鱼状态只放行 dismiss，
   // 避免模型在错误的人格下误判
@@ -1138,6 +1415,7 @@ actions 是操作数组，一次可以放多个；不需要执行任何操作时
   修改课程：{"type":"update","courseId":"...","courseName":"...","targetWeeks":[8],"targetWeekday":3,"patch":{仅需改动的字段}}
   新建课表：{"type":"create_schedule","scheduleName":"外教课"}
   合并课表：{"type":"merge_schedule","sourceScheduleName":"外教课"}（把那份课表的课程并入当前课表）
+  新增待办/考试：{"type":"add_task","task":{"title":"高数期末","type":"exam","dueAt":1797728400000,"reminder":60,"location":"教三204","seat":"15","examMode":"closed","note":"带学生证","course":{"scheduleId":"${ctx?.schedule.id ?? "current"}","courseId":"...","courseName":"高等数学"}}}（type 取 "homework"|"exam"|"review"；dueAt 为毫秒时间戳；reminder 取 0|15|60|1440；examMode 取 "closed"|"open"|"paper"；location/seat/examMode/note/course 可省略）
   改召唤口令：{"type":"set_summon_phrase","phrase":"新的召唤口令（2-12 个字）"}
   改软件背景：{"type":"set_background","tint":"sky|rose|mint|amber|violet|noir","effect":"aurora|plain"}
   联网找资料：{"type":"web_search","query":"检索关键词"}
@@ -1182,27 +1460,8 @@ ${opts?.status ? `当前状态：${opts.status}。` : ""}`;
     ? (parsed.action as PetActionKind)
     : undefined;
 
-  const scheduleTypes = [
-    "add",
-    "remove",
-    "update",
-    "create_schedule",
-    "merge_schedule",
-  ];
-  const whaleTypes = [
-    "set_summon_phrase",
-    "set_background",
-    "web_search",
-    "generate_image",
-    "summon_pet",
-    "dismiss_pet",
-    "forget_memory",
-  ];
   const rawActions = Array.isArray(parsed?.actions) ? parsed.actions : [];
-  const actions = rawActions.filter(
-    (a: any) =>
-      a && (scheduleTypes.includes(a.type) || whaleTypes.includes(a.type)),
-  ) as AssistantAction[];
+  const actions = filterAssistantActions(rawActions, true, ctx?.schedule);
 
   return {
     reply: String(parsed?.reply ?? renderPersonaText("唔…鱼脑子卡住了，{{user}}再说一次？", useWhalePersona.getState().persona)),

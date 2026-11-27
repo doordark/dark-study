@@ -40,6 +40,8 @@ export interface CourseCardProps {
   conflictWith?: string[];
   /** 本卡片在列表中的序号，用于交错弹入 */
   index?: number;
+  /** 关联到该课程的未完成作业/考试数量（缺省或 0 时不显示） */
+  taskBadgeCount?: number;
   onPress?: (course: Course) => void;
   onLongPress?: (course: Course) => void;
 }
@@ -56,15 +58,18 @@ export const CourseCard = React.memo(function CourseCard({
   conflict = false,
   conflictWith,
   index = 0,
+  taskBadgeCount,
   onPress,
   onLongPress,
 }: CourseCardProps) {
   const palette = coursePalette[course.color] ?? coursePalette.sky;
-  const glass = useSettings((s) => s.material === "glass");
+  const translucent = useSettings(
+    (s) => s.material === "glass" || s.material === "clear",
+  );
   const quality = useSettings((s) => s.renderQuality);
   const reducedMotion = useReducedMotion();
   const animActive = useAnimationActive(active);
-  const solidActive = active && !glass;
+  const solidActive = active && !translucent;
   const dimmed = finished && !active;
 
   const time = useMemo(
@@ -176,7 +181,7 @@ export const CourseCard = React.memo(function CourseCard({
           <View>
             <GlassContainer
               radius={24}
-              borderOpacity={active ? (glass ? 0.28 : 0) : 0.2}
+              borderOpacity={active ? (translucent ? 0.28 : 0) : 0.2}
               style={
                 solidActive
                   ? {
@@ -186,7 +191,7 @@ export const CourseCard = React.memo(function CourseCard({
                   : undefined
               }
             >
-              {glass ? (
+              {translucent ? (
                 <LinearGradient
                   pointerEvents="none"
                   colors={[
@@ -220,12 +225,12 @@ export const CourseCard = React.memo(function CourseCard({
                   <View
                     className={`absolute right-3.5 top-3.5 flex-row items-center rounded-full border px-2.5 py-1 ${
                       active
-                        ? glass
+                        ? translucent
                           ? "border-white/95 bg-white/88"
                           : "border-white/25 bg-white/18"
                         : dimmed
                           ? "border-slate-300/30 bg-slate-400/15 dark:border-white/10 dark:bg-white/[0.06]"
-                          : glass
+                          : translucent
                             ? "border-white/75 bg-white/55 dark:border-white/20 dark:bg-white/15"
                             : "border-sky-400/35 bg-sky-400/15"
                     }`}
@@ -233,7 +238,7 @@ export const CourseCard = React.memo(function CourseCard({
                     {active ? (
                       <View
                         className="mr-1.5 h-1.5 w-1.5 rounded-full"
-                        style={{ backgroundColor: glass ? palette.solid : "#FFFFFF" }}
+                        style={{ backgroundColor: translucent ? palette.solid : "#FFFFFF" }}
                       />
                     ) : null}
                     <Text
@@ -241,7 +246,7 @@ export const CourseCard = React.memo(function CourseCard({
                         solidActive
                           ? "text-white"
                           : active
-                            ? glass
+                            ? translucent
                               ? "text-slate-800"
                               : "text-slate-700 dark:text-slate-100"
                             : dimmed
@@ -302,6 +307,29 @@ export const CourseCard = React.memo(function CourseCard({
                     >
                       {weeksSummary}
                     </Text>
+                  ) : null}
+                  {taskBadgeCount && taskBadgeCount > 0 ? (
+                    <View
+                      className={`flex-row items-center rounded-full border px-1.5 py-0.5 ${
+                        solidActive
+                          ? "border-white/30 bg-white/20"
+                          : "border-rose-400/40 bg-rose-500/12 dark:border-rose-400/35 dark:bg-rose-400/15"
+                      }`}
+                    >
+                      <View
+                        className="mr-1 h-1.5 w-1.5 rounded-full"
+                        style={{ backgroundColor: solidActive ? "#FFFFFF" : "#F43F5E" }}
+                      />
+                      <Text
+                        className={`text-[9.5px] font-bold ${
+                          solidActive
+                            ? "text-white"
+                            : "text-rose-600 dark:text-rose-300"
+                        }`}
+                      >
+                        {taskBadgeCount}项待办
+                      </Text>
+                    </View>
                   ) : null}
                 </View>
 
@@ -396,7 +424,7 @@ export const CourseCard = React.memo(function CourseCard({
                     right: 0,
                     borderRadius: 24,
                     borderWidth: 1.2,
-                    borderColor: glass ? `${palette.solid}88` : "#FFFFFF",
+                    borderColor: translucent ? `${palette.solid}88` : "#FFFFFF",
                   },
                   glowStyle,
                 ]}

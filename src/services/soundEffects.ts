@@ -88,6 +88,7 @@ interface ActiveHandle {
 const activeHandles = new Set<ActiveHandle>();
 const lastPlayedAt = new Map<SfxId, number>();
 let lastGlobalPlayedAt = 0;
+let playGeneration = 0;
 let audioModeReady: Promise<void> | null = null;
 
 function ensureAudioMode() {
@@ -111,6 +112,7 @@ function disposeHandle(handle: ActiveHandle) {
 }
 
 export function stopAllSfx() {
+  playGeneration += 1;
   for (const handle of [...activeHandles]) {
     disposeHandle(handle);
   }
@@ -133,7 +135,9 @@ export function playSfx(id: SfxId, opts: PlaySfxOptions = {}): void {
   }
   lastPlayedAt.set(id, now);
 
+  const gen = playGeneration;
   void ensureAudioMode().then(() => {
+    if (gen !== playGeneration) return;
     if (AppState.currentState === "background" || AppState.currentState === "inactive") return;
     if (!opts.bypassToggle && !useSoundEffects.getState().on) return;
 
@@ -185,13 +189,12 @@ export function playSfx(id: SfxId, opts: PlaySfxOptions = {}): void {
       };
 
       activeHandles.add(handle);
-      subscription = player.addListener("playbackStatusUpdate", (status) => {
-        if (status.didJustFinish || status.error) {
-          disposeHandle(handle);
-        }
-      });
-
       try {
+        subscription = player.addListener("playbackStatusUpdate", (status) => {
+          if (status.didJustFinish || status.error) {
+            disposeHandle(handle);
+          }
+        });
         player.play();
       } catch {
         disposeHandle(handle);

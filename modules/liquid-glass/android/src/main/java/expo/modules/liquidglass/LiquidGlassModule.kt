@@ -33,6 +33,10 @@ class LiquidGlassModule : Module() {
         view.setBlurTargetId(targetId)
       }
 
+      Prop("allowTargetLookup") { view: LiquidGlassView, allow: Boolean ->
+        view.allowTargetLookup = allow
+      }
+
       Prop("blurRadius") { view: LiquidGlassView, radius: Float ->
         view.blurRadiusDp = radius
       }
@@ -235,6 +239,7 @@ class LiquidGlassTargetView(context: Context, appContext: AppContext) : ExpoView
  */
 @SuppressLint("ViewConstructor")
 class LiquidGlassView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
+  internal var allowTargetLookup = true
   internal var blurRadiusDp = 16f
   internal var cornerRadiusDp = 24f
   internal var isDarkMode = false
@@ -251,29 +256,43 @@ class LiquidGlassView(context: Context, appContext: AppContext) : ExpoView(conte
   private var blurTargetId: Int? = null
   private var targetView: BlurTarget? = null
   private var configuredTarget: BlurTarget? = null
+  private var observedTarget: BlurTarget? = null
   private var cachedShader: Any? = null
   private var agslActive = false
   private var agslFailed = false
-
-  private var lastBlurRadiusDp = Float.NaN
-  private var lastCornerRadiusDp = Float.NaN
-  private var lastIsDarkMode: Boolean? = null
-  private var lastTintRgba: FloatArray? = null
-  private var lastAccentRgb: FloatArray? = null
-  private var lastReflectionRgb: FloatArray? = null
-  private var lastRefractionStrength = Float.NaN
-  private var lastDispersion = Float.NaN
-  private var lastSaturation = Float.NaN
-  private var lastRimStrength = Float.NaN
-  private var lastReflectionStrength = Float.NaN
-  private var lastLuminanceLift = Float.NaN
-  private var lastEffectWidth = -1
-  private var lastEffectHeight = -1
-  private var effectApplied = false
+  private var bindRetryCount = 0
+  private var bindRetryScheduled = false
 
   private val clipPath = Path()
   private val clipRect = RectF()
   private var needsClipUpdate = true
+
+  private val targetLayoutListener = OnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+    if (v.width > 0 && v.height > 0 && isAttachedToWindow) {
+      configureBlurTarget()
+      applyRenderEffect()
+      v.invalidate()
+      blurView.invalidate()
+      invalidate()
+    }
+  }
+
+  private val retryBindRunnable = Runnable {
+    bindRetryScheduled = false
+    if (!isAttachedToWindow) return@Runnable
+    resolveAndConfigure(allowRetry = true)
+  }
+
+  private val postBindRefreshRunnable = Runnable {
+    if (!isAttachedToWindow) return@Runnable
+    val target = configuredTarget ?: return@Runnable
+    if (target.width > 0 && target.height > 0) {
+      target.invalidate()
+      blurView.invalidate()
+      applyRenderEffect()
+      invalidate()
+    }
+  }
 
   private val blurView = BlurView(context).also {
     it.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
@@ -283,26 +302,25 @@ class LiquidGlassView(context: Context, appContext: AppContext) : ExpoView(conte
 
   init {
     setBackgroundColor(Color.TRANSPARENT)
+    setWillNotDraw(false)
   }
 
   fun setBlurTargetId(targetId: Int?) {
-    if (blurTargetId == targetId && targetView != null) {
+    if (blurTargetId == targetId && targetView != null && targetView?.isAttachedToWindow == true) {
       return
     }
     blurTargetId = targetId
-    targetView = resolveBlurTarget(targetId)
-    configureBlurTarget()
+    bindRetryCount = 0
+    resolveAndConfigure(allowRetry = true)
   }
 
-  private fun resolveBlurTarget(targetId: Int?): BlurTarget? {
-    if (targetId == null) return null
-    val found = appContext.findView<View>(targetId) ?: return null
-    return when (found) {
-      is LiquidGlassTargetView -> found.blurTarget
-      is BlurTarget -> found
+  private fun extractBlurTarget(view: View?): BlurTarget? {
+    return when (view) {
+      is LiquidGlassTargetView -> view.blurTarget
+      is BlurTarget -> view
       is ViewGroup -> {
-        if (found.childCount > 0) {
-          val firstChildParent = found.getChildAt(0)?.parent
+        if (view.childCount > 0) {
+          val firstChildParent = view.getChildAt(0)?.parent
           if (firstChildParent is BlurTarget) firstChildParent else null
         } else {
           null
@@ -312,124 +330,152 @@ class LiquidGlassView(context: Context, appContext: AppContext) : ExpoView(conte
     }
   }
 
-  private fun configureBlurTarget(): Boolean {
+  /**
+   * Resolves the page's BlurTarget via explicit React tag first, then falls back to
+   * walking up the native Android ancestor chain to locate the sibling LiquidGlassTargetView.
+   * This eliminates Fabric findNodeHandle / modal transition race conditions.
+   */
+  private fun findNearestBlurTarget(): BlurTarget? {
+    var current: ViewGroup? = parent as? ViewGroup
+    var depth = 0
+    while (current != null && depth < 24) {
+      for (i in 0 until current.childCount) {
+        val child = current.getChildAt(i)
+        if (child === this) continue
+        val candidate = when (child) {
+          is LiquidGlassTargetView -> child.blurTarget
+          is BlurTarget -> child
+          else -> null
+        }
+        if (candidate != null && candidate.rootView === this.rootView) {
+          return candidate
+        }
+      }
+      current = current.parent as? ViewGroup
+      depth++
+    }
+    return null
+  }
+
+  private fun resolveBlurTarget(targetId: Int?): BlurTarget? {
+    if (targetId != null) {
+      val byId = extractBlurTarget(appContext.findView<View>(targetId))
+      if (byId != null && byId.rootView === this.rootView) {
+        return byId
+      }
+    }
+    if (allowTargetLookup && isAttachedToWindow) {
+      return findNearestBlurTarget()
+    }
+    return null
+  }
+
+  private fun observeTarget(nextTarget: BlurTarget?) {
+    if (observedTarget === nextTarget) return
+    observedTarget?.removeOnLayoutChangeListener(targetLayoutListener)
+    observedTarget = nextTarget
+    nextTarget?.addOnLayoutChangeListener(targetLayoutListener)
+  }
+
+  private fun scheduleBindRetry() {
+    if (bindRetryScheduled || !isAttachedToWindow || bindRetryCount >= MAX_BIND_RETRIES) {
+      return
+    }
+    bindRetryScheduled = true
+    bindRetryCount++
+    postOnAnimation(retryBindRunnable)
+  }
+
+  private fun resolveAndConfigure(allowRetry: Boolean) {
+    val currentTarget = targetView
+    if (currentTarget == null || !currentTarget.isAttachedToWindow) {
+      targetView = resolveBlurTarget(blurTargetId)
+    }
+    observeTarget(targetView)
+    configureBlurTarget()
+    applyRenderEffect()
+
+    val target = targetView
+    if (allowRetry && isAttachedToWindow && Build.VERSION.SDK_INT >= 31) {
+      if (target == null || !target.isAttachedToWindow || target.width <= 0 || target.height <= 0) {
+        scheduleBindRetry()
+      }
+    }
+  }
+
+  private fun configureBlurTarget() {
     val target = targetView
     if (target == null || Build.VERSION.SDK_INT < 31) {
-      val wasConfigured = configuredTarget != null
       blurView.setBlurEnabled(false)
       configuredTarget = null
-      lastBlurRadiusDp = Float.NaN
-      return wasConfigured
+      return
     }
-    if (!isAttachedToWindow) {
-      return false
+    if (!isAttachedToWindow || !target.isAttachedToWindow) {
+      return
     }
 
     val clampedRadius = blurRadiusDp.coerceIn(1f, 25f)
-    if (configuredTarget === target && lastBlurRadiusDp == clampedRadius) {
-      return false
-    }
     if (configuredTarget !== target) {
       val decorBg = appContext.currentActivity?.window?.decorView?.background
-      val facade = blurView.setupWith(target).setBlurRadius(clampedRadius)
+      val facade = blurView.setupWith(target)
+        .setBlurAutoUpdate(true)
+        .setBlurRadius(clampedRadius)
       if (decorBg != null) {
         facade.setFrameClearDrawable(decorBg)
       }
       blurView.setOverlayColor(Color.TRANSPARENT)
       configuredTarget = target
+      // Ensure BlurTarget records its RenderNode and BlurView redraws once modal/entering animations settle.
+      removeCallbacks(postBindRefreshRunnable)
+      postOnAnimation(postBindRefreshRunnable)
+      postDelayed(postBindRefreshRunnable, 120L)
     } else {
+      blurView.setBlurAutoUpdate(true)
       blurView.setBlurRadius(clampedRadius)
     }
-    lastBlurRadiusDp = clampedRadius
     blurView.setBlurEnabled(true)
-    blurView.invalidate()
-    return true
-  }
-
-  private fun isShaderStateDirty(): Boolean {
-    if (!effectApplied || lastEffectWidth != width || lastEffectHeight != height) return true
-    if (lastCornerRadiusDp != cornerRadiusDp || lastIsDarkMode != isDarkMode) return true
-    if (lastTintRgba == null || !tintRgba.contentEquals(lastTintRgba)) return true
-    if (lastAccentRgb == null || !accentRgb.contentEquals(lastAccentRgb)) return true
-    if (lastReflectionRgb == null || !reflectionRgb.contentEquals(lastReflectionRgb)) return true
-    if (
-      lastRefractionStrength != refractionStrength ||
-      lastDispersion != dispersion ||
-      lastSaturation != saturation ||
-      lastRimStrength != rimStrength ||
-      lastReflectionStrength != reflectionStrength ||
-      lastLuminanceLift != luminanceLift
-    ) {
-      return true
+    if (target.width > 0 && target.height > 0) {
+      target.invalidate()
     }
-    return false
-  }
-
-  private fun snapshotShaderState() {
-    lastCornerRadiusDp = cornerRadiusDp
-    lastIsDarkMode = isDarkMode
-    lastTintRgba = tintRgba.copyOf()
-    lastAccentRgb = accentRgb.copyOf()
-    lastReflectionRgb = reflectionRgb.copyOf()
-    lastRefractionStrength = refractionStrength
-    lastDispersion = dispersion
-    lastSaturation = saturation
-    lastRimStrength = rimStrength
-    lastReflectionStrength = reflectionStrength
-    lastLuminanceLift = luminanceLift
-    lastEffectWidth = width
-    lastEffectHeight = height
-    effectApplied = true
+    blurView.invalidate()
   }
 
   fun syncGlassState() {
-    if (targetView == null && blurTargetId != null) {
-      targetView = resolveBlurTarget(blurTargetId)
-    }
-    val blurChanged = configureBlurTarget()
-    val cornerChanged = lastCornerRadiusDp != cornerRadiusDp
-    if (cornerChanged) {
-      needsClipUpdate = true
-    }
-    val shaderChanged = isShaderStateDirty()
-    if (shaderChanged) {
-      applyRenderEffect()
-    }
-    if (blurChanged || cornerChanged || shaderChanged) {
-      invalidate()
-    }
+    needsClipUpdate = true
+    resolveAndConfigure(allowRetry = true)
+    invalidate()
   }
 
   override fun onAttachedToWindow() {
     super.onAttachedToWindow()
-    if (targetView == null && blurTargetId != null) {
-      targetView = resolveBlurTarget(blurTargetId)
-    }
-    configureBlurTarget()
-    applyRenderEffect()
+    bindRetryCount = 0
+    configuredTarget = null
+    resolveAndConfigure(allowRetry = true)
   }
 
   override fun onDetachedFromWindow() {
-    super.onDetachedFromWindow()
+    removeCallbacks(retryBindRunnable)
+    removeCallbacks(postBindRefreshRunnable)
+    bindRetryScheduled = false
+    observeTarget(null)
+    blurView.setBlurAutoUpdate(false)
     blurView.setBlurEnabled(false)
+    agslActive = false
     if (Build.VERSION.SDK_INT >= 31) {
       setRenderEffect(null)
     }
-    agslActive = false
-    effectApplied = false
     cachedShader = null
-    targetView = null
     configuredTarget = null
-    lastBlurRadiusDp = Float.NaN
-    lastEffectWidth = -1
-    lastEffectHeight = -1
+    targetView = null
+    super.onDetachedFromWindow()
   }
 
   override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
     super.onSizeChanged(w, h, oldw, oldh)
-    if (w == oldw && h == oldh) return
     needsClipUpdate = true
-    applyRenderEffect()
+    if (w > 0 && h > 0 && isAttachedToWindow) {
+      resolveAndConfigure(allowRetry = true)
+    }
   }
 
   override fun draw(canvas: Canvas) {
@@ -453,19 +499,17 @@ class LiquidGlassView(context: Context, appContext: AppContext) : ExpoView(conte
   }
 
   private fun applyRenderEffect() {
-    if (Build.VERSION.SDK_INT < 31 || width <= 0 || height <= 0 || !isAttachedToWindow) {
+    if (Build.VERSION.SDK_INT < 31 || width <= 0 || height <= 0) {
       return
     }
     if (Build.VERSION.SDK_INT >= 33 && !agslFailed) {
       if (applyAgslLiquidGlass()) {
         agslActive = true
-        snapshotShaderState()
         return
       }
     }
     agslActive = false
     applyApi31VibrancyFallback()
-    snapshotShaderState()
   }
 
   @RequiresApi(33)
@@ -502,6 +546,10 @@ class LiquidGlassView(context: Context, appContext: AppContext) : ExpoView(conte
       setSaturation(saturation.coerceIn(1.0f, 1.8f))
     }
     setRenderEffect(RenderEffect.createColorFilterEffect(ColorMatrixColorFilter(matrix)))
+  }
+
+  companion object {
+    private const val MAX_BIND_RETRIES = 48
   }
 }
 

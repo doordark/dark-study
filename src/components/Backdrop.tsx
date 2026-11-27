@@ -51,10 +51,14 @@ export function Backdrop({ children }: { children?: React.ReactNode }) {
   const backgroundDim = useSettings((s) => s.backgroundDim);
   const tint = useSettings((s) => s.backgroundTint);
   const effect = useSettings((s) => s.backgroundEffect);
-  const glass = useSettings((s) => s.material === "glass");
+  const material = useSettings((s) => s.material);
+  const glass = material === "glass";
+  const frosted = material === "frosted";
+  const clear = material === "clear";
   const quality = useSettings((s) => s.renderQuality);
   const reduceTransparency = useReducedTransparency();
-  const blurEnabled = glass && !reduceTransparency && renderQuality(quality).blur;
+  const blurEnabled =
+    (glass || frosted) && !reduceTransparency && renderQuality(quality).blur;
   const glowId = React.useId().replace(/:/g, "");
   const insets = useSafeAreaInsets();
   // 玻璃材质下，这层背景会被本页所有玻璃卡片当作模糊与折射源
@@ -73,7 +77,7 @@ export function Backdrop({ children }: { children?: React.ReactNode }) {
 
   const preset = BACKGROUND_PRESETS[resolveTint(tint)];
   const mode = resolveEffect(effect);
-  const richGlassBackdrop = glass && !reduceTransparency;
+  const richGlassBackdrop = (glass || frosted || clear) && !reduceTransparency;
   const gradientColors = richGlassBackdrop
     ? isDark
       ? preset.glassDark

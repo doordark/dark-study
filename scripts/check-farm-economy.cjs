@@ -3,18 +3,25 @@ const fs = require('node:fs');
 const path = require('node:path');
 const Module = require('node:module');
 const ts = require('typescript');
-function load(name, dependencies = {}) {
-  const filename = path.resolve(__dirname, '../src/utils/' + name + '.ts');
-  const compiled = ts.transpileModule(fs.readFileSync(filename, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } });
+const root = path.resolve(__dirname, '..');
+const cache = new Map();
+function load(relative) {
+  const filename = path.resolve(root, relative);
+  if (cache.has(filename)) return cache.get(filename).exports;
   const target = new Module(filename, module);
-  target.require = (name) => dependencies[name] ?? require(name);
+  cache.set(filename, target);
+  target.require = (name) => name.startsWith('@/')
+    ? load('src/' + name.slice(2) + '.ts')
+    : name.startsWith('.')
+      ? load(path.relative(root, path.resolve(path.dirname(filename), name + '.ts')))
+      : require(name);
+  const compiled = ts.transpileModule(fs.readFileSync(filename, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } });
   target._compile(compiled.outputText, filename);
   return target.exports;
 }
-const progress = load('farmProgress');
-const e = load('farmEconomy', { './farmProgress': progress });
-const personality = load('farmPersonality');
-const market = load('farmMarket', { './farmProgress': progress, './farmEconomy': e, './farmPersonality': personality });
+const progress = load('src/utils/farmProgress.ts');
+const e = load('src/utils/farmEconomy.ts');
+const market = load('src/utils/farmMarket.ts');
 const today = new Date(2026, 10, 3, 12).getTime();
 const tomorrow = new Date(2026, 10, 4, 12).getTime();
 

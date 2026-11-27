@@ -10,6 +10,7 @@ import {
   Alert,
   Image,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -37,11 +38,19 @@ import { GlassMaterialPreview } from "@/components/GlassMaterialPreview";
 import { PerformanceSettings } from "@/components/PerformanceSettings";
 import { PeriodSettings } from "@/components/PeriodSettings";
 import {
+  AI_PROVIDER_PRESETS,
+  getAiProviderPreset,
+  normalizeBaseUrl,
+  resolveAiRuntimeConfig,
+  type AiProviderId,
+} from "@/constants/aiProviders";
+import {
   BACKGROUND_PRESETS,
   type BackgroundEffect,
   type BackgroundTint,
 } from "@/constants/backgrounds";
 import { useForegroundClock } from "@/hooks/useForegroundClock";
+import { ensureReminderPermission } from "@/services/courseReminders";
 import { testDeepSeekConnection } from "@/services/deepseek";
 import { pickImageForBackground } from "@/services/fileImport";
 import {
@@ -50,7 +59,7 @@ import {
   isAndroid,
   openInstallPermissionSettings,
 } from "@/services/updater";
-import { useSettings } from "@/store/useSettings";
+import { useSettings, type CardMaterial } from "@/store/useSettings";
 import { useActiveSchedule, useStore } from "@/store/useStore";
 import { useUpdateTask } from "@/store/useUpdateTask";
 import { useWhaleMemory } from "@/store/useWhaleMemory";
@@ -76,8 +85,17 @@ const APPEARANCES = [
 
 const MATERIALS = [
   { key: "glass", label: "液态玻璃", hint: "通透折射与镜面反光" },
+  { key: "frosted", label: "柔雾玻璃", hint: "奶润柔光磨砂质感" },
+  { key: "clear", label: "清透", hint: "零模糊纯净透色" },
   { key: "flat", label: "扁平", hint: "简洁清晰" },
 ] as const;
+
+const MATERIAL_LABELS: Record<CardMaterial, string> = {
+  glass: "液态玻璃",
+  frosted: "柔雾玻璃",
+  clear: "清透",
+  flat: "扁平",
+};
 
 const BG_TINTS = Object.entries(BACKGROUND_PRESETS) as [
   BackgroundTint,
@@ -226,7 +244,7 @@ function UpdateCard() {
           {phase === "idle" ? (
             <>
               <Text className="mb-3 text-[11px] text-slate-500 dark:text-slate-400">
-                检查是否有新版本，下载后覆盖安装，课程与设置数据自动保留
+                自动择优选择最快线路检查与下载，覆盖安装后课程与设置数据自动保留
               </Text>
               <PrimaryBtn label="检查更新" onPress={check} />
             </>
@@ -444,9 +462,9 @@ function AppearanceSettings() {
               材质
             </Text>
             <Text className="mb-3 text-[11px] leading-4 text-slate-500 dark:text-slate-400">
-              液态玻璃保留真实透色与边缘微折射，随浅色/深色与主题色调自适应反光。
+              液态玻璃带真实模糊与边缘微折射；柔雾玻璃呈现奶润柔光磨砂；清透无模糊更轻盈通透；扁平简洁清晰。
             </Text>
-            <View className="flex-row gap-x-2.5">
+            <View className="flex-row flex-wrap justify-between gap-y-3">
               {MATERIALS.map((m) => (
                 <Pressable
                   key={m.key}
@@ -454,7 +472,7 @@ function AppearanceSettings() {
                   accessibilityRole="radio"
                   accessibilityLabel={`${m.label}，${m.hint}`}
                   accessibilityState={{ checked: material === m.key }}
-                  className="flex-1"
+                  style={{ width: "48%" }}
                 >
                   <View
                     className={`rounded-[20px] border-2 p-0.5 ${
@@ -655,7 +673,7 @@ function AppearanceSettings() {
             ) : null}
 
             <Text className="mt-2.5 text-[10.5px] text-slate-500 dark:text-slate-400">
-              当前卡片材质为「{material === "glass" ? "液态玻璃" : "扁平"}」，背景会铺满整个应用界面。
+              当前卡片材质为「{MATERIAL_LABELS[material] ?? "扁平"}」，背景会铺满整个应用界面。
             </Text>
           </View>
         </GlassContainer>
@@ -1267,8 +1285,25 @@ function AiSettings() {
   const whaleActive = useWhaleMemory((s) => s.active);
   const apiKey = useSettings((s) => s.apiKey);
   const setApiKey = useSettings((s) => s.setApiKey);
+  const aiProvider = useSettings((s) => s.aiProvider);
+  const aiBaseUrl = useSettings((s) => s.aiBaseUrl);
+  const aiTextModel = useSettings((s) => s.aiTextModel);
+  const aiVisionModel = useSettings((s) => s.aiVisionModel);
+  const setAiProvider = useSettings((s) => s.setAiProvider);
+  const setAiBaseUrl = useSettings((s) => s.setAiBaseUrl);
+  const setAiTextModel = useSettings((s) => s.setAiTextModel);
+  const setAiVisionModel = useSettings((s) => s.setAiVisionModel);
   const whalePhrase = useSettings((s) => s.whalePhrase);
   const setWhalePhrase = useSettings((s) => s.setWhalePhrase);
+
+  const activePreset = getAiProviderPreset(aiProvider);
+  const runtimeConfig = resolveAiRuntimeConfig({
+    aiProvider,
+    aiBaseUrl,
+    aiTextModel,
+    aiVisionModel,
+  });
+
   const [draft, setDraft] = useState<string | null>(null);
   const editing = draft ?? apiKey;
   const [keyOpen, setKeyOpen] = useState(false);
@@ -1281,6 +1316,28 @@ function AiSettings() {
   const [phraseDraft, setPhraseDraft] = useState<string | null>(null);
   const [phraseSaved, setPhraseSaved] = useState(false);
 
+  const [advancedOpen, setAdvancedOpen] = useState(
+    () =>
+      aiProvider === "custom" ||
+      Boolean(aiBaseUrl || aiTextModel || aiVisionModel),
+  );
+  const [baseUrlDraft, setBaseUrlDraft] = useState<string | null>(null);
+  const [textModelDraft, setTextModelDraft] = useState<string | null>(null);
+  const [visionModelDraft, setVisionModelDraft] = useState<string | null>(null);
+  const [endpointNotice, setEndpointNotice] = useState<{
+    ok: boolean;
+    text: string;
+  } | null>(null);
+
+  const currentBaseUrlInput = baseUrlDraft ?? aiBaseUrl;
+  const currentTextModelInput = textModelDraft ?? aiTextModel;
+  const currentVisionModelInput = visionModelDraft ?? aiVisionModel;
+  const hasCustomOverrides = Boolean(
+    currentBaseUrlInput.trim() ||
+      currentTextModelInput.trim() ||
+      currentVisionModelInput.trim(),
+  );
+
   const cancelTest = () => {
     testGenRef.current += 1;
     testAbortRef.current?.abort();
@@ -1291,6 +1348,65 @@ function AiSettings() {
   useEffect(() => () => {
     testAbortRef.current?.abort();
   }, []);
+
+  const selectProvider = (nextId: AiProviderId) => {
+    if (nextId === aiProvider) {
+      if (nextId === "custom") setAdvancedOpen(true);
+      return;
+    }
+    cancelTest();
+    setTestResult(null);
+    setEndpointNotice(null);
+    setAiProvider(nextId);
+    setAiBaseUrl("");
+    setAiTextModel("");
+    setAiVisionModel("");
+    setBaseUrlDraft(null);
+    setTextModelDraft(null);
+    setVisionModelDraft(null);
+    if (nextId === "custom") setAdvancedOpen(true);
+  };
+
+  const resetProviderDefaults = () => {
+    cancelTest();
+    setTestResult(null);
+    setAiBaseUrl("");
+    setAiTextModel("");
+    setAiVisionModel("");
+    setBaseUrlDraft(null);
+    setTextModelDraft(null);
+    setVisionModelDraft(null);
+    setEndpointNotice({
+      ok: true,
+      text: `已恢复「${activePreset.label}」默认接口与模型`,
+    });
+  };
+
+  const saveEndpointConfig = () => {
+    const rawUrl = currentBaseUrlInput.trim();
+    if (rawUrl && !normalizeBaseUrl(rawUrl)) {
+      setEndpointNotice({
+        ok: false,
+        text: "接口地址无效，请输入以 http:// 或 https:// 开头的完整地址",
+      });
+      return;
+    }
+    setAiBaseUrl(rawUrl);
+    setAiTextModel(currentTextModelInput);
+    setAiVisionModel(currentVisionModelInput);
+    setBaseUrlDraft(null);
+    setTextModelDraft(null);
+    setVisionModelDraft(null);
+    setEndpointNotice({
+      ok: true,
+      text: "已保存接口与模型配置",
+    });
+  };
+
+  const canTestConnection =
+    !testing &&
+    Boolean(runtimeConfig.baseUrl) &&
+    (!activePreset.requiresApiKey || Boolean(editing.trim()));
 
   const runTest = async () => {
     cancelTest();
@@ -1326,6 +1442,13 @@ function AiSettings() {
   };
 
   const currentPhraseInput = phraseDraft ?? whalePhrase;
+  const keyStatusSummary = !activePreset.requiresApiKey
+    ? apiKey
+      ? "免密钥直连 · 已填可选密钥"
+      : "免密钥本地直连（可测试连通性）"
+    : apiKey
+      ? "已配置密钥（可测试连通性）"
+      : "点击配置 API Key";
 
   return (
     <>
@@ -1350,12 +1473,193 @@ function AiSettings() {
               <Text className="text-[14px] font-bold text-slate-800 dark:text-white">
                 AI 连接
               </Text>
-              <Text className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-                DeepSeek · {apiKey ? "已配置密钥（可测试连通性）" : "点击配置 API Key"}
+              <Text
+                numberOfLines={1}
+                className="mt-1 text-[11px] text-slate-500 dark:text-slate-400"
+              >
+                {activePreset.label} · {keyStatusSummary}
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={17} color="#94A3B8" />
           </Pressable>
+
+          <View className="border-t border-slate-300/25 px-4 pb-4 pt-3 dark:border-white/10">
+            <Text className="mb-2 text-[11.5px] font-semibold text-slate-600 dark:text-slate-300">
+              服务商预设
+            </Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ gap: 8 }}
+            >
+              {AI_PROVIDER_PRESETS.map((preset) => {
+                const selected = aiProvider === preset.id;
+                return (
+                  <Pressable
+                    key={preset.id}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: selected }}
+                    onPress={() => selectProvider(preset.id)}
+                    className={`rounded-xl border px-3 py-1.5 ${
+                      selected
+                        ? "border-sky-500/75 bg-sky-500/20"
+                        : "border-slate-300/30 bg-white/25 dark:border-white/10 dark:bg-white/[0.05]"
+                    }`}
+                  >
+                    <Text
+                      className={`text-[11.5px] font-semibold ${
+                        selected
+                          ? "text-sky-700 dark:text-sky-300"
+                          : "text-slate-600 dark:text-slate-300"
+                      }`}
+                    >
+                      {preset.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            <Text className="mt-2 text-[10.5px] leading-4 text-slate-500 dark:text-slate-400">
+              {activePreset.hint}
+              {!activePreset.supportsDeepSeekServerTools
+                ? " · 联网搜索自动走通用通道"
+                : ""}
+            </Text>
+
+            <View className="mt-3 flex-row items-center justify-between">
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setAdvancedOpen((v) => !v)}
+                className="flex-row items-center gap-1.5 py-1"
+              >
+                <Text className="text-[11.5px] font-semibold text-slate-700 dark:text-slate-200">
+                  接口与模型配置
+                </Text>
+                <Text className="text-[10.5px] text-slate-500 dark:text-slate-400">
+                  {runtimeConfig.textModel || "待填写"}
+                </Text>
+                <Ionicons
+                  name={advancedOpen ? "chevron-up" : "chevron-down"}
+                  size={14}
+                  color="#94A3B8"
+                />
+              </Pressable>
+
+              {hasCustomOverrides ? (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={resetProviderDefaults}
+                  className="rounded-lg border border-slate-300/35 bg-white/25 px-2.5 py-1 dark:border-white/10 dark:bg-white/[0.05]"
+                >
+                  <Text className="text-[10.5px] font-semibold text-sky-600 dark:text-sky-300">
+                    恢复默认
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
+
+            {advancedOpen ? (
+              <View className="mt-2.5 gap-y-2.5">
+                <View>
+                  <Text className="mb-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                    Base URL
+                  </Text>
+                  <TextInput
+                    accessibilityLabel="AI Base URL"
+                    value={currentBaseUrlInput}
+                    onChangeText={(v) => {
+                      setBaseUrlDraft(v);
+                      setEndpointNotice(null);
+                    }}
+                    placeholder={
+                      activePreset.baseUrl || "https://your-gateway.example.com/v1"
+                    }
+                    placeholderTextColor="#94A3B8"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    className="rounded-xl border border-slate-300/35 bg-white/40 px-3 py-2 text-[12.5px] text-slate-800 dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-100"
+                  />
+                </View>
+
+                <View>
+                  <Text className="mb-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                    文本模型（Text Model）
+                  </Text>
+                  <TextInput
+                    accessibilityLabel="文本模型"
+                    value={currentTextModelInput}
+                    onChangeText={(v) => {
+                      setTextModelDraft(v);
+                      setEndpointNotice(null);
+                    }}
+                    placeholder={
+                      activePreset.defaultTextModel ||
+                      "如 deepseek-flash / gemini-3.8-flash / qwen3.8-flash"
+                    }
+                    placeholderTextColor="#94A3B8"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    className="rounded-xl border border-slate-300/35 bg-white/40 px-3 py-2 text-[12.5px] text-slate-800 dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-100"
+                  />
+                </View>
+
+                <View>
+                  <Text className="mb-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                    视觉模型（Vision Model）
+                  </Text>
+                  <TextInput
+                    accessibilityLabel="视觉模型"
+                    value={currentVisionModelInput}
+                    onChangeText={(v) => {
+                      setVisionModelDraft(v);
+                      setEndpointNotice(null);
+                    }}
+                    placeholder={
+                      activePreset.defaultVisionModel || "留空则复用文本模型"
+                    }
+                    placeholderTextColor="#94A3B8"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    className="rounded-xl border border-slate-300/35 bg-white/40 px-3 py-2 text-[12.5px] text-slate-800 dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-100"
+                  />
+                </View>
+
+                <View className="flex-row gap-2 pt-0.5">
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={resetProviderDefaults}
+                    className="flex-1 items-center rounded-xl border border-slate-300/35 bg-white/25 py-2 dark:border-white/10 dark:bg-white/[0.05]"
+                  >
+                    <Text className="text-[11.5px] font-semibold text-slate-600 dark:text-slate-300">
+                      恢复默认
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={saveEndpointConfig}
+                    className="flex-1 items-center rounded-xl bg-sky-500 py-2"
+                  >
+                    <Text className="text-[11.5px] font-bold text-white">
+                      保存接口与模型
+                    </Text>
+                  </Pressable>
+                </View>
+
+                {endpointNotice ? (
+                  <Text
+                    className={`text-[11px] font-semibold ${
+                      endpointNotice.ok
+                        ? "text-emerald-600 dark:text-emerald-300"
+                        : "text-rose-600 dark:text-rose-300"
+                    }`}
+                  >
+                    {endpointNotice.text}
+                  </Text>
+                ) : null}
+              </View>
+            ) : null}
+          </View>
         </GlassContainer>
       </Animated.View>
 
@@ -1395,14 +1699,14 @@ function AiSettings() {
                   连接你的 AI
                 </Text>
                 <Text className="mt-2 text-[13px] leading-6 text-slate-500 dark:text-slate-400">
-                  用于课表识别、AI 助手与成绩识别。
+                  当前服务商：{activePreset.label}（{runtimeConfig.baseUrl || "未设置接口地址"}）。
                 </Text>
                 <Text className="mb-2 mt-6 text-[12px] font-semibold text-slate-600 dark:text-slate-300">
-                  DeepSeek API Key
+                  {activePreset.label} API Key{activePreset.requiresApiKey ? "" : "（可选）"}
                 </Text>
                 <View className="flex-row items-center rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800">
                   <TextInput
-                    accessibilityLabel="DeepSeek API Key"
+                    accessibilityLabel={`${activePreset.label} API Key`}
                     value={editing}
                     onChangeText={(v) => {
                       cancelTest();
@@ -1410,7 +1714,15 @@ function AiSettings() {
                       setSaved(false);
                       setTestResult(null);
                     }}
-                    placeholder="输入或粘贴 sk-…"
+                    placeholder={
+                      !activePreset.requiresApiKey
+                        ? "本地服务可留空"
+                        : activePreset.id === "gemini"
+                          ? "输入或粘贴 AIza…（Google AI Studio Key）"
+                          : activePreset.id === "openrouter"
+                            ? "输入或粘贴 sk-or-…"
+                            : "输入或粘贴 sk-…"
+                    }
                     placeholderTextColor="#94A3B8"
                     autoCapitalize="none"
                     autoCorrect={false}
@@ -1431,7 +1743,7 @@ function AiSettings() {
                   </Pressable>
                 </View>
                 <Text className="mt-3 text-[11px] leading-5 text-slate-500 dark:text-slate-400">
-                  密钥仅保存在本机，调用时发送给 DeepSeek。可点击下方「测试连接」零消耗验证密钥是否有效。
+                  密钥仅保存在本机系统安全存储中，调用时发送至所选服务商。可点击下方「测试连接」零消耗验证连通性。
                 </Text>
 
                 {testResult ? (
@@ -1456,10 +1768,10 @@ function AiSettings() {
                 <View className="mt-5 flex-row gap-2.5">
                   <Pressable
                     accessibilityRole="button"
-                    disabled={testing || !editing.trim()}
+                    disabled={!canTestConnection}
                     onPress={() => void runTest()}
                     className={`min-h-12 flex-1 items-center justify-center rounded-2xl border border-sky-500/50 bg-sky-500/12 ${
-                      testing || !editing.trim() ? "opacity-40" : ""
+                      !canTestConnection ? "opacity-40" : ""
                     }`}
                   >
                     <Text className="text-[13.5px] font-bold text-sky-700 dark:text-sky-300">
@@ -1510,10 +1822,10 @@ function AiSettings() {
             </View>
             <View className="flex-1">
               <Text className="text-[14px] font-bold text-slate-800 dark:text-white">
-                {personaName} · 人设与记忆
+                {personaName} · Agent 人设与记忆
               </Text>
               <Text className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-                拖动性格滑条、改写人设，整理她记住的事（与农场访客同步）
+                配置社区大肥鱼提示词、DeepSeek 官方联网搜索、思考深度、成绩感知、临时指令与记忆
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={17} color="#94A3B8" />
@@ -1575,13 +1887,64 @@ function AiSettings() {
 
 function ReminderAndWidgetSettings() {
   const enter0 = useCardEnter(0);
-  const enter1 = useCardEnter(60);
+  const enter1 = useCardEnter(50);
+  const enter2 = useCardEnter(100);
+  const liveClassNotification = useSettings((s) => s.liveClassNotification);
+  const setLiveClassNotification = useSettings((s) => s.setLiveClassNotification);
+  const requestingLivePermRef = useRef(false);
+
+  const toggleLiveClassNotification = async (next: boolean) => {
+    if (!next) {
+      setLiveClassNotification(false);
+      return;
+    }
+    if (Platform.OS !== "web") {
+      if (requestingLivePermRef.current) return;
+      requestingLivePermRef.current = true;
+      try {
+        const granted = await ensureReminderPermission();
+        if (!granted) {
+          Alert.alert("需要通知权限", "请在系统设置中允许 Dark Study 发送通知。", [
+            { text: "取消", style: "cancel" },
+            {
+              text: "打开设置",
+              onPress: () => {
+                void Linking.openSettings();
+              },
+            },
+          ]);
+          return;
+        }
+      } catch {
+        Alert.alert("无法开启通知", "请检查系统通知权限后重试。");
+        return;
+      } finally {
+        requestingLivePermRef.current = false;
+      }
+    }
+    setLiveClassNotification(true);
+  };
+
   return (
     <>
       <Animated.View entering={enter0}>
         <CourseReminderSettings />
       </Animated.View>
-      <Animated.View entering={enter1}>
+      <Animated.View entering={enter1} style={{ marginBottom: 14 }}>
+        <GlassContainer radius={24} intensity={42} borderOpacity={0.22}>
+          <View className="px-4 py-3">
+            <ToggleRow
+              label="常驻上课进度通知"
+              hint="课前准备与上课期间在通知栏实时展示当前课程剩余时间与进度"
+              value={liveClassNotification}
+              onValueChange={(v) => {
+                void toggleLiveClassNotification(v);
+              }}
+            />
+          </View>
+        </GlassContainer>
+      </Animated.View>
+      <Animated.View entering={enter2}>
         <CourseWidgetSettings />
       </Animated.View>
     </>
@@ -1735,7 +2098,7 @@ const SETTINGS_GROUPS = [
   {
     id: "ai",
     title: "AI 与桌宠",
-    description: "DeepSeek 连接测试、人设与记忆",
+    description: "多服务商连接测试、模型配置、人设与记忆",
     icon: "sparkles-outline",
     Content: AiSettings,
   },

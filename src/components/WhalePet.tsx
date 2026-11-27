@@ -244,6 +244,7 @@ const SCHEDULE_TYPES = new Set([
   "update",
   "create_schedule",
   "merge_schedule",
+  "add_task",
 ]);
 const isScheduleAction = (a: AssistantAction): a is ScheduleAction =>
   SCHEDULE_TYPES.has(a.type);
@@ -1555,11 +1556,20 @@ function WhalePetLayer() {
         const query = String(action.query ?? "").trim();
         if (!query) continue;
         try {
-          const hits = await searchWeb(query, ticket.signal);
+          const hits = await searchWeb(query, ticket.signal, apiKey);
           if (!hits.length) throw new Error("没有结果");
           const answer = await answerFromSearch(userText, hits, apiKey, ticket.signal);
           if (!ticket.isCurrent() || useWhaleMemory.getState().epoch !== memoryEpoch) return;
-          setChatMsgs((prev) => [...prev, petMsg("assistant", answer)].slice(-200));
+          const unique = Array.from(new Map(hits.map((h) => [h.url, h])).values()).slice(0, 3);
+          setChatMsgs((prev) =>
+            [
+              ...prev,
+              {
+                ...petMsg("assistant", answer),
+                sources: unique.map((h) => ({ title: h.title, url: h.url })),
+              },
+            ].slice(-200),
+          );
           showBubble(answer, 3000);
           say(answer);
         } catch {

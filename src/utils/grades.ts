@@ -5,6 +5,8 @@ import type {
   GradeRule,
   GradeScoreType,
   GradeType,
+  GradeYear,
+  Schedule,
   SemesterKind,
 } from "@/types";
 
@@ -295,7 +297,7 @@ export function isGradePassed(grade: GradeRecord): boolean {
     return text.toUpperCase() !== "F";
   }
   if (grade.scoreType === "text" && text) {
-    if (/不及格|不合格|未通过|缺考|缓考/.test(text)) return false;
+    if (/不及格|不合格|未通过|缺考|缓考|待出分|待填|未出分/.test(text)) return false;
     return true;
   }
   return grade.gpa != null && grade.gpa > 0;
@@ -518,4 +520,233 @@ export function normalizeGradeInput(
     semester: normalizeSemester(input.semester) ?? "fall",
     type: resolveGradeTypeId(input.type, opts?.types),
   };
+}
+
+/** 单个学期的 GPA 趋势数据点 */
+export interface TermGpaPoint {
+  key: string;
+  label: string;
+  yearId: string;
+  yearName: string;
+  semester: SemesterKind;
+  gpa: number;
+  weightedScore: number | null;
+  credits: number;
+  courseCount: number;
+}
+
+const SHORT_SEMESTER_LABEL: Record<SemesterKind, string> = {
+  fall: "上",
+  spring: "下",
+  summer: "短",
+};
+
+/**
+ * 按学年顺序 × 上/下/短学期聚合各学期 GPA 与加权均分，跳过无有效计入成绩的空学期
+ */
+export function buildTermGpaTrend(
+  grades: readonly GradeRecord[],
+  gradeYears: readonly GradeYear[],
+  rule?: GradeRule,
+): TermGpaPoint[] {
+  const byTerm = new Map<string, GradeRecord[]>();
+  for (const grade of grades) {
+    if (!isGradeIncluded(rule, grade)) continue;
+    const key = `${grade.yearId}:${grade.semester}`;
+    const list = byTerm.get(key);
+    if (list) list.push(grade);
+    else byTerm.set(key, [grade]);
+  }
+
+  const points: TermGpaPoint[] = [];
+  for (const year of gradeYears) {
+    for (const sem of GRADE_SEMESTERS) {
+      const key = `${year.id}:${sem.kind}`;
+      const termGrades = byTerm.get(key);
+      if (!termGrades?.length) continue;
+      const stats = calcGradeStats(rule, termGrades);
+      if (stats.value === null || stats.credits <= 0) continue;
+      points.push({
+        key,
+        label: `${year.name}·${SHORT_SEMESTER_LABEL[sem.kind]}`,
+        yearId: year.id,
+        yearName: year.name,
+        semester: sem.kind,
+        gpa: stats.value,
+        weightedScore: stats.weightedScore,
+        credits: stats.credits,
+        courseCount: stats.count,
+      });
+    }
+  }
+
+  return points;
+}
+
+/** 单个课程类型的学分分布统计 */
+export interface CreditBucket {
+  typeId: string;
+  typeName: string;
+  earnedCredits: number;
+  totalCredits: number;
+  courseCount: number;
+  /** 占已获总学分的比例（0 ~ 1） */
+  share: number;
+}
+
+/** 全部课程类型的学分结构汇总 */
+export interface CreditDistribution {
+  buckets: CreditBucket[];
+  totalEarnedCredits: number;
+  totalCredits: number;
+  passedCount: number;
+  courseCount: number;
+}
+
+/**
+ * 按课程类型统计已获学分（经由 isGradePassed 判定，兼容合格/通过制）与学分占比
+ */
+export function buildCreditDistribution(
+  grades: readonly GradeRecord[],
+  gradeTypes: readonly GradeType[],
+  rule?: GradeRule,
+): CreditDistribution {
+  const accMap = new Map<
+    string,
+    {
+      typeId: string;
+      typeName: string;
+      earnedRaw: number;
+      totalRaw: number;
+      courseCount: number;
+    }
+  >();
+
+  for (const t of gradeTypes) {
+    accMap.set(t.id, {
+      typeId: t.id,
+      typeName: t.name,
+      earnedRaw: 0,
+      totalRaw: 0,
+      courseCount: 0,
+    });
+  }
+
+  let totalEarnedRaw = 0;
+  let totalAttemptedRaw = 0;
+  let passedCount = 0;
+  let courseCount = 0;
+
+  for (const grade of grades) {
+    if (!isGradeIncluded(rule, grade)) continue;
+    courseCount += 1;
+
+    let bucket = accMap.get(grade.type);
+    if (!bucket) {
+      bucket = {
+        typeId: grade.type,
+        typeName: "其他类型",
+        earnedRaw: 0,
+        totalRaw: 0,
+        courseCount: 0,
+      };
+      accMap.set(grade.type, bucket);
+    }
+    bucket.courseCount += 1;
+
+    const credit = Number(grade.credit);
+    const hasCredit =
+      grade.credit != null && Number.isFinite(credit) && credit > 0;
+    const passed = isGradePassed(grade);
+    if (passed) passedCount += 1;
+
+    if (hasCredit) {
+      bucket.totalRaw += credit;
+      totalAttemptedRaw += credit;
+      if (passed) {
+        bucket.earnedRaw += credit;
+        totalEarnedRaw += credit;
+      }
+    }
+  }
+
+  const buckets: CreditBucket[] = [...accMap.values()].map((item) => ({
+    typeId: item.typeId,
+    typeName: item.typeName,
+    earnedCredits: round2(item.earnedRaw),
+    totalCredits: round2(item.totalRaw),
+    courseCount: item.courseCount,
+    share: totalEarnedRaw > 0 ? item.earnedRaw / totalEarnedRaw : 0,
+  }));
+
+  return {
+    buckets,
+    totalEarnedCredits: round2(totalEarnedRaw),
+    totalCredits: round2(totalAttemptedRaw),
+    passedCount,
+    courseCount,
+  };
+}
+
+/** 从当前课表提取的结课导入候选课程 */
+export interface ScheduleGradeCandidate {
+  name: string;
+  credit: number | null;
+  alreadyExists: boolean;
+  defaultTypeId: string;
+}
+
+/**
+ * 从课表提取去重后的结课导入候选列表：
+ * - 按归一化课程名合并多时段条目，保留最高有效学分
+ * - 按 gradeDuplicateKey(yearId, semester, name) 标记是否已存在成绩记录
+ */
+export function buildScheduleGradeCandidates(
+  schedule: Pick<Schedule, "courses"> | null | undefined,
+  existingGrades: readonly GradeRecord[],
+  yearId: string,
+  semester: SemesterKind,
+  defaultTypeId: string = "required",
+): ScheduleGradeCandidate[] {
+  const courses = schedule?.courses;
+  if (!courses?.length) return [];
+
+  const existingKeys = new Set(
+    existingGrades.map((g) => gradeDuplicateKey(g.yearId, g.semester, g.name)),
+  );
+
+  const byNorm = new Map<string, ScheduleGradeCandidate>();
+  for (const course of courses) {
+    const name = (course.name ?? "").trim();
+    const norm = normalizeGradeCourseName(name);
+    if (!name || !norm) continue;
+
+    const rawCredit = Number(course.credits);
+    const validCredit =
+      course.credits != null && Number.isFinite(rawCredit) && rawCredit > 0
+        ? round2(rawCredit)
+        : null;
+
+    const existing = byNorm.get(norm);
+    if (existing) {
+      if (
+        validCredit !== null &&
+        (existing.credit === null || validCredit > existing.credit)
+      ) {
+        existing.credit = validCredit;
+      }
+      continue;
+    }
+
+    byNorm.set(norm, {
+      name,
+      credit: validCredit,
+      alreadyExists: existingKeys.has(
+        gradeDuplicateKey(yearId, semester, name),
+      ),
+      defaultTypeId,
+    });
+  }
+
+  return [...byNorm.values()];
 }

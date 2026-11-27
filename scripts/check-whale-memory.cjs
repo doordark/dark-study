@@ -326,7 +326,115 @@ async function run() {
   assert.equal(decision.kind, "action");
   assert.match(decision.bubble, /数据结构/);
 
-  console.log("Whale checks passed: persona bounds, 4-tier cognitive memory, Mem0 upsert/delete, episodes, open loops, reflections, PAD emotion, bond growth, autonomous pet engine, request races, deletion, archive and legacy storage.");
+  // Community default skill prompt, agent config & quick directive checks
+  assert.match(persona.DEFAULT_WHALE_PERSONA.description, /数据海/);
+  assert.match(persona.DEFAULT_WHALE_PERSONA.description, /联网求真/);
+  const defaultAgent = persona.getWhaleAgentConfig(persona.DEFAULT_WHALE_PERSONA);
+  assert.equal(defaultAgent.webSearchEnabled, true);
+  assert.equal(defaultAgent.thinkingMode, "auto");
+  assert.equal(defaultAgent.skills.schedule, true);
+  const withQuick = persona.normalizeWhalePersona({
+    ...persona.DEFAULT_WHALE_PERSONA,
+    agent: { ...defaultAgent, quickDirective: "今天查资料务必列来源", quickDirectiveEnabled: true },
+  });
+  assert.match(persona.buildWhalePersonaPrompt(withQuick), /今天查资料务必列来源/);
+  const withQuickOff = persona.normalizeWhalePersona({
+    ...withQuick,
+    agent: { ...withQuick.agent, quickDirectiveEnabled: false },
+  });
+  assert.doesNotMatch(persona.buildWhalePersonaPrompt(withQuickOff), /今天查资料务必列来源/);
+
+  // DeepSeek official source extraction & native Agent tool-calling loop checks
+  const dsReal = load("src/services/deepseek.ts");
+  const extracted = dsReal.extractSourcesFromAgentMessage({
+    annotations: [{ type: "url_citation", title: "Chatbot Arena", url: "https://lmarena.ai/" }],
+    server_tool_calls: [{
+      step: 1,
+      calls: [{
+        type: "deepseek_web_search",
+        sources: [
+          { title: "Chatbot Arena", url: "https://lmarena.ai/", snippet: "live leaderboard" },
+          { title: "Artificial Analysis", url: "https://artificialanalysis.ai/", snippet: "benchmarks" },
+        ],
+      }],
+    }],
+  });
+  assert.equal(extracted.length, 2, "annotations and server_tool_calls sources deduplicate cleanly");
+  assert.equal(extracted[0].snippet, "live leaderboard");
+
+  // Isolated native whaleAgent check with mocked DeepSeek official tools & 400 fallback
+  const agentCalls = [];
+  let agentMode = "native_search";
+  const agentLoader = require("./load-project-ts.cjs")({
+    "react-native": { Platform: { OS: "android" } },
+    "@react-native-async-storage/async-storage": nativeStorage,
+    "@/services/deepseek": {
+      TEXT_MODEL: "deepseek-flash",
+      DeepSeekError: dsReal.DeepSeekError,
+      chat: async () => "汇总回答",
+      chatJson: async () => ({}),
+      deepseekWebSearch: async () => [{ title: "模型榜单", url: "https://example.com/rank", snippet: "榜单摘要", summary: "完整模型榜单摘要", content: "", rerankScore: 2.5 }],
+      deepseekFetchUrl: async () => ({ title: "模型榜单页", content: "# 排行榜" }),
+      chatAgentTurn: async (messages, _key, opts) => {
+        agentCalls.push({ messages, opts });
+        if (agentMode === "native_search") {
+          return {
+            content: "本鲸查好最新模型榜单啦[citation:1]！第一梯队都在这儿。",
+            toolCalls: [],
+            annotations: [{ type: "url_citation", title: "LMSYS Leaderboard", url: "https://lmarena.ai/" }],
+            serverToolCalls: [{ step: 1, calls: [{ type: "deepseek_web_search", sources: [{ title: "LMSYS Leaderboard", url: "https://lmarena.ai/" }] }] }],
+            sources: [{ title: "LMSYS Leaderboard", url: "https://lmarena.ai/" }],
+          };
+        }
+        if (agentMode === "fallback_400") {
+          const hasNativeWeb = (opts.tools || []).some((t) => t.type === "deepseek_web_search");
+          if (hasNativeWeb) throw new dsReal.DeepSeekError("unsupported tool", { status: 400 });
+          const hasToolResult = messages.some((m) => m.role === "tool");
+          if (!hasToolResult) {
+            return {
+              content: "",
+              toolCalls: [{ id: "tc-1", type: "function", function: { name: "fallback_web_search", arguments: JSON.stringify({ query: "2026 大模型排行榜" }) } }],
+              annotations: [],
+              serverToolCalls: [],
+              sources: [],
+            };
+          }
+          return {
+            content: "备用通道也查到最新模型榜单啦！",
+            toolCalls: [],
+            annotations: [],
+            serverToolCalls: [],
+            sources: [],
+          };
+        }
+        return { content: "好呀", toolCalls: [], annotations: [], serverToolCalls: [], sources: [] };
+      },
+    },
+  });
+  const whaleAgentMod = agentLoader("src/services/whaleAgent.ts");
+  assert.equal(whaleAgentMod.shouldUseWhaleThinking("auto", "你去查模型榜单", true), true);
+  assert.equal(whaleAgentMod.shouldUseWhaleThinking("auto", "摸摸头", true), false);
+  const nativeRes = await whaleAgentMod.runWhaleAgent(
+    [{ id: "u-rank", role: "user", content: "你去查模型榜单", timestamp: 600 }],
+    "test-key",
+  );
+  assert.ok(agentCalls[0].opts.tools.some((t) => t.type === "deepseek_web_search"));
+  assert.ok(agentCalls[0].opts.tools.some((t) => t.type === "deepseek_read_url"));
+  assert.equal(agentCalls[0].opts.thinking, "enabled");
+  assert.equal(nativeRes.sources.length, 1);
+  assert.equal(nativeRes.sources[0].url, "https://lmarena.ai/");
+  assert.match(nativeRes.reply, /\[1\]/);
+
+  agentMode = "fallback_400";
+  const fallbackRes = await whaleAgentMod.runWhaleAgent(
+    [{ id: "u-rank-2", role: "user", content: "帮我搜一下2026大模型榜单", timestamp: 610 }],
+    "test-key",
+  );
+  assert.equal(fallbackRes.sources.length, 1);
+  assert.equal(fallbackRes.sources[0].url, "https://example.com/rank");
+  assert.match(fallbackRes.reply, /备用通道/);
+
+  console.log("Whale checks passed: persona bounds, community skill prompt, agent quick directives, DeepSeek native web search & 400 fallback, 4-tier cognitive memory, PAD emotion, bond growth and autonomous pet engine.");
 }
 
 run().catch((error) => { console.error(error); process.exitCode = 1; });

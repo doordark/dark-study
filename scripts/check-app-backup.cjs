@@ -16,29 +16,95 @@ const { DEFAULT_PERIODS, DEFAULT_GRADE_RULES, DEFAULT_GRADE_TYPES, DEFAULT_GRADE
 const course = { id: 'course1', name: '数据结构', teacher: '', classroom: '', weekday: 1, startPeriod: 1, endPeriod: 2, weeks: [1, 2], color: 'sky' };
 const main = { version: 6, state: { schedules: [{ ...SAMPLE_SCHEDULE, periods: DEFAULT_PERIODS, courses: [course] }], activeScheduleId: SAMPLE_SCHEDULE.id, grades: [], gradeYears: DEFAULT_GRADE_YEARS, activeGradeYearId: DEFAULT_GRADE_YEARS[0].id, gradeTypes: DEFAULT_GRADE_TYPES, gradeRules: DEFAULT_GRADE_RULES, activeGradeRuleId: DEFAULT_GRADE_RULES[0].id, activeGradeSemester: 'fall' } };
 async function run() {
-  const source = [['dark-study-storage', JSON.stringify(main)], ['dark-study-settings', JSON.stringify({ version: 0, state: { apiKey: 'test-only-private', appearance: 'dark', backgroundImage: 'file:///private.png', renderQuality: 'smooth', defaultScheduleView: 'week', showWeekend: false, showOtherWeeks: true, compactWeekGrid: true, backgroundDim: 0.35 } })], ['dark-study-farm-life-budget', '{"count":20}']];
+  const widgetSettings = {
+    version: 0,
+    state: {
+      shape: 'large',
+      theme: 'dark',
+      accent: 'indigo',
+      style: 'porcelain',
+      mode: 'today',
+      count: 4,
+      ignoredExtra: 'drop-me',
+    },
+  };
+  const source = [
+    ['dark-study-storage', JSON.stringify(main)],
+    ['dark-study-settings', JSON.stringify({ version: 0, state: { apiKey: 'test-only-private', appearance: 'dark', material: 'clear', backgroundImage: 'file:///private.png', renderQuality: 'smooth', defaultScheduleView: 'week', showWeekend: false, showOtherWeeks: true, compactWeekGrid: true, backgroundDim: 0.35 } })],
+    ['dark-study-widget-settings', JSON.stringify(widgetSettings)],
+    ['dark-study-farm-life-budget', '{"count":20}'],
+  ];
   const result = backup.createBackup(source);
   assert(!JSON.stringify(result).includes('test-only-private'));
   assert(!JSON.stringify(result).includes('file:///private.png'));
   assert(!JSON.stringify(result).includes('farm-life-budget'));
+  assert.equal(result.data['dark-study-settings'].state.material, 'clear');
   assert.equal(result.data['dark-study-settings'].state.defaultScheduleView, 'week');
   assert.equal(result.data['dark-study-settings'].state.showWeekend, false);
   assert.equal(result.data['dark-study-settings'].state.compactWeekGrid, true);
   assert.equal(result.data['dark-study-settings'].state.backgroundDim, 0.35);
+  assert.equal(result.data['dark-study-widget-settings'].state.style, 'porcelain');
+  assert.equal(result.data['dark-study-widget-settings'].state.mode, 'today');
+  assert.equal(result.data['dark-study-widget-settings'].state.ignoredExtra, undefined);
   assert.equal(backup.backupSummary(result).courses, 1);
   assert.deepEqual(backup.parseBackup(JSON.stringify(result)), result);
+  for (const style of ['frosted', 'porcelain', 'tinted']) {
+    for (const mode of ['upcoming', 'today', 'week']) {
+      const variant = structuredClone(result);
+      variant.data['dark-study-widget-settings'].state.style = style;
+      variant.data['dark-study-widget-settings'].state.mode = mode;
+      const parsedVariant = backup.parseBackup(JSON.stringify(variant));
+      assert.equal(parsedVariant.data['dark-study-widget-settings'].state.style, style);
+      assert.equal(parsedVariant.data['dark-study-widget-settings'].state.mode, mode);
+    }
+  }
+  const badWidgetStyle = structuredClone(result);
+  badWidgetStyle.data['dark-study-widget-settings'].state.style = 'glass';
+  assert.throws(() => backup.parseBackup(JSON.stringify(badWidgetStyle)), /小组件质感/);
+  const nullWidgetStyle = structuredClone(result);
+  nullWidgetStyle.data['dark-study-widget-settings'].state.style = null;
+  assert.throws(() => backup.parseBackup(JSON.stringify(nullWidgetStyle)), /小组件质感/);
+  const badWidgetMode = structuredClone(result);
+  badWidgetMode.data['dark-study-widget-settings'].state.mode = 'month';
+  assert.throws(() => backup.parseBackup(JSON.stringify(badWidgetMode)), /小组件模式/);
+  const nullWidgetMode = structuredClone(result);
+  nullWidgetMode.data['dark-study-widget-settings'].state.mode = null;
+  assert.throws(() => backup.parseBackup(JSON.stringify(nullWidgetMode)), /小组件模式/);
+  const legacyWidget = structuredClone(result);
+  delete legacyWidget.data['dark-study-widget-settings'].state.style;
+  delete legacyWidget.data['dark-study-widget-settings'].state.mode;
+  const parsedLegacy = backup.parseBackup(JSON.stringify(legacyWidget));
+  assert.equal('style' in parsedLegacy.data['dark-study-widget-settings'].state, false);
+  assert.equal('mode' in parsedLegacy.data['dark-study-widget-settings'].state, false);
+  const legacyPlan = new Map(backup.buildRestorePlan(parsedLegacy, [], 'replace'));
+  assert.equal(JSON.parse(legacyPlan.get('dark-study-widget-settings')).state.shape, 'large');
   const badDim = structuredClone(result); badDim.data['dark-study-settings'].state.backgroundDim = 2;
   assert.throws(() => backup.parseBackup(JSON.stringify(badDim)), /遮罩/);
   const badView = structuredClone(result); badView.data['dark-study-settings'].state.defaultScheduleView = 'month';
   assert.throws(() => backup.parseBackup(JSON.stringify(badView)), /视图/);
-  const current = [['dark-study-settings', JSON.stringify({ version: 0, state: { apiKey: 'current-only-test', backgroundImage: 'file:///current.png' } })]];
+  const frostedMaterial = structuredClone(result); frostedMaterial.data['dark-study-settings'].state.material = 'frosted';
+  assert.equal(backup.parseBackup(JSON.stringify(frostedMaterial)).data['dark-study-settings'].state.material, 'frosted');
+  const badMaterial = structuredClone(result); badMaterial.data['dark-study-settings'].state.material = 'acrylic';
+  assert.throws(() => backup.parseBackup(JSON.stringify(badMaterial)), /材质/);
+  const currentWidget = { version: 0, state: { shape: 'square', theme: 'light', accent: 'blue', style: 'tinted', mode: 'upcoming', count: 2 } };
+  const current = [
+    ['dark-study-settings', JSON.stringify({ version: 0, state: { apiKey: 'current-only-test', backgroundImage: 'file:///current.png' } })],
+    ['dark-study-widget-settings', JSON.stringify(currentWidget)],
+  ];
   const replacement = new Map(backup.buildRestorePlan(result, current, 'replace'));
   assert.equal(JSON.parse(replacement.get('dark-study-settings')).state.apiKey, 'current-only-test');
   assert.equal(JSON.parse(replacement.get('dark-study-settings')).state.backgroundImage, 'file:///current.png');
+  assert.equal(JSON.parse(replacement.get('dark-study-widget-settings')).state.style, 'porcelain');
+  assert.equal(JSON.parse(replacement.get('dark-study-widget-settings')).state.mode, 'today');
   const existingMain = structuredClone(main); existingMain.state.schedules[0].name = '当前版本';
   const merged = new Map(backup.buildRestorePlan(result, [['dark-study-storage', JSON.stringify(existingMain)]], 'merge'));
   assert.equal(JSON.parse(merged.get('dark-study-storage')).state.schedules[0].name, '当前版本');
   assert.equal(JSON.parse(merged.get('dark-study-storage')).state.schedules.length, 1);
+  assert.equal(JSON.parse(merged.get('dark-study-widget-settings')).state.style, 'porcelain');
+  assert.equal(JSON.parse(merged.get('dark-study-widget-settings')).state.mode, 'today');
+  const mergedWithExistingWidget = new Map(backup.buildRestorePlan(result, [['dark-study-storage', JSON.stringify(existingMain)], ['dark-study-widget-settings', JSON.stringify(currentWidget)]], 'merge'));
+  assert.equal(JSON.parse(mergedWithExistingWidget.get('dark-study-widget-settings')).state.style, 'tinted');
+  assert.equal(JSON.parse(mergedWithExistingWidget.get('dark-study-widget-settings')).state.mode, 'upcoming');
   assert.throws(() => backup.parseBackup('{'), /JSON/);
   assert.throws(() => backup.parseBackup(JSON.stringify({ ...result, version: 99 })), /版本/);
   assert.throws(() => backup.parseBackup(JSON.stringify({ ...result, data: { 'unrelated': {} } })), /模块/);
@@ -63,18 +129,36 @@ async function run() {
   disk.clear();
   disk.set('dark-study-storage', JSON.stringify(main));
   disk.set('dark-study-settings', JSON.stringify({ version: 0, state: { apiKey: 'integration-only', appearance: 'light' } }));
-  const realLoad = require('./load-project-ts.cjs')({ '@react-native-async-storage/async-storage': storage, 'react-native': { Platform: { OS: 'android' } } });
+  disk.set('dark-study-widget-settings', JSON.stringify({ version: 0, state: { shape: 'rectangle', theme: 'system', accent: 'default', style: 'frosted', mode: 'upcoming', count: 3 } }));
+  const secureStore = new Map();
+  const realLoad = require('./load-project-ts.cjs')({
+    '@react-native-async-storage/async-storage': storage,
+    'react-native': { Platform: { OS: 'android' } },
+    'expo-secure-store': {
+      WHEN_UNLOCKED_THIS_DEVICE_ONLY: 1,
+      getItemAsync: async key => secureStore.get(key) ?? null,
+      setItemAsync: async (key, value) => { secureStore.set(key, value); },
+      deleteItemAsync: async key => { secureStore.delete(key); },
+    },
+  });
   const service = realLoad('src/services/backupStorage.ts');
   await service.hydrateBackupStores();
   const imported = structuredClone(result); imported.data['dark-study-storage'].state.schedules[0].name = '恢复后的课表';
   await service.restoreBackup(imported, 'replace');
   assert.equal(realLoad('src/store/useStore.ts').useStore.getState().schedules[0].name, '恢复后的课表');
   assert.equal(realLoad('src/store/useSettings.ts').useSettings.getState().apiKey, 'integration-only');
+  assert.equal(realLoad('src/store/useWidgetSettings.ts').useWidgetSettings.getState().style, 'porcelain');
+  assert.equal(realLoad('src/store/useWidgetSettings.ts').useWidgetSettings.getState().mode, 'today');
   assert.equal(realLoad('src/store/useDataSession.ts').useDataSession.getState().revision, 1);
   assert(!disk.has('dark-study-restore-journal'));
   assert.equal(backup.backupSummary(await service.collectBackup()).courses, 1);
   realLoad('src/store/useSettings.ts').useSettings.getState().setRenderQuality('beautiful');
-  assert.equal((await service.collectBackup()).data['dark-study-settings'].state.renderQuality, 'beautiful', 'export includes a preference changed immediately before exporting');
-  console.log('PASS: portable backup, preview counts, key/usage exclusions, merge identity, replacement preferences, malformed/future data rejection, partial-write rollback and crash recovery');
+  realLoad('src/store/useWidgetSettings.ts').useWidgetSettings.getState().setStyle('tinted');
+  realLoad('src/store/useWidgetSettings.ts').useWidgetSettings.getState().setMode('upcoming');
+  const collected = await service.collectBackup();
+  assert.equal(collected.data['dark-study-settings'].state.renderQuality, 'beautiful', 'export includes a preference changed immediately before exporting');
+  assert.equal(collected.data['dark-study-widget-settings'].state.style, 'tinted', 'export includes widget style changed immediately before exporting');
+  assert.equal(collected.data['dark-study-widget-settings'].state.mode, 'upcoming', 'export includes widget mode changed immediately before exporting');
+  console.log('PASS: portable backup, widget style/mode backup & restore, preview counts, key/usage exclusions, merge identity, replacement preferences, malformed/future data rejection, partial-write rollback and crash recovery');
 }
 run().catch(error => { console.error(error); process.exitCode = 1; });

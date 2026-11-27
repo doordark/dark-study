@@ -1,5 +1,12 @@
 import type { GradeRecord, Schedule } from '@/types';
+import type { PendingFarmReward } from './studyProgress';
 import { mondayOf, parseIsoDate } from './time';
+
+export interface FarmStudyProgressInput {
+  todayFocusMinutes?: number;
+  attendanceDangerCourses?: readonly string[];
+  pendingRewardCount?: number;
+}
 
 export interface FarmStudyContext {
   enabled: boolean;
@@ -9,6 +16,9 @@ export interface FarmStudyContext {
   workload: 'free' | 'light' | 'busy' | 'packed';
   lateNight: boolean;
   recentGradesCount: number;
+  todayFocusMinutes?: number;
+  attendanceDangerCount?: number;
+  pendingRewardCount?: number;
   /** 仅包含宏观、无敏感明细的关怀摘要，供农场对话与日报温柔联动 */
   brief: string;
   gazetteNote: string;
@@ -16,13 +26,14 @@ export interface FarmStudyContext {
 
 /**
  * 纯本地计算当前学习节奏宏观摘要（绝不包含具体成绩分数或隐私明细），
- * 让 doordoor 农场的家人能温柔感知你今天是不是满课、周末休息或深夜还在学习。
+ * 让 doordoor 农场的家人能温柔感知你今天是不是满课、周末休息、专注学习、考勤红线或深夜还在学习。
  */
 export function summarizeStudyDay(
   schedule: Schedule | undefined,
   grades: readonly GradeRecord[] | undefined,
   at: number,
   enabled = true,
+  progress?: FarmStudyProgressInput,
 ): FarmStudyContext {
   const date = new Date(at);
   const hour = date.getHours();
@@ -84,6 +95,35 @@ export function summarizeStudyDay(
       : '难得的无课日：院子里的风正好，适合和家人们开场家庭群聊。';
   }
 
+  const focusMin =
+    typeof progress?.todayFocusMinutes === 'number' &&
+    Number.isFinite(progress.todayFocusMinutes) &&
+    progress.todayFocusMinutes > 0
+      ? Math.round(progress.todayFocusMinutes)
+      : 0;
+  const dangerCourses = Array.isArray(progress?.attendanceDangerCourses)
+    ? progress.attendanceDangerCourses.map(name => name.trim()).filter(Boolean)
+    : [];
+  const pendingRewardCount =
+    typeof progress?.pendingRewardCount === 'number' &&
+    Number.isFinite(progress.pendingRewardCount) &&
+    progress.pendingRewardCount > 0
+      ? Math.floor(progress.pendingRewardCount)
+      : 0;
+
+  if (focusMin > 0) {
+    brief += ` 客人今天已经专注学习了 ${focusMin} 分钟，可以顺口夸一句好认真，提醒劳逸结合。`;
+    gazetteNote += ` 专注小喜报：今日已专注学习 ${focusMin} 分钟，院子里的作物也跟着精神了不少！`;
+  }
+  if (dangerCourses.length > 0) {
+    brief += ` 另外有 ${dangerCourses.length} 门课考勤接近红线，可以温柔提醒一句别漏签，切忌说教。`;
+    gazetteNote += ` 考勤小提醒：有 ${dangerCourses.length} 门课快触及缺勤红线，记得按时去上课呀。`;
+  }
+  if (pendingRewardCount > 0) {
+    brief += ` 农场奖励箱还有 ${pendingRewardCount} 份学习奖励待查收。`;
+    gazetteNote += ` 奖励箱里有 ${pendingRewardCount} 份学习奖励等你领取！`;
+  }
+
   return {
     enabled: true,
     weekday,
@@ -92,7 +132,89 @@ export function summarizeStudyDay(
     workload,
     lateNight,
     recentGradesCount,
+    ...(progress !== undefined
+      ? {
+          todayFocusMinutes: focusMin,
+          attendanceDangerCount: dangerCourses.length,
+          pendingRewardCount,
+        }
+      : {}),
     brief,
     gazetteNote,
+  };
+}
+
+export interface PendingRewardsSettlement {
+  nextCoins: number;
+  totalCoins: number;
+  totalGrowthMin: number;
+  summary: string;
+}
+
+/**
+ * 将学习闭环产生的待结算奖励（番茄专注、完成作业/复习/考试）结算到星露坡金币与生长加速时间。
+ */
+export function applyPendingRewardsToFarmCoins(
+  currentCoins: number,
+  rewards: readonly PendingFarmReward[],
+): PendingRewardsSettlement {
+  const safeCurrent = Number.isFinite(currentCoins)
+    ? Math.max(0, Math.floor(currentCoins))
+    : 0;
+  if (!Array.isArray(rewards) || !rewards.length) {
+    return {
+      nextCoins: safeCurrent,
+      totalCoins: 0,
+      totalGrowthMin: 0,
+      summary: '',
+    };
+  }
+  let totalCoins = 0;
+  let totalGrowthMin = 0;
+  const titles: string[] = [];
+  for (const reward of rewards) {
+    if (!reward) continue;
+    const coins =
+      typeof reward.coins === 'number' && Number.isFinite(reward.coins)
+        ? Math.max(0, Math.floor(reward.coins))
+        : 0;
+    const growth =
+      typeof reward.growthBoostMin === 'number' &&
+      Number.isFinite(reward.growthBoostMin)
+        ? Math.max(0, Math.floor(reward.growthBoostMin))
+        : 0;
+    if (coins <= 0 && growth <= 0) continue;
+    totalCoins += coins;
+    totalGrowthMin += growth;
+    if (typeof reward.title === 'string' && reward.title.trim()) {
+      titles.push(reward.title.trim());
+    }
+  }
+  if (totalCoins <= 0 && totalGrowthMin <= 0) {
+    return {
+      nextCoins: safeCurrent,
+      totalCoins: 0,
+      totalGrowthMin: 0,
+      summary: '',
+    };
+  }
+  const nextCoins = safeCurrent + totalCoins;
+  const growthPart =
+    totalGrowthMin > 0 ? `，作物加速 ${totalGrowthMin} 分钟` : '';
+  const detail =
+    titles.length === 1
+      ? `（${titles[0]}）`
+      : titles.length > 1
+        ? `（${titles[0]} 等 ${titles.length} 项）`
+        : '';
+  const summary =
+    titles.length > 1
+      ? `收到 ${titles.length} 份学习奖励：+${totalCoins} 金币${growthPart}${detail}`
+      : `收到学习奖励：+${totalCoins} 金币${growthPart}${detail}`;
+  return {
+    nextCoins,
+    totalCoins,
+    totalGrowthMin,
+    summary,
   };
 }

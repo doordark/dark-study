@@ -4,7 +4,11 @@ const path = require('node:path');
 const load = require('./load-project-ts.cjs')();
 
 const { BACKGROUND_PRESETS } = load('src/constants/backgrounds.ts');
-const { GLASS_DEPTH, resolveGlassOpticalProfile } = load('src/constants/glassThemes.ts');
+const {
+  GLASS_DEPTH,
+  resolveFrostedOpticalProfile,
+  resolveGlassOpticalProfile,
+} = load('src/constants/glassThemes.ts');
 
 const root = path.join(__dirname, '..');
 const tints = Object.keys(BACKGROUND_PRESETS);
@@ -38,6 +42,21 @@ for (const tint of tints) {
     const wallpaper = resolveGlassOpticalProfile(tint, isDark, true);
     assert(wallpaper.tintAlpha.surface <= base.tintAlpha.surface, `${tint} wallpaper mode should stay more transparent`);
     assert(wallpaper.saturation >= base.saturation, `${tint} wallpaper mode should keep or boost vibrancy`);
+
+    // Verify frosted ("柔雾玻璃") optical profile across all 6 tints
+    const frostedBase = resolveFrostedOpticalProfile(tint, isDark, false);
+    const frostedWallpaper = resolveFrostedOpticalProfile(tint, isDark, true);
+    assert.equal(frostedBase.dispersion, 0, `${tint} frosted must disable chromatic dispersion`);
+    assert(
+      frostedBase.tintAlpha.surface >= 0.38 && frostedBase.tintAlpha.surface <= 0.48,
+      `${tint} frosted surface tintAlpha should be creamy mist (0.38..0.48), got ${frostedBase.tintAlpha.surface}`,
+    );
+    assert(
+      frostedBase.tintAlpha.floating >= 0.36 && frostedBase.tintAlpha.floating <= 0.48,
+      `${tint} frosted floating tintAlpha should be creamy mist (0.36..0.48), got ${frostedBase.tintAlpha.floating}`,
+    );
+    assert(frostedBase.tintAlpha.sheet > frostedBase.tintAlpha.surface, `${tint} frosted sheet must be denser than surface`);
+    assert(frostedWallpaper.tintAlpha.surface <= frostedBase.tintAlpha.surface, `${tint} frosted wallpaper must not increase veil`);
   }
 }
 
@@ -46,11 +65,21 @@ assert.deepEqual(
   resolveGlassOpticalProfile('unknown-theme', false, false),
   resolveGlassOpticalProfile('sky', false, false),
 );
+assert.deepEqual(
+  resolveFrostedOpticalProfile('unknown-theme', false, false),
+  resolveFrostedOpticalProfile('sky', false, false),
+);
 
 // Verify optical depth hierarchy
 assert(GLASS_DEPTH.floating.refraction > GLASS_DEPTH.surface.refraction);
 assert(GLASS_DEPTH.surface.refraction > GLASS_DEPTH.sheet.refraction);
 assert(GLASS_DEPTH.sheet.blurRadius <= 25 && GLASS_DEPTH.surface.blurRadius >= 10);
+assert(
+  GLASS_DEPTH.surface.frostedBlurRadius >= 20 &&
+    GLASS_DEPTH.floating.frostedBlurRadius >= 20 &&
+    GLASS_DEPTH.sheet.frostedBlurRadius <= 24,
+  'frostedBlurRadius must stay within soft 20..24 range',
+);
 
 // Verify native Android module manifest & Kotlin AGSL uniforms stay in sync
 const moduleRoot = path.join(root, 'modules', 'liquid-glass');
@@ -84,6 +113,58 @@ for (const u of requiredUniforms) {
 assert(ktSource.includes('Color.TRANSPARENT'), 'BlurView must use transparent overlay to avoid muddy gray veil');
 assert(ktSource.includes('createRuntimeShaderEffect'), 'API 33+ must use RuntimeShader RenderEffect');
 assert(ktSource.includes('createColorFilterEffect'), 'API 31-32 fallback must use ColorMatrix vibrancy RenderEffect');
+assert(ktSource.includes('allowTargetLookup'), 'LiquidGlassModule must expose allowTargetLookup prop for native self-healing');
+assert(ktSource.includes('findNearestBlurTarget'), 'LiquidGlassModule must support native ancestor-sibling BlurTarget discovery');
+assert(ktSource.includes('OnLayoutChangeListener'), 'LiquidGlassModule must observe target layout readiness');
+assert(ktSource.includes('removeOnLayoutChangeListener'), 'LiquidGlassModule must clean up layout listener on detach');
+assert(ktSource.includes('candidate.rootView === this.rootView'), 'LiquidGlassModule must isolate BlurTarget lookup to the same Android window');
 assert(!fs.existsSync(path.join(root, 'modules', 'glass-refraction')), 'obsolete glass-refraction directory must be removed');
 
-console.log('PASS: liquid glass optical profiles, theme adaptation, and Android AGSL native module contract verified');
+// Verify all 4 card materials ("flat", "glass", "frosted", "clear") across settings, backup, backdrop, container, preview, and UI
+const settingsSource = fs.readFileSync(path.join(root, 'src', 'store', 'useSettings.ts'), 'utf8');
+assert(settingsSource.includes('"clear"') && settingsSource.includes('"frosted"'), 'useSettings.ts must include clear & frosted card materials');
+const memStorage = {
+  getItem: async () => null,
+  setItem: async () => {},
+  removeItem: async () => {},
+  multiGet: async keys => keys.map(k => [k, null]),
+  multiSet: async () => {},
+  multiRemove: async () => {},
+};
+const settingsLoad = require('./load-project-ts.cjs')({
+  '@react-native-async-storage/async-storage': memStorage,
+  'react-native': { Platform: { OS: 'android' } },
+});
+const { resolveMaterial } = settingsLoad('src/store/useSettings.ts');
+assert.equal(resolveMaterial('clear'), 'clear');
+assert.equal(resolveMaterial('frosted'), 'frosted');
+assert.equal(resolveMaterial('glass'), 'glass');
+assert.equal(resolveMaterial('flat'), 'flat');
+assert.equal(resolveMaterial('invalid'), 'flat');
+
+const backupSource = fs.readFileSync(path.join(root, 'src', 'utils', 'backup.ts'), 'utf8');
+assert(backupSource.includes("'clear'") && backupSource.includes("'frosted'"), 'backup.ts must validate clear & frosted materials');
+
+const settingsScreenSource = fs.readFileSync(path.join(root, 'src', 'screens', 'SettingsScreen.tsx'), 'utf8');
+assert(settingsScreenSource.includes('key: "clear"') && settingsScreenSource.includes('label: "清透"'), 'SettingsScreen must offer the 清透 (clear) material option');
+assert(settingsScreenSource.includes('key: "frosted"') && settingsScreenSource.includes('label: "柔雾玻璃"'), 'SettingsScreen must offer the 柔雾玻璃 (frosted) material option');
+assert(settingsScreenSource.includes('flex-wrap') && settingsScreenSource.includes('48%'), 'SettingsScreen must arrange 4 materials in a 2x2 grid');
+
+const backdropSource = fs.readFileSync(path.join(root, 'src', 'components', 'Backdrop.tsx'), 'utf8');
+assert(
+  backdropSource.includes('material === "frosted"') &&
+    backdropSource.includes('material === "clear"') &&
+    backdropSource.includes('glass || frosted') &&
+    backdropSource.includes('glass || frosted || clear'),
+  'Backdrop must enable blur for glass/frosted and rich backdrop for glass/frosted/clear',
+);
+
+const glassContainerSource = fs.readFileSync(path.join(root, 'src', 'components', 'GlassContainer.tsx'), 'utf8');
+assert(glassContainerSource.includes('allowTargetLookup={!!glassTarget}'), 'GlassContainer must forward allowTargetLookup to native view');
+assert(glassContainerSource.includes('effectiveMaterial === "clear"'), 'GlassContainer must handle clear material without blur');
+assert(glassContainerSource.includes('effectiveMaterial === "frosted"') && glassContainerSource.includes('resolveFrostedOpticalProfile'), 'GlassContainer must handle frosted material with soft blur and creamy sheen');
+
+const previewSource = fs.readFileSync(path.join(root, 'src', 'components', 'GlassMaterialPreview.tsx'), 'utf8');
+assert(previewSource.includes('material === "frosted"'), 'GlassMaterialPreview must differentiate frosted preview');
+
+console.log('PASS: liquid glass & frosted optical profiles, 4-material pipeline, theme adaptation, and Android AGSL native module contract verified');

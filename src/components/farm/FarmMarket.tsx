@@ -37,12 +37,6 @@ const VENDOR_HOLDS = [1100, 180, 100, 160, 240, 220, 250, 400];
 const BAG_SLOT_SKIN = require('../../../assets/images/farm-bag-slots-v6.png');
 const GEAR = require('../../../assets/images/farm-market-gear.png');
 const positions = [{ x: 52, y: 127 }, { x: 151, y: 127 }, { x: 46, y: 239 }, { x: 155, y: 239 }] as const;
-const VENDOR_TAGLINES: Record<Vendor, string> = {
-  smith: '炉火不熄的老铁匠，修锄头、升级水壶都找他',
-  farmer: '种了一辈子地的禾姨，收菜、出种子、开工坊',
-  chemist: '瓶瓶罐罐里装着驱虫水与生长剂',
-  traveler: '背着货箱走南闯北，总有稀奇小玩意',
-};
 const VENDOR_TOPICS: Record<Vendor, readonly string[]> = {
   smith: ['我的工具该升级了吗？', '能便宜点吗？'],
   farmer: ['今天收什么菜？', '有什么好种子推荐？', '能便宜点吗？'],
@@ -255,10 +249,9 @@ export function FarmMarket({ visible, onClose, at, paused = false, initialOrders
     </ScrollView>
     <FarmNPCSheet visible={Boolean(vendor && memory)} onClose={back}>
       <FarmNPCHeader
-        portrait={vendor ? <AtlasSprite source={PEOPLE} columns={8} rows={4} column={0} row={VENDORS.indexOf(vendor)} width={36} height={48} /> : null}
+        portrait={vendor ? <AtlasSprite source={PEOPLE} columns={8} rows={4} column={0} row={VENDORS.indexOf(vendor)} width={28} height={37} /> : null}
         name={vendor ? VENDOR_NAMES[vendor] : ''}
         meta={`${memory?.mood ?? '平静'} · 好感 ${memory?.affinity ?? 0}/100`}
-        subtitle={vendor ? VENDOR_TAGLINES[vendor] : undefined}
         badges={liveWeather === 'rain' ? [{ label: '雨中守摊', tone: 'rain' }] : liveRainbow ? [{ label: '摊前看彩虹', tone: 'rainbow' }] : []}
         onClose={back}
       />
