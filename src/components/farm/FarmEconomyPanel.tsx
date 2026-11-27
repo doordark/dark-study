@@ -72,10 +72,10 @@ export function FarmEconomyPanel({ mode, economy, coins, level, season, at, onSe
           <Text style={{ color: muted, fontSize: 11.5, marginTop: 2 }}>浇水后湿润 {wetDuration(current.irrigation) / 60000} 分钟（每级 +15 分钟）</Text>
         </View>
       </View>
-      {current.irrigation < 3 ? <Button label={`改良 · Lv.${current.irrigation + 2} · ${irrigationCost(current.irrigation)} 金币`} disabled={level < current.irrigation + 2 || coins < irrigationCost(current.irrigation)} onPress={onIrrigation} /> : <Text style={{ color: '#926B35' }}>保水改良已完成</Text>}
+      {current.irrigation < 3 ? <Button label={`改良 · Lv.${current.irrigation + 2} · ${irrigationCost(current.irrigation)} dark币`} disabled={level < current.irrigation + 2 || coins < irrigationCost(current.irrigation)} onPress={onIrrigation} /> : <Text style={{ color: '#926B35' }}>保水改良已完成</Text>}
       <Text style={{ color: ink, fontWeight: '800', marginTop: 4 }}>农场厨房 · 手作料理</Text>
       <Text style={{ color: muted, fontSize: 12 }}>投入食材和加工费，制成料理可直接出售，也可在聊天里现做送给家人。</Text>
-      {!current.kitchen ? <Button label="建造厨房 · Lv.3 · 280 金币" disabled={level < 3 || coins < 280} onPress={onKitchen} /> : RECIPES.map(recipe => {
+      {!current.kitchen ? <Button label="建造厨房 · Lv.3 · 280 dark币" disabled={level < 3 || coins < 280} onPress={onKitchen} /> : RECIPES.map(recipe => {
         const canCraft = Boolean(craft(current.inventory, recipe, coins));
         return <View key={recipe.id} style={{ gap: 8, borderTopWidth: 1, borderColor: '#DECBA9', paddingTop: 10 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>

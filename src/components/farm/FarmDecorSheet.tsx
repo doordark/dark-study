@@ -35,7 +35,7 @@ export function FarmDecorSheet({
             </FarmText>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 }}>
               <FarmUiIcon name="coin" size={13} />
-              <FarmText style={{ color: '#8A6329', fontSize: 11, fontWeight: '700' }}>{coins} 金币</FarmText>
+              <FarmText style={{ color: '#8A6329', fontSize: 11, fontWeight: '700' }}>{coins} dark币</FarmText>
               <FarmText style={{ color: '#857056', fontSize: 10.5 }}>· 已摆放 {decor.placed.length}/{FARM_DECORS.length} 件</FarmText>
             </View>
           </View>
@@ -81,7 +81,7 @@ export function FarmDecorSheet({
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                     <FarmUiIcon name="coin" size={14} />
                     <FarmText style={{ color: '#8A6329', fontSize: 12, fontWeight: '800' }}>
-                      {owned ? (placed ? '已摆放在院子里' : '已拥有（收纳中）') : `${item.price} 金币`}
+                      {owned ? (placed ? '已摆放在院子里' : '已拥有（收纳中）') : `${item.price} dark币`}
                     </FarmText>
                   </View>
                   {owned ? (
@@ -93,7 +93,7 @@ export function FarmDecorSheet({
                     />
                   ) : (
                     <FarmButton
-                      label={canAfford ? `购买并摆放` : `金币不足`}
+                      label={canAfford ? `购买并摆放` : `dark币不足`}
                       tone="sage"
                       disabled={!canAfford}
                       onPress={() => onBuy(item.id)}

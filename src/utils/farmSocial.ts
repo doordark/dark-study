@@ -80,8 +80,8 @@ const DAILY_GIFT_GAIN_CAP = 2;
 function pickReturnGift(who: ResidentId, at: number): GiftReward {
   const roll = Math.abs(Math.floor(at / 1000)) % 3;
   if (who === 'gu') return { kind: 'seed', crop: 'berry', amount: 1, label: '1 粒蓝莓种子' };
-  if (who === 'door') return { kind: 'coins', amount: 16, label: '16 金币零花' };
-  if (who === 'weigang') return roll === 0 ? { kind: 'compost', amount: 1, label: '1 份水草有机肥' } : { kind: 'coins', amount: 14, label: '14 金币' };
+  if (who === 'door') return { kind: 'coins', amount: 16, label: '16 dark币零花' };
+  if (who === 'weigang') return roll === 0 ? { kind: 'compost', amount: 1, label: '1 份水草有机肥' } : { kind: 'coins', amount: 14, label: '14 dark币' };
   if (who === 'chicken') return { kind: 'compost', amount: 1, label: '1 份捉虫有机肥' };
   if (who === 'yujie') return { kind: 'seed', crop: 'tomato', amount: 1, label: '1 粒番茄种子' };
   return { kind: 'seed', crop: 'corn', amount: 1, label: '1 粒玉米种子' };

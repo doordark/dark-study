@@ -1161,8 +1161,8 @@ export function FarmScreen() {
       setCoins((c) => c + 10);
       const msg =
         actor === "weigang"
-          ? "在池边守漂钓上一条肥鱼，换了 10 金币放进农场钱匣。"
-          : "在池塘边碰运气钓上一条小鱼，换了 10 金币！";
+          ? "在池边守漂钓上一条肥鱼，换了 10 dark币放进农场钱匣。"
+          : "在池塘边碰运气钓上一条小鱼，换了 10 dark币！";
       recordHelperDeed(msg);
       return msg;
     }
@@ -1365,7 +1365,7 @@ export function FarmScreen() {
     toastTimer.current = setTimeout(() => setToast(null), durationMs);
   }, []);
 
-  // 自动承接学科专注与任务完成存入的学习闭环奖励（金币 + 作物生长加速）
+  // 自动承接学科专注与任务完成存入的学习闭环奖励（dark币 + 作物生长加速）
   useEffect(() => {
     if (!loaded || loadFailed || !focused || pendingStudyRewardCount <= 0) return;
     const timer = setTimeout(() => {
@@ -1381,14 +1381,14 @@ export function FarmScreen() {
       }
       playSfx("farm_level_up", { volume: 0.74 });
       showToast(
-        settlement.summary || `收到学习奖励：+${settlement.totalCoins} 金币`,
+        settlement.summary || `收到学习奖励：+${settlement.totalCoins} dark币`,
         3200,
       );
     }, 120);
     return () => clearTimeout(timer);
   }, [focused, loadFailed, loaded, pendingStudyRewardCount, showToast]);
 
-  // 夜空点亮星象后来到星露坡：承接一次星露祝福，润湿最多 4 块干土并写进小镇传闻
+  // 夜空点亮星象后来到doordoor农场：承接一次星露祝福，润湿最多 4 块干土并写进小镇传闻
   useEffect(() => {
     if (!loaded || loadFailed || starDewCheckedRef.current) return;
     starDewCheckedRef.current = true;
@@ -1424,7 +1424,7 @@ export function FarmScreen() {
         showToast(
           wateredCount > 0
             ? `✦ 「${res.blessing.constellationName}」星露降临，替你润湿了 ${wateredCount} 块干土`
-            : `✦ 「${res.blessing.constellationName}」的星光正轻照星露坡`,
+            : `✦ 「${res.blessing.constellationName}」的星光正轻照doordoor农场`,
         );
       })
       .catch(() => {});
@@ -1692,7 +1692,7 @@ export function FarmScreen() {
       inventory: { ...e.inventory, [kind]: { normal: 0, premium: 0 } },
     }));
     playSfx("farm_coin", { volume: 0.72 });
-    showToast(`出售${CROP_ART[kind].label} · +${gain} 金币`);
+    showToast(`出售${CROP_ART[kind].label} · +${gain} dark币`);
   };
   const deliverOrder = (kind: CropKind) => {
     if (!beginVendorAction("farmer") || level < CROP_META[kind].level) return;
@@ -1711,7 +1711,7 @@ export function FarmScreen() {
     showToast(
       "订单完成 · +" +
         result.reward +
-        " 金币" +
+        " dark币" +
         (rewardFits ? "，+1 肥料" : " · 背包没空位放肥料"),
     );
   };
@@ -1739,7 +1739,7 @@ export function FarmScreen() {
     setCoins((c) => c + recipe.sell - recipe.fee);
     playSfx("farm_cook", { volume: 0.74 });
     showToast(
-      `${recipe.label}已售出 · 扣费后 +${recipe.sell - recipe.fee} 金币`,
+      `${recipe.label}已售出 · 扣费后 +${recipe.sell - recipe.fee} dark币`,
     );
   };
   const buildKitchen = () => {
@@ -2008,7 +2008,7 @@ export function FarmScreen() {
     showToast(outcome.summary);
   };
 
-  /** 抓虫小游戏结算：游戏时长也算进农场时间，作物自然长得更快（不再直接发金币，钱靠种地） */
+  /** 抓虫小游戏结算：游戏时长也算进农场时间，作物自然长得更快（不再直接发dark币，钱靠种地） */
   const finishBugGame = (score: number, jumpMs: number) => {
     if (settledGame.current === gameToken) return;
     settledGame.current = gameToken;
@@ -2466,7 +2466,7 @@ export function FarmScreen() {
     if (!loaded || loadFailed) return;
     const nextInventory = craft(economy.inventory, recipe, coins);
     if (!nextInventory) {
-      showToast(`材料或金币不足，暂无法现做${recipe.label}`);
+      showToast(`材料或dark币不足，暂无法现做${recipe.label}`);
       return;
     }
     setCoins((c) => Math.max(0, c - recipe.fee));
@@ -2512,7 +2512,7 @@ export function FarmScreen() {
     const thankLine =
       wish.resident === "chicken"
         ? `咕咕咕！太好啦，收到 ${wish.quantity} 份${giftLabel(wish.crop)}，坤坤把小奖励偷偷塞给你！`
-        : `哇，真的送来 ${wish.quantity} 份${giftLabel(wish.crop)}啦！正好派上大用场，这 ${wish.rewardCoins} 金币和有机肥你一定要收下！`;
+        : `哇，真的送来 ${wish.quantity} 份${giftLabel(wish.crop)}啦！正好派上大用场，这 ${wish.rewardCoins} dark币和有机肥你一定要收下！`;
     setThreads((prev) => ({
       ...prev,
       [wish.resident]: [
@@ -2529,7 +2529,7 @@ export function FarmScreen() {
             recipientName: RESIDENTS[wish.resident].name,
             tier: "loved",
             affinityDelta: 8,
-            rewardLabel: `${wish.rewardCoins} 金币 · 1 有机肥`,
+            rewardLabel: `${wish.rewardCoins} dark币 · 1 有机肥`,
             inventoryConsumed: true,
           },
         },
@@ -2564,7 +2564,7 @@ export function FarmScreen() {
       };
     });
     showToast(
-      `实现${RESIDENTS[wish.resident].name}的心愿！+${wish.rewardCoins} 金币 · +1 有机肥 · +8 好感`,
+      `实现${RESIDENTS[wish.resident].name}的心愿！+${wish.rewardCoins} dark币 · +1 有机肥 · +8 好感`,
     );
   }
 
@@ -2586,7 +2586,7 @@ export function FarmScreen() {
     setTimeShift((s) => s + res.growthBoostMs);
     setTown((prev) => ({ ...prev, focus: res.nextStats }));
     showToast(
-      `伴读完成！+${res.rewardCoins} 金币${res.rewardCompost ? " · +1 有机肥" : ""} · 作物加速生长`,
+      `伴读完成！+${res.rewardCoins} dark币${res.rewardCompost ? " · +1 有机肥" : ""} · 作物加速生长`,
     );
     return res.note;
   }
@@ -2596,7 +2596,7 @@ export function FarmScreen() {
     if (recipe) {
       const nextInv = craft(economy.inventory, recipe, coins);
       if (!nextInv) {
-        showToast(`材料或金币不足，暂无法现做${recipe.label}`);
+        showToast(`材料或dark币不足，暂无法现做${recipe.label}`);
         return null;
       }
       setCoins((c) => Math.max(0, c - recipe.fee));
@@ -2629,7 +2629,7 @@ export function FarmScreen() {
     setTown((prev) => ({ ...prev, fishing: nextBook }));
     if (outcome.kind === "bottle") {
       setCoins((c) => c + outcome.bottle.bonusCoins);
-      showToast(`捞到漂流瓶「${outcome.bottle.title}」· +${outcome.bottle.bonusCoins} 金币`);
+      showToast(`捞到漂流瓶「${outcome.bottle.title}」· +${outcome.bottle.bonusCoins} dark币`);
     } else {
       if (outcome.luckyBonus) {
         setMemories((prev) => ({
@@ -2649,7 +2649,7 @@ export function FarmScreen() {
     if (res.sold <= 0) return;
     setTown((prev) => ({ ...prev, fishing: res.nextBook }));
     setCoins((c) => c + res.earned);
-    showToast(`出售 ${res.sold} 条${FISH_META[fish].label} · +${res.earned} 金币`);
+    showToast(`出售 ${res.sold} 条${FISH_META[fish].label} · +${res.earned} dark币`);
   }
 
   function handleCookFishSoup() {
@@ -2685,7 +2685,7 @@ export function FarmScreen() {
       ].slice(-12),
     }));
     playSfx("farm_cook", { volume: 0.76 });
-    showToast("炖好一锅鲜鱼豆腐汤！+64 金币 · 全员好感 +1");
+    showToast("炖好一锅鲜鱼豆腐汤！+64 dark币 · 全员好感 +1");
   }
 
   function handleClaimStoryChapter(who: ResidentId) {
@@ -2706,7 +2706,7 @@ export function FarmScreen() {
     }
     playSfx("farm_level_up", { volume: 0.74 });
     showToast(
-      `解锁${RESIDENTS[who].name}第 ${res.chapter.act} 幕「${res.chapter.title}」· +${res.chapter.rewardCoins} 金币`,
+      `解锁${RESIDENTS[who].name}第 ${res.chapter.act} 幕「${res.chapter.title}」· +${res.chapter.rewardCoins} dark币`,
     );
   }
 
@@ -2714,7 +2714,7 @@ export function FarmScreen() {
     if (!loaded || loadFailed || decorState.owned.includes(id)) return;
     const item = getDecorMeta(id);
     if (coins < item.price) {
-      showToast(`金币不足，需要 ${item.price} 金币`);
+      showToast(`dark币不足，需要 ${item.price} dark币`);
       return;
     }
     const nowAt = eventTime();
@@ -2929,7 +2929,7 @@ export function FarmScreen() {
   function handleVisitorGiveDish(who: NormalVisitorId, recipe: Recipe) {
     const nextInv = craft(economy.inventory, recipe, coins);
     if (!nextInv) {
-      showToast(`材料或金币不足，暂无法现做${recipe.label}`);
+      showToast(`材料或dark币不足，暂无法现做${recipe.label}`);
       return;
     }
     setCoins((c) => Math.max(0, c - recipe.fee));

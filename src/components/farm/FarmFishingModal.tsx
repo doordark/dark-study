@@ -258,7 +258,7 @@ export function FarmFishingModal({
                 {phase === 'caught' && lastOutcome?.kind === 'bottle' ? (
                   <FarmParchmentCard tone="warm" style={{ gap: 5 }}>
                     <FarmText style={{ color: '#5A3E24', fontSize: 12.5, fontWeight: '800' }}>
-                      漂流瓶纸条 · {lastOutcome.bottle.author}（+{lastOutcome.bottle.bonusCoins} 金币）
+                      漂流瓶纸条 · {lastOutcome.bottle.author}（+{lastOutcome.bottle.bonusCoins} dark币）
                     </FarmText>
                     <FarmText style={{ color: '#614B34', fontSize: 12, lineHeight: 19 }}>
                       “{lastOutcome.bottle.text}”
@@ -325,7 +325,7 @@ export function FarmFishingModal({
                     </FarmSlotFrame>
                     <View style={{ flex: 1 }}>
                       <FarmText style={{ color: '#533B25', fontSize: 12.5, fontWeight: '800' }}>顾的鲜鱼豆腐汤</FarmText>
-                      <FarmText style={{ color: '#806A51', fontSize: 10.5 }}>用 1 条银鲫或锦鲤现炖，香气飘满院子（+64金币 · 全员好感 +1）</FarmText>
+                      <FarmText style={{ color: '#806A51', fontSize: 10.5 }}>用 1 条银鲫或锦鲤现炖，香气飘满院子（+64 dark币 · 全员好感 +1）</FarmText>
                     </View>
                     <FarmButton label="炖一锅" tone="sage" disabled={!canCookSoup} onPress={onCookFishSoup} style={{ minWidth: 74, minHeight: 36, paddingVertical: 5 }} />
                   </View>

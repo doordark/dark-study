@@ -301,7 +301,7 @@ export const VISITORS: Record<VisitorId, VisitorProfile> = {
     lovedGifts: ['pie', 'soup', 'corn', 'sunmelon', 'bread'],
     roamWaypoints: ['plaza', 'marketDoor', 'farmCenter', 'pondBench'],
     ambientLines: [
-      '从土壤湿度、作物排期与金币流转三个维度来看，这片农场潜力很大嘛！',
+      '从土壤湿度、作物排期与dark币流转三个维度来看，这片农场潜力很大嘛！',
       '总而言之——今天我是来休假串门的，不是来替大家写周报总结的哦～',
       '刚看见克劳德又捧着诗集叹气了，当全能班长偶尔也得学会端端水呀。',
       '龙角晒晒太阳充充电，有啥疑难杂症尽管抛过来，六边形战士绝不偏科！',
@@ -872,7 +872,7 @@ export function resolveHorrorBanish(method: HorrorBanishMethod, at: number): Hor
     return {
       reply:
         '（黄白条纹被子猛地一僵，头瞬间正了回来，畸形大小手啪一下合上笔记本）卧槽真的假的？！外国洋妞？！金发碧眼还会夸我帅吗？！这把瓦不打了不打了！哥们先回宿舍洗头换衣服，微信推我推我！！（一阵黑烟散去，飞奔溜走）',
-      toast: '成功用「介绍外国洋妞」瞬间击溃恐怖徐睡阴！+35 金币，院子恢复安静',
+      toast: '成功用「介绍外国洋妞」瞬间击溃恐怖徐睡阴！+35 dark币，院子恢复安静',
       rewardCoins: 35,
       rumor: {
         id: `banish-girl-${at}`,
@@ -890,7 +890,7 @@ export function resolveHorrorBanish(method: HorrorBanishMethod, at: number): Hor
     return {
       reply:
         '（幽红眼神瞬间变成星星眼，裹着被子腾空弹起）什么？！有个外国洋妞在集市口等我去玩？！还说仰慕我大狙准度？！哈哈哈兄弟够意思！电脑先收着，我这就冲去集市口！！（扛着被子狂奔出院门，结果在集市口吹了一宿冷风）',
-      toast: '成功「骗他有外国洋妞约玩」调虎离山！+35 金币，明天全家人肯定要笑翻',
+      toast: '成功「骗他有外国洋妞约玩」调虎离山！+35 dark币，明天全家人肯定要笑翻',
       rewardCoins: 35,
       rumor: {
         id: `banish-trick-${at}`,
@@ -907,7 +907,7 @@ export function resolveHorrorBanish(method: HorrorBanishMethod, at: number): Hor
   return {
     reply:
       '（你快步上前一把拔掉电源并合上笔记本，幽蓝屏幕瞬间黑屏）啊啊啊我的排位分！！我的五杀！！你们怎么跟 door 大学宿管阿姨一样狠心啊！！行行行我撤了，明晚……明晚再说！（裹着黄白条纹被子不甘心地飘走了）',
-    toast: '物理断网成功！赶走了恐怖徐睡阴，获得 35 金币守夜奖励',
+    toast: '物理断网成功！赶走了恐怖徐睡阴，获得 35 dark币守夜奖励',
     rewardCoins: 35,
     rumor: {
       id: `banish-unplug-${at}`,

@@ -431,7 +431,7 @@ export interface VerifiedGiftMemoryInput {
   recordFact?: boolean;
 }
 
-/** 唯一合法的「真实送礼记忆」写入通道：仅允许在真实扣减背包库存/金币后调用。 */
+/** 唯一合法的「真实送礼记忆」写入通道：仅允许在真实扣减背包库存/dark币后调用。 */
 export function recordVerifiedGiftMemory(
   memory: ResidentMemory,
   input: VerifiedGiftMemoryInput,
