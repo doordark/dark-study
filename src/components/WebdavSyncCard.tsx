@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
+  Switch,
   Text,
   TextInput,
   View,
@@ -45,6 +46,7 @@ export function WebdavSyncCard() {
   const serverUrl = useWebdavSettings((s) => s.serverUrl);
   const username = useWebdavSettings((s) => s.username);
   const remotePath = useWebdavSettings((s) => s.remotePath);
+  const autoSyncOnLaunch = useWebdavSettings((s) => s.autoSyncOnLaunch);
   const lastSyncAt = useWebdavSettings((s) => s.lastSyncAt);
   const lastSyncMessage = useWebdavSettings((s) => s.lastSyncMessage);
   const hasPassword = useWebdavSettings((s) => s.hasPassword);
@@ -53,6 +55,7 @@ export function WebdavSyncCard() {
   const setServerUrl = useWebdavSettings((s) => s.setServerUrl);
   const setUsername = useWebdavSettings((s) => s.setUsername);
   const setRemotePath = useWebdavSettings((s) => s.setRemotePath);
+  const setAutoSyncOnLaunch = useWebdavSettings((s) => s.setAutoSyncOnLaunch);
   const setLastSync = useWebdavSettings((s) => s.setLastSync);
   const refreshPasswordStatus = useWebdavSettings(
     (s) => s.refreshPasswordStatus,
@@ -431,6 +434,48 @@ export function WebdavSyncCard() {
               className="rounded-xl border border-slate-300/35 bg-white/40 px-3 py-2.5 text-[13px] text-slate-800 dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-100"
             />
           </View>
+
+          {/* 启动时自动同步开关 */}
+          <View
+            style={{ gap: 6 }}
+            className="rounded-2xl border border-slate-300/30 bg-white/25 px-3.5 py-3 dark:border-white/10 dark:bg-white/[0.04]"
+          >
+            <View className="flex-row items-center justify-between gap-3">
+              <View className="flex-1">
+                <Text className="text-[13px] font-bold text-slate-800 dark:text-white">
+                  启动时自动同步
+                </Text>
+                <Text className="mt-0.5 text-[11px] leading-4 text-slate-500 dark:text-slate-400">
+                  打开应用时静默检查云端备份：若有更新将以「合并模式」安全补齐，绝不覆盖本机更新的课表、成绩或进度；若云端为空则自动上传首次备份。
+                </Text>
+              </View>
+              <Switch
+                accessibilityLabel="启动时自动同步"
+                disabled={busy}
+                value={autoSyncOnLaunch}
+                onValueChange={(next) => {
+                  setAutoSyncOnLaunch(next);
+                  setNotice({
+                    tone: "neutral",
+                    text: next
+                      ? "已开启启动时自动同步（下次打开应用时生效）。"
+                      : "已关闭启动时自动同步。",
+                  });
+                }}
+                trackColor={{ false: "#94A3B855", true: "#0EA5E9" }}
+                thumbColor="#FFFFFF"
+              />
+            </View>
+            {autoSyncOnLaunch &&
+            (!serverUrl.trim() ||
+              (username.trim().length > 0 &&
+                !hasPassword &&
+                !passwordDraft.trim())) ? (
+              <Text className="text-[11px] text-amber-600 dark:text-amber-300">
+                提示：请填写服务器地址并保存应用密码后，启动自动同步才会执行。
+              </Text>
+            ) : null}
+          </View>
         </View>
 
         {/* 操作按钮 */}
@@ -491,7 +536,7 @@ export function WebdavSyncCard() {
               条课程 · {pulled.summary.grades} 条成绩 ·{" "}
               {pulled.summary.messages} 条聊天
               {pulled.summary.farm
-                ? ` · 含农场进度（${pulled.summary.coins} 金币）`
+                ? ` · 含农场进度（${pulled.summary.coins} dark币）`
                 : ""}
             </Text>
             {(["merge", "replace"] as const).map((value) => (

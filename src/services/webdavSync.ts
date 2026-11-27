@@ -40,9 +40,58 @@ export interface WebdavPullResult {
   summary: BackupSummary;
 }
 
+export type AutoSyncDecisionAction =
+  | "pull_merge"
+  | "push_initial"
+  | "noop_up_to_date"
+  | "noop_local_newer";
+
+export interface AutoSyncDecisionInput {
+  remoteCreatedAt?: string | number | null;
+  localLastSyncAt?: number | null;
+  hasRemote: boolean;
+  /** 时钟漂移容差（毫秒），默认 5 秒，避免毫秒级时间差反复同步 */
+  skewToleranceMs?: number;
+}
+
+export interface AutoSyncDecision {
+  action: AutoSyncDecisionAction;
+  remoteTimeMs: number | null;
+  reason: string;
+}
+
+export type AutoSyncOutcomeStatus =
+  | "skipped"
+  | "up_to_date"
+  | "local_newer"
+  | "merged"
+  | "available"
+  | "pushed"
+  | "error";
+
+export interface WebdavAutoSyncResult {
+  status: AutoSyncOutcomeStatus;
+  message: string;
+  syncedAt: number | null;
+  remoteCreatedAt?: string;
+  summary?: BackupSummary;
+  decision?: AutoSyncDecision;
+}
+
+export interface AutoSyncLaunchOptions {
+  timeoutMs?: number;
+  /** 云端更新时是否自动执行非破坏性合并（默认 true） */
+  autoMerge?: boolean;
+  /** 云端尚无备份文件（404）时是否上传初始备份（默认 true） */
+  pushWhenMissing?: boolean;
+  now?: number;
+}
+
 export const DEFAULT_WEBDAV_PRESET: WebdavPresetId = "jianguoyun";
 export const DEFAULT_WEBDAV_REMOTE_PATH = "/DarkStudy/dark-study-backup.json";
 export const WEBDAV_TIMEOUT_MS = 20_000;
+export const WEBDAV_AUTO_SYNC_TIMEOUT_MS = 12_000;
+const DEFAULT_SYNC_SKEW_TOLERANCE_MS = 5_000;
 
 const MAX_URL_LENGTH = 512;
 const MAX_REMOTE_PATH_LENGTH = 512;
@@ -343,7 +392,8 @@ async function webdavFetch(
       controller.signal.aborted ||
       (error instanceof Error && error.name === "AbortError")
     ) {
-      throw new Error("WebDAV 请求超时（超过 20 秒），请检查网络或服务器地址");
+      const seconds = Math.max(1, Math.round(timeoutMs / 1000));
+      throw new Error(`WebDAV 请求超时（超过 ${seconds} 秒），请检查网络或服务器地址`);
     }
     throw new Error("无法连接到 WebDAV 服务器，请检查网络或服务器地址");
   } finally {
@@ -478,6 +528,7 @@ export async function ensureRemoteParentDirs(
   serverUrl: string,
   remotePath: string,
   authHeader?: string,
+  timeoutMs = WEBDAV_TIMEOUT_MS,
 ): Promise<string[]> {
   const dirUrls = buildWebdavParentDirUrls(serverUrl, remotePath);
   const headers: Record<string, string> = authHeader
@@ -485,10 +536,14 @@ export async function ensureRemoteParentDirs(
     : {};
 
   for (const dirUrl of dirUrls) {
-    const res = await webdavFetch(dirUrl, {
-      method: "MKCOL",
-      headers,
-    });
+    const res = await webdavFetch(
+      dirUrl,
+      {
+        method: "MKCOL",
+        headers,
+      },
+      timeoutMs,
+    );
     if (MKCOL_OK_STATUSES.has(res.status)) {
       continue;
     }
@@ -501,6 +556,7 @@ export async function ensureRemoteParentDirs(
 export async function pushBackupToWebdav(
   config: WebdavConfig,
   password: string,
+  timeoutMs = WEBDAV_TIMEOUT_MS,
 ): Promise<WebdavPushResult> {
   const targetUrl = buildWebdavTargetUrl(config.serverUrl, config.remotePath);
   const authHeader = resolveAuthHeader(config.username, password);
@@ -508,17 +564,26 @@ export async function pushBackupToWebdav(
   const backup = await collectBackup();
   const payload = JSON.stringify(backup);
 
-  await ensureRemoteParentDirs(config.serverUrl, config.remotePath, authHeader);
+  await ensureRemoteParentDirs(
+    config.serverUrl,
+    config.remotePath,
+    authHeader,
+    timeoutMs,
+  );
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json; charset=utf-8",
     ...(authHeader ? { Authorization: authHeader } : {}),
   };
-  const res = await webdavFetch(targetUrl, {
-    method: "PUT",
-    headers,
-    body: payload,
-  });
+  const res = await webdavFetch(
+    targetUrl,
+    {
+      method: "PUT",
+      headers,
+      body: payload,
+    },
+    timeoutMs,
+  );
 
   if (res.status < 200 || res.status >= 300) {
     throw new Error(describeAuthOrHttpFailure(res.status, "上传备份"));
@@ -536,6 +601,7 @@ export async function pushBackupToWebdav(
 export async function pullBackupFromWebdav(
   config: WebdavConfig,
   password: string,
+  timeoutMs = WEBDAV_TIMEOUT_MS,
 ): Promise<WebdavPullResult> {
   const targetUrl = buildWebdavTargetUrl(config.serverUrl, config.remotePath);
   const authHeader = resolveAuthHeader(config.username, password);
@@ -545,10 +611,14 @@ export async function pullBackupFromWebdav(
     "Cache-Control": "no-cache",
     ...(authHeader ? { Authorization: authHeader } : {}),
   };
-  const res = await webdavFetch(targetUrl, {
-    method: "GET",
-    headers,
-  });
+  const res = await webdavFetch(
+    targetUrl,
+    {
+      method: "GET",
+      headers,
+    },
+    timeoutMs,
+  );
 
   if (res.status < 200 || res.status >= 300) {
     throw new Error(describeAuthOrHttpFailure(res.status, "下载云端备份"));
@@ -569,4 +639,271 @@ export async function restoreWebdavBackup(
 ): Promise<void> {
   const { restoreBackup } = await import("@/services/backupStorage");
   await restoreBackup(backup, mode);
+}
+
+/**
+ * 纯决策函数：根据云端备份是否存在及其创建时间、本地上次同步时间，
+ * 决定启动自动同步的安全动作，绝不盲目覆盖更新的本地数据。
+ */
+export function decideAutoSyncAction(
+  input: AutoSyncDecisionInput,
+): AutoSyncDecision {
+  const tolerance =
+    typeof input.skewToleranceMs === "number" &&
+    Number.isFinite(input.skewToleranceMs) &&
+    input.skewToleranceMs >= 0
+      ? input.skewToleranceMs
+      : DEFAULT_SYNC_SKEW_TOLERANCE_MS;
+
+  if (!input.hasRemote) {
+    return {
+      action: "push_initial",
+      remoteTimeMs: null,
+      reason: "云端尚无备份文件，将上传本地数据作为首次云端备份",
+    };
+  }
+
+  let remoteTimeMs: number | null = null;
+  if (
+    typeof input.remoteCreatedAt === "number" &&
+    Number.isFinite(input.remoteCreatedAt) &&
+    input.remoteCreatedAt > 0
+  ) {
+    remoteTimeMs = input.remoteCreatedAt;
+  } else if (
+    typeof input.remoteCreatedAt === "string" &&
+    input.remoteCreatedAt.trim()
+  ) {
+    const parsed = Date.parse(input.remoteCreatedAt);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      remoteTimeMs = parsed;
+    }
+  }
+
+  if (remoteTimeMs === null) {
+    return {
+      action: "noop_up_to_date",
+      remoteTimeMs: null,
+      reason: "云端备份缺少有效时间戳，已跳过自动同步以保护本地数据",
+    };
+  }
+
+  const localSyncMs =
+    typeof input.localLastSyncAt === "number" &&
+    Number.isFinite(input.localLastSyncAt) &&
+    input.localLastSyncAt > 0
+      ? input.localLastSyncAt
+      : null;
+
+  if (localSyncMs === null) {
+    return {
+      action: "pull_merge",
+      remoteTimeMs,
+      reason: "首次检测到云端备份，将以合并模式安全同步（保留本地已有数据）",
+    };
+  }
+
+  if (remoteTimeMs > localSyncMs + tolerance) {
+    return {
+      action: "pull_merge",
+      remoteTimeMs,
+      reason: "检测到云端有更新的备份，将以合并模式安全同步",
+    };
+  }
+
+  if (localSyncMs > remoteTimeMs + tolerance) {
+    return {
+      action: "noop_local_newer",
+      remoteTimeMs,
+      reason: "本地同步时间较云端更新，已保留本地数据不自动覆盖",
+    };
+  }
+
+  return {
+    action: "noop_up_to_date",
+    remoteTimeMs,
+    reason: "云端备份与本地已是最新状态",
+  };
+}
+
+/**
+ * 启动自动同步主入口（永不抛出未捕获异常）：
+ * - 遵守超时限制，避免启动卡顿；
+ * - 若云端存在更新备份，仅以非破坏性 merge 模式合并（或返回可拉取摘要）；
+ * - 若本地较新，绝不覆盖本地数据；
+ * - 若云端尚无备份（404），按策略上传首次备份。
+ */
+export async function runAutoSyncOnLaunch(
+  config: WebdavConfig,
+  password: string,
+  localLastSyncAt: number | null,
+  options?: AutoSyncLaunchOptions,
+): Promise<WebdavAutoSyncResult> {
+  const timeoutMs =
+    typeof options?.timeoutMs === "number" &&
+    Number.isFinite(options.timeoutMs) &&
+    options.timeoutMs >= 500
+      ? options.timeoutMs
+      : WEBDAV_AUTO_SYNC_TIMEOUT_MS;
+  const autoMerge = options?.autoMerge !== false;
+  const pushWhenMissing = options?.pushWhenMissing !== false;
+  const now =
+    typeof options?.now === "number" && Number.isFinite(options.now)
+      ? options.now
+      : Date.now();
+
+  try {
+    const serverUrl =
+      typeof config.serverUrl === "string" ? config.serverUrl.trim() : "";
+    const username =
+      typeof config.username === "string" ? config.username.trim() : "";
+    const remotePath =
+      typeof config.remotePath === "string" && config.remotePath.trim()
+        ? config.remotePath.trim()
+        : DEFAULT_WEBDAV_REMOTE_PATH;
+    const trimmedPassword =
+      typeof password === "string" ? password.trim() : "";
+
+    if (!serverUrl) {
+      return {
+        status: "skipped",
+        message: "尚未配置 WebDAV 服务器地址，已跳过启动自动同步",
+        syncedAt: null,
+      };
+    }
+    if (username && !trimmedPassword) {
+      return {
+        status: "skipped",
+        message: "尚未保存 WebDAV 应用密码，已跳过启动自动同步",
+        syncedAt: null,
+      };
+    }
+
+    const normalizedConfig: WebdavConfig = {
+      serverUrl,
+      username,
+      remotePath: normalizeWebdavRemotePath(remotePath),
+    };
+    const targetUrl = buildWebdavTargetUrl(
+      normalizedConfig.serverUrl,
+      normalizedConfig.remotePath,
+    );
+    const authHeader = resolveAuthHeader(
+      normalizedConfig.username,
+      trimmedPassword,
+    );
+
+    const headers: Record<string, string> = {
+      Accept: "application/json, text/plain, */*",
+      "Cache-Control": "no-cache",
+      ...(authHeader ? { Authorization: authHeader } : {}),
+    };
+    const res = await webdavFetch(
+      targetUrl,
+      {
+        method: "GET",
+        headers,
+      },
+      timeoutMs,
+    );
+
+    if (res.status === 404) {
+      const decision = decideAutoSyncAction({
+        remoteCreatedAt: null,
+        localLastSyncAt,
+        hasRemote: false,
+      });
+      if (!pushWhenMissing) {
+        return {
+          status: "skipped",
+          message: "云端尚无备份文件，可在 WebDAV 同步卡片手动上传",
+          syncedAt: null,
+          decision,
+        };
+      }
+      const pushed = await pushBackupToWebdav(
+        normalizedConfig,
+        trimmedPassword,
+        timeoutMs,
+      );
+      return {
+        status: "pushed",
+        message: `启动自动同步：云端尚无备份，已上传初始备份（${pushed.summary.schedules} 份课表 · ${pushed.summary.courses} 条课程）`,
+        syncedAt: now,
+        remoteCreatedAt: pushed.createdAt,
+        summary: pushed.summary,
+        decision,
+      };
+    }
+
+    if (res.status < 200 || res.status >= 300) {
+      return {
+        status: "error",
+        message: `启动自动同步未完成：${describeAuthOrHttpFailure(res.status, "检查云端备份")}`,
+        syncedAt: null,
+      };
+    }
+
+    const text = await res.text();
+    const backup = parseBackup(text);
+    const summary = backupSummary(backup);
+    const decision = decideAutoSyncAction({
+      remoteCreatedAt: backup.createdAt,
+      localLastSyncAt,
+      hasRemote: true,
+    });
+
+    if (decision.action === "noop_up_to_date") {
+      return {
+        status: "up_to_date",
+        message: "启动自动同步：云端备份已是最新，无需更新",
+        syncedAt: null,
+        remoteCreatedAt: backup.createdAt,
+        summary,
+        decision,
+      };
+    }
+
+    if (decision.action === "noop_local_newer") {
+      return {
+        status: "local_newer",
+        message:
+          "启动自动同步：本地记录较云端更新，已保留本地数据（如需同步请手动上传）",
+        syncedAt: null,
+        remoteCreatedAt: backup.createdAt,
+        summary,
+        decision,
+      };
+    }
+
+    if (!autoMerge) {
+      return {
+        status: "available",
+        message: `检测到云端有更新备份（${summary.schedules} 份课表 · ${summary.courses} 条课程 · ${summary.grades} 条成绩），可前往设置拉取合并`,
+        syncedAt: null,
+        remoteCreatedAt: backup.createdAt,
+        summary,
+        decision,
+      };
+    }
+
+    await restoreWebdavBackup(backup, "merge");
+    const syncedAt = Math.max(now, decision.remoteTimeMs ?? now);
+    return {
+      status: "merged",
+      message: `启动自动同步：已安全合并云端更新（${summary.schedules} 份课表 · ${summary.courses} 条课程 · ${summary.grades} 条成绩）`,
+      syncedAt,
+      remoteCreatedAt: backup.createdAt,
+      summary,
+      decision,
+    };
+  } catch (error) {
+    const detail =
+      error instanceof Error ? error.message : "网络或 WebDAV 服务异常";
+    return {
+      status: "error",
+      message: `启动自动同步失败：${detail}`,
+      syncedAt: null,
+    };
+  }
 }

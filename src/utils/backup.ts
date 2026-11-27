@@ -6,26 +6,37 @@ import {
   normalizeCourseFocusLog,
   normalizePendingFarmReward,
 } from './studyProgress';
+export const NIGHT_SKY_BACKUP_KEYS = [
+  'dark-study-night-chronicle',
+  'dark-study-night-favorites',
+  'dark-study-night-visits',
+  'dark-study-night-wishes',
+] as const;
+
 export const BACKUP_KEYS = [
   'dark-study-storage', 'dark-study-settings', 'dark-study-whale-memory', 'dark-study-whale-persona',
-  'dark-study-whale-pet', 'dark-study-widget-settings', 'dark-study-whale-voice',
+  'dark-study-whale-pet', 'dark-study-desktop-pet', 'dark-study-widget-settings', 'dark-study-whale-voice',
   'dark-study-whale-voice-config', 'dark-study-sound-effects',
   'dark-study-farm', 'dark-study-farm-life-settings', 'dark-study-farm-life-log',
   'dark-study-study-progress', 'dark-study-peer-schedules',
+  ...NIGHT_SKY_BACKUP_KEYS,
 ] as const;
 export type BackupKey = typeof BACKUP_KEYS[number];
 export interface Backup { format: 'dark-study-backup'; version: 1; createdAt: string; data: Partial<Record<BackupKey, unknown>> }
 type Obj = Record<string, any>;
 const object = (value: unknown): value is Obj => !!value && typeof value === 'object' && !Array.isArray(value);
+const NIGHT_QUOTE_CATEGORIES = new Set(['book', 'film', 'anime', 'essay', 'online']);
 const fields: Partial<Record<BackupKey, string[]>> = {
   'dark-study-storage': ['schedules', 'activeScheduleId', 'grades', 'gradeYears', 'activeGradeYearId', 'gradeTypes', 'gradeRules', 'activeGradeRuleId', 'activeGradeSemester', 'courseTasks'],
-  'dark-study-settings': ['farmWebSearch', 'reminderEnabled', 'reminderMinutes', 'reminderCount', 'appearance', 'material', 'backgroundDim', 'backgroundTint', 'backgroundEffect', 'defaultScheduleView', 'showWeekend', 'showOtherWeeks', 'compactWeekGrid', 'whalePhrase', 'renderQuality', 'gpaScale', 'aiProvider', 'aiBaseUrl', 'aiTextModel', 'aiVisionModel', 'updateMirrorPrefix', 'whaleShareGrades', 'liveClassNotification'],
+  'dark-study-settings': ['farmWebSearch', 'reminderEnabled', 'reminderMinutes', 'reminderCount', 'appearance', 'material', 'backgroundDim', 'backgroundTint', 'backgroundEffect', 'defaultScheduleView', 'showWeekend', 'showOtherWeeks', 'compactWeekGrid', 'whalePhrase', 'renderQuality', 'gpaScale', 'graduationCreditTargets', 'aiProvider', 'aiBaseUrl', 'aiTextModel', 'aiVisionModel', 'updateMirrorPrefix', 'whaleShareGrades', 'liveClassNotification'],
   'dark-study-whale-memory': [
     'active', 'messages', 'memory', 'petMessages', 'facts', 'episodes', 'openLoops', 'reflections',
     'emotion', 'bond', 'autoMemory', 'autoReflect', 'turnsSinceReflect', 'lastReflectedAt', 'lastInteractionAt',
   ],
   'dark-study-whale-persona': ['persona'], 'dark-study-whale-pet': ['care'],
+  'dark-study-desktop-pet': ['autoFollowBackground', 'overlayMode', 'petScale', 'petOpacity', 'panelTheme', 'tapAction', 'showBubbles'],
   'dark-study-widget-settings': ['shape', 'theme', 'accent', 'style', 'mode', 'count'],
+  // Transient activeFocusSession (containing device-local notificationId) is intentionally omitted on backup.
   'dark-study-study-progress': ['attendanceByCourse', 'customAbsenceLimits', 'focusLogs', 'pendingFarmRewards'],
   'dark-study-peer-schedules': ['peers'],
 };
@@ -42,6 +53,114 @@ function check(ok: unknown, message: string): asserts ok { if (!ok) throw new Er
 function cleanModule(key: BackupKey, value: unknown): unknown {
   if (key === 'dark-study-whale-voice') { check(value === '0' || value === '1', '语音设置无效'); return value; }
   if (key === 'dark-study-sound-effects') { check(value === '0' || value === '1', '音效设置无效'); return value; }
+  if (key === 'dark-study-night-visits') {
+    const raw = typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : '';
+    check(/^\d{1,9}$/.test(raw), '夜空访问次数无效');
+    const visits = Math.min(1_000_000, Number(raw));
+    check(Number.isInteger(visits) && visits >= 0, '夜空访问次数无效');
+    return String(visits);
+  }
+  if (key === 'dark-study-night-chronicle') {
+    check(object(value), '夜航志数据无效');
+    const cleanCount = (v: unknown, label: string): number => {
+      if (v === undefined) return 0;
+      check(typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1_000_000, `${label}无效`);
+      return Math.floor(v);
+    };
+    const cleanIdList = (v: unknown, label: string): string[] => {
+      if (v === undefined) return [];
+      check(Array.isArray(v), `${label}无效`);
+      const seen = new Set<string>();
+      const out: string[] = [];
+      for (const item of v) {
+        check(typeof item === 'string' && item.trim().length > 0 && item.trim().length <= 48, `${label}条目无效`);
+        const trimmed = item.trim();
+        if (!seen.has(trimmed)) {
+          seen.add(trimmed);
+          out.push(trimmed);
+        }
+        if (out.length >= 32) break;
+      }
+      return out;
+    };
+    if (value.owlPathUnlocked !== undefined) check(typeof value.owlPathUnlocked === 'boolean', '夜航志小径状态无效');
+    let lastConstellationId: string | undefined;
+    if (value.lastConstellationId !== undefined) {
+      check(typeof value.lastConstellationId === 'string' && value.lastConstellationId.trim().length > 0 && value.lastConstellationId.trim().length <= 48, '夜航志星象无效');
+      lastConstellationId = value.lastConstellationId.trim();
+    }
+    return {
+      visits: cleanCount(value.visits, '夜航志访问次数'),
+      totalStarsCollected: cleanCount(value.totalStarsCollected, '夜航志拾星数'),
+      unlockedConstellations: cleanIdList(value.unlockedConstellations, '夜航志星象列表'),
+      owlPathUnlocked: Boolean(value.owlPathUnlocked),
+      ...(lastConstellationId ? { lastConstellationId } : {}),
+      secretBadges: cleanIdList(value.secretBadges, '夜航志徽章列表'),
+      wishesSent: cleanCount(value.wishesSent, '夜航志星愿计数'),
+      meteorsTapped: cleanCount(value.meteorsTapped, '夜航志流星计数'),
+    };
+  }
+  if (key === 'dark-study-night-favorites') {
+    check(Array.isArray(value), '收藏星笺数据无效');
+    const seen = new Set<string>();
+    const out: Obj[] = [];
+    for (const item of value) {
+      check(
+        object(item) &&
+          typeof item.id === 'string' && item.id.trim().length > 0 && item.id.length <= 64 &&
+          typeof item.text === 'string' && item.text.trim().length > 0 && item.text.length <= 500 &&
+          typeof item.work === 'string' && item.work.length <= 120 &&
+          typeof item.category === 'string' && NIGHT_QUOTE_CATEGORIES.has(item.category),
+        '收藏星笺条目无效',
+      );
+      if (item.author !== undefined) {
+        check(typeof item.author === 'string' && item.author.length <= 80, '收藏星笺作者无效');
+      }
+      if (seen.has(item.id)) continue;
+      seen.add(item.id);
+      const author = typeof item.author === 'string' && item.author.trim() ? item.author.trim() : undefined;
+      out.push({
+        id: item.id,
+        text: item.text,
+        work: item.work,
+        ...(author ? { author } : {}),
+        category: item.category,
+      });
+      if (out.length >= 40) break;
+    }
+    return out;
+  }
+  if (key === 'dark-study-night-wishes') {
+    check(Array.isArray(value), '星愿胶囊数据无效');
+    const seen = new Set<string>();
+    const out: Obj[] = [];
+    for (const item of value) {
+      check(
+        object(item) &&
+          typeof item.id === 'string' && item.id.trim().length > 0 && item.id.trim().length <= 48 &&
+          typeof item.text === 'string' && item.text.replace(/[\r\n]+/g, ' ').trim().length > 0 && item.text.length <= 120 &&
+          typeof item.createdAt === 'number' && Number.isFinite(item.createdAt) && item.createdAt > 0 &&
+          typeof item.constellationName === 'string' && item.constellationName.trim().length > 0 && item.constellationName.trim().length <= 24,
+        '星愿胶囊条目无效',
+      );
+      if (item.echoedAt !== undefined) {
+        check(typeof item.echoedAt === 'number' && Number.isFinite(item.echoedAt) && item.echoedAt > 0, '星愿胶囊回响时间无效');
+      }
+      const id = item.id.trim();
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const cleanText = item.text.replace(/[\r\n]+/g, ' ').trim().slice(0, 36);
+      out.push({
+        id,
+        text: cleanText,
+        createdAt: Math.floor(item.createdAt),
+        constellationName: item.constellationName.trim(),
+        ...(item.echoedAt !== undefined ? { echoedAt: Math.floor(item.echoedAt) } : {}),
+      });
+      if (out.length >= 30) break;
+    }
+    return out;
+  }
   if (key === 'dark-study-whale-voice-config') {
     check(object(value), '语音配置无效');
     const clean: Obj = {};
@@ -79,7 +198,12 @@ function cleanModule(key: BackupKey, value: unknown): unknown {
     }
     for (const field of ['grades', 'gradeYears', 'gradeTypes', 'gradeRules']) for (const row of state[field]) check(object(row) && typeof row.id === 'string' && typeof row.name === 'string', '成绩数据无效');
     for (const grade of state.grades) check(typeof grade.score === 'string' && typeof grade.yearId === 'string' && typeof grade.type === 'string', '成绩记录无效');
-    for (const rule of state.gradeRules) check(Array.isArray(rule.excludedTypes) && Array.isArray(rule.excludedCourseIds), '成绩规则无效');
+    for (const rule of state.gradeRules) {
+      check(Array.isArray(rule.excludedTypes) && Array.isArray(rule.excludedCourseIds), '成绩规则无效');
+      if (rule.retakePolicy !== undefined) {
+        check(['all', 'highest', 'latest'].includes(rule.retakePolicy), '成绩规则重修策略无效');
+      }
+    }
     for (const [field, collection] of [['activeScheduleId', 'schedules'], ['activeGradeYearId', 'gradeYears'], ['activeGradeRuleId', 'gradeRules']]) check(state[collection].some((row: Obj) => row.id === state[field]), '备份中的当前分组不存在');
   }
   if (key === 'dark-study-whale-memory') for (const field of ['messages', 'memory', 'petMessages']) {
@@ -118,6 +242,14 @@ function cleanModule(key: BackupKey, value: unknown): unknown {
   }
   if (key === 'dark-study-whale-persona') check(object(state.persona), '人设数据无效');
   if (key === 'dark-study-whale-pet') check(object(state.care), '桌宠数据无效');
+  if (key === 'dark-study-desktop-pet') {
+    for (const name of ['autoFollowBackground', 'showBubbles']) if (name in state) check(typeof state[name] === 'boolean', '桌面桌宠设置无效');
+    if ('overlayMode' in state) check(['auto', 'always'].includes(state.overlayMode), '桌面桌宠显示模式无效');
+    if ('panelTheme' in state) check(['auto', 'dark', 'light'].includes(state.panelTheme), '桌面桌宠主题无效');
+    if ('tapAction' in state) check(['interact', 'panel'].includes(state.tapAction), '桌面桌宠交互设置无效');
+    if ('petScale' in state) check(typeof state.petScale === 'number' && Number.isFinite(state.petScale) && state.petScale >= 0.5 && state.petScale <= 2, '桌面桌宠缩放设置无效');
+    if ('petOpacity' in state) check(typeof state.petOpacity === 'number' && Number.isFinite(state.petOpacity) && state.petOpacity >= 0.2 && state.petOpacity <= 1, '桌面桌宠透明度设置无效');
+  }
   if (key === 'dark-study-settings') {
     for (const name of ['farmWebSearch', 'reminderEnabled', 'showWeekend', 'showOtherWeeks', 'compactWeekGrid', 'whaleShareGrades', 'liveClassNotification']) if (name in state) check(typeof state[name] === 'boolean', '偏好设置无效');
     for (const name of ['reminderMinutes', 'reminderCount']) if (name in state) check(Number.isFinite(state[name]), '提醒设置无效');
@@ -128,6 +260,24 @@ function cleanModule(key: BackupKey, value: unknown): unknown {
     if ('whalePhrase' in state) check(typeof state.whalePhrase === 'string' && state.whalePhrase.length >= 2 && state.whalePhrase.length <= 12, '召唤口令无效');
     if ('renderQuality' in state) check(['smooth', 'standard', 'beautiful'].includes(state.renderQuality), '画质设置无效');
     if ('gpaScale' in state) check(['five', 'four_std', 'four_pku', 'four_three', 'four_linear'].includes(state.gpaScale), '绩点制设置无效');
+    if ('graduationCreditTargets' in state) {
+      check(object(state.graduationCreditTargets), '毕业学分目标设置无效');
+      const cleanedTargets: Record<string, number> = {};
+      for (const [typeId, target] of Object.entries(state.graduationCreditTargets)) {
+        check(
+          typeof typeId === 'string' &&
+            typeId.trim().length > 0 &&
+            typeId.length <= 128 &&
+            typeof target === 'number' &&
+            Number.isFinite(target) &&
+            target >= 0 &&
+            target <= 1000,
+          '毕业学分目标数值无效',
+        );
+        cleanedTargets[typeId.trim()] = Math.round(target * 100) / 100;
+      }
+      state.graduationCreditTargets = cleanedTargets;
+    }
     if ('aiProvider' in state) check(isAiProviderId(state.aiProvider), 'AI 服务商设置无效');
     if ('aiBaseUrl' in state) {
       check(typeof state.aiBaseUrl === 'string' && state.aiBaseUrl.trim().length <= 512, 'AI 接口地址设置无效');
@@ -256,7 +406,11 @@ export function parseBackup(text: string): Backup {
   check(Object.keys(data).length, '备份中没有可恢复的数据');
   return { format: 'dark-study-backup', version: 1, createdAt: value.createdAt, data };
 }
-const RAW_STRING_KEYS = new Set<BackupKey>(['dark-study-whale-voice', 'dark-study-sound-effects']);
+const RAW_STRING_KEYS = new Set<BackupKey>([
+  'dark-study-whale-voice',
+  'dark-study-sound-effects',
+  'dark-study-night-visits',
+]);
 export function createBackup(records: readonly (readonly [string, string | null])[], at = new Date()): Backup {
   const data: Backup['data'] = {};
   for (const [key, raw] of records) if (raw !== null && BACKUP_KEYS.includes(key as BackupKey)) data[key as BackupKey] = RAW_STRING_KEYS.has(key as BackupKey) ? raw : JSON.parse(raw);
@@ -278,11 +432,18 @@ function union(current: Obj[], incoming: Obj[], cap = 30000) {
 }
 export function buildRestorePlan(backup: Backup, current: readonly (readonly [string, string | null])[], mode: 'replace' | 'merge'): [string, string][] {
   const disk = new Map(current);
-  return Object.entries(backup.data).map(([name, raw]) => {
+  const plan: [string, string][] = Object.entries(backup.data).map(([name, raw]) => {
     const key = name as BackupKey;
     let incoming = cleanModule(key, raw) as Obj;
     const existingRaw = disk.get(key);
-    const existing = existingRaw ? RAW_STRING_KEYS.has(key) ? existingRaw : JSON.parse(existingRaw) : undefined;
+    let existing: any;
+    if (existingRaw !== undefined && existingRaw !== null) {
+      if (RAW_STRING_KEYS.has(key)) {
+        existing = existingRaw;
+      } else {
+        try { existing = JSON.parse(existingRaw); } catch { existing = undefined; }
+      }
+    }
     if (key === 'dark-study-settings') incoming = { ...incoming, state: { ...incoming.state, apiKey: existing?.state?.apiKey ?? '', backgroundImage: existing?.state?.backgroundImage ?? null } };
     if (key === 'dark-study-storage' && !('courseTasks' in incoming.state) && Array.isArray(existing?.state?.courseTasks)) {
       incoming.state.courseTasks = normalizeCourseTasks(existing.state.courseTasks);
@@ -353,8 +514,67 @@ export function buildRestorePlan(backup: Backup, current: readonly (readonly [st
             peers: union(existing.state?.peers ?? [], incoming.state?.peers ?? [], 50),
           },
         };
+      } else if (key === 'dark-study-night-visits') {
+        const existingNum = Number(existing);
+        const incomingNum = Number(incoming);
+        const mergedVisits = Math.max(
+          Number.isFinite(existingNum) && existingNum > 0 ? Math.floor(existingNum) : 0,
+          Number.isFinite(incomingNum) && incomingNum > 0 ? Math.floor(incomingNum) : 0,
+        );
+        return [key, String(mergedVisits)];
+      } else if (key === 'dark-study-night-chronicle' && object(existing)) {
+        const unionStr = (a: unknown, b: unknown, cap = 32): string[] => {
+          const seen = new Set<string>();
+          const merged: string[] = [];
+          for (const list of [a, b]) {
+            if (!Array.isArray(list)) continue;
+            for (const item of list) {
+              if (typeof item === 'string' && item.trim() && !seen.has(item.trim())) {
+                seen.add(item.trim());
+                merged.push(item.trim());
+              }
+              if (merged.length >= cap) break;
+            }
+          }
+          return merged;
+        };
+        const maxInt = (a: unknown, b: unknown) => Math.max(
+          typeof a === 'number' && Number.isFinite(a) && a > 0 ? Math.floor(a) : 0,
+          typeof b === 'number' && Number.isFinite(b) && b > 0 ? Math.floor(b) : 0,
+        );
+        const lastConstellationId =
+          typeof existing.lastConstellationId === 'string' && existing.lastConstellationId.trim()
+            ? existing.lastConstellationId.trim()
+            : incoming.lastConstellationId;
+        incoming = {
+          visits: maxInt(existing.visits, incoming.visits),
+          totalStarsCollected: maxInt(existing.totalStarsCollected, incoming.totalStarsCollected),
+          unlockedConstellations: unionStr(existing.unlockedConstellations, incoming.unlockedConstellations),
+          owlPathUnlocked: Boolean(existing.owlPathUnlocked || incoming.owlPathUnlocked),
+          ...(lastConstellationId ? { lastConstellationId } : {}),
+          secretBadges: unionStr(existing.secretBadges, incoming.secretBadges),
+          wishesSent: maxInt(existing.wishesSent, incoming.wishesSent),
+          meteorsTapped: maxInt(existing.meteorsTapped, incoming.meteorsTapped),
+        };
+      } else if (key === 'dark-study-night-favorites' && Array.isArray(existing)) {
+        incoming = union(existing, Array.isArray(incoming) ? incoming : [], 40);
+      } else if (key === 'dark-study-night-wishes' && Array.isArray(existing)) {
+        incoming = union(existing, Array.isArray(incoming) ? incoming : [], 30)
+          .sort((a: Obj, b: Obj) => b.createdAt - a.createdAt);
       } else return [key, existingRaw!] as [string, string];
     }
     return [key, RAW_STRING_KEYS.has(key) ? String(incoming) : JSON.stringify(incoming)];
   });
+
+  // In replace mode, keep legacy night visits synchronized when chronicle is restored alone.
+  if (
+    mode === 'replace' &&
+    Object.hasOwn(backup.data, 'dark-study-night-chronicle') &&
+    !Object.hasOwn(backup.data, 'dark-study-night-visits')
+  ) {
+    const chronicle = cleanModule('dark-study-night-chronicle', backup.data['dark-study-night-chronicle']) as Obj;
+    plan.push(['dark-study-night-visits', String(chronicle.visits ?? 0)]);
+  }
+
+  return plan;
 }

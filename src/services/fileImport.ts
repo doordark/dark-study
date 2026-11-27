@@ -153,22 +153,44 @@ const SUPPORTED_EXTENSIONS = new Set([
   "xhtml",
   "log",
   "ics",
+  "ical",
+  "ifb",
+  "icalendar",
   "xlsx",
   "xls",
   "pdf",
 ]);
 
 export function detectFormat(ext: string, mimeType?: string): DocumentFormat | null {
-  if (ext === "pdf" || mimeType === "application/pdf") return "pdf";
-  if (ext === "xlsx" || mimeType?.includes("spreadsheetml")) return "xlsx";
-  if (ext === "xls" || mimeType === "application/vnd.ms-excel") return "xls";
-  if (ext === "ics" || mimeType === "text/calendar") return "ics";
-  if (ext === "html" || ext === "htm" || ext === "xhtml" || mimeType === "text/html") {
+  const lowerExt = ext.trim().toLowerCase();
+  const lowerMime = mimeType?.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (lowerExt === "pdf" || lowerMime === "application/pdf") return "pdf";
+  if (lowerExt === "xlsx" || lowerMime.includes("spreadsheetml")) return "xlsx";
+  if (lowerExt === "xls" || lowerMime === "application/vnd.ms-excel") return "xls";
+  if (
+    lowerExt === "ics" ||
+    lowerExt === "ical" ||
+    lowerExt === "ifb" ||
+    lowerExt === "icalendar" ||
+    lowerMime === "text/calendar" ||
+    lowerMime === "application/ics" ||
+    lowerMime === "text/x-vcalendar"
+  ) {
+    return "ics";
+  }
+  if (
+    lowerExt === "html" ||
+    lowerExt === "htm" ||
+    lowerExt === "xhtml" ||
+    lowerMime === "text/html"
+  ) {
     return "html";
   }
-  if (ext === "json" || mimeType === "application/json") return "json";
-  if (ext === "csv" || ext === "tsv" || mimeType === "text/csv") return "csv";
-  if (SUPPORTED_EXTENSIONS.has(ext) || mimeType?.startsWith("text/")) {
+  if (lowerExt === "json" || lowerMime === "application/json") return "json";
+  if (lowerExt === "csv" || lowerExt === "tsv" || lowerMime === "text/csv") {
+    return "csv";
+  }
+  if (SUPPORTED_EXTENSIONS.has(lowerExt) || lowerMime.startsWith("text/")) {
     return "text";
   }
   return null;
@@ -185,6 +207,7 @@ export async function pickTextDocument(): Promise<PickedDocument | null> {
       "text/csv",
       "application/xml",
       "text/calendar",
+      "application/ics",
       "application/pdf",
       "application/vnd.ms-excel",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -195,15 +218,20 @@ export async function pickTextDocument(): Promise<PickedDocument | null> {
 
   const asset = result.assets[0];
   const name = asset.name ?? "文件";
-  const ext = name.split(".").pop()?.toLowerCase() ?? "";
-  const format = detectFormat(ext, asset.mimeType);
+  const ext = name.includes(".") ? (name.split(".").pop()?.toLowerCase() ?? "") : "";
+  let format = detectFormat(ext, asset.mimeType);
   if (!format) {
     throw new Error(
       "暂支持 pdf / xls / xlsx / csv / ics / json / html / txt / md 文件；图片请走「相册识图 / 拍照识别」",
     );
   }
 
-  const bytes = new Uint8Array(await new File(asset.uri).arrayBuffer());
+  const webBlob = (asset as { file?: Blob }).file;
+  const bytes = new Uint8Array(
+    webBlob && typeof webBlob.arrayBuffer === "function"
+      ? await webBlob.arrayBuffer()
+      : await new File(asset.uri).arrayBuffer(),
+  );
   let text: string;
   if (format === "pdf") {
     text = parsePdfToText(bytes);
@@ -213,6 +241,13 @@ export async function pickTextDocument(): Promise<PickedDocument | null> {
     text = parseXlsxToTsv(bytes);
   } else {
     const decoded = decodeTextBytes(bytes);
+    if (
+      format === "text" &&
+      /BEGIN:VCALENDAR/i.test(decoded) &&
+      /BEGIN:VEVENT/i.test(decoded)
+    ) {
+      format = "ics";
+    }
     text = format === "html" ? cleanHtmlToText(decoded) : decoded;
   }
 
