@@ -31,6 +31,8 @@ export const RATIO = 1.35;
 export const EDGE = 10;
 /** 底部操作栏预留：桌宠落地时停在胶囊栏上方，不挡按钮 */
 export const FLOOR_RESERVE = 72;
+/** 互动浮层除对话列表外的固定纵高预算（顶栏 + 养护卡 + 3×2 快捷网格 + 底栏提示 + 紧凑输入框） */
+export const POPOVER_CHROME_H = 286;
 export const PANEL_SPRING = { damping: 19, stiffness: 275, mass: 0.78 };
 
 export const IDLE_DELAY_MIN = 6_500;
@@ -62,10 +64,10 @@ export interface PetQuickActionDef {
 }
 
 export const PET_QUICK_ACTIONS: readonly PetQuickActionDef[] = [
-  { id: "feed", label: "抛团子", hungryLabel: "抛白饭", icon: "restaurant-outline", accent: "#F59E0B" },
   { id: "pat", label: "摸摸头", icon: "heart-outline", accent: "#EC4899" },
-  { id: "dance", label: "跳支舞", icon: "musical-notes-outline", accent: "#0EA5E9" },
+  { id: "feed", label: "抛团子", hungryLabel: "抛白饭", icon: "restaurant-outline", accent: "#F59E0B" },
   { id: "study", label: "陪我学习", icon: "book-outline", accent: "#6366F1" },
+  { id: "dance", label: "跳支舞", icon: "musical-notes-outline", accent: "#0EA5E9" },
   { id: "spin", label: "转个圈", icon: "refresh-outline", accent: "#10B981" },
   { id: "wave", label: "打个招呼", icon: "hand-left-outline", accent: "#38BDF8" },
 ];
@@ -111,6 +113,19 @@ export const randBetween = (min: number, max: number) =>
 export const nowMs = () => Date.now();
 export const clampNumber = (v: number, min: number, max: number) =>
   Math.min(Math.max(v, min), max);
+
+/** 将 #RRGGBB 强调色转为带透明度的 rgba 玻璃填充或描边 */
+export function tintHex(hex: string, alpha: number): string {
+  const clean = hex.replace("#", "");
+  if (clean.length !== 6) return `rgba(56,189,248,${alpha})`;
+  const r = parseInt(clean.slice(0, 2), 16);
+  const g = parseInt(clean.slice(2, 4), 16);
+  const b = parseInt(clean.slice(4, 6), 16);
+  if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) {
+    return `rgba(56,189,248,${alpha})`;
+  }
+  return `rgba(${r},${g},${b},${alpha})`;
+}
 
 export const petMsg = (role: PetMsg["role"], text: string): PetMsg => ({
   id: uid(),
@@ -269,15 +284,15 @@ export const whalePetStyles = StyleSheet.create({
   popoverCard: {
     borderRadius: 26,
     borderCurve: "continuous",
-    paddingTop: 13,
-    paddingBottom: 4,
+    paddingTop: 12,
+    paddingBottom: 3,
     overflow: "hidden",
     borderWidth: 1,
   },
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 13,
+    paddingHorizontal: 12,
   },
   avatarFrame: {
     width: 40,
@@ -331,8 +346,9 @@ export const whalePetStyles = StyleSheet.create({
     borderWidth: 1,
   },
   desktopPillText: {
-    fontSize: 10,
+    fontSize: 10.5,
     fontWeight: "700",
+    includeFontPadding: false,
   },
   roundIconBtn: {
     width: 30,
@@ -340,13 +356,13 @@ export const whalePetStyles = StyleSheet.create({
     borderRadius: 15,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 0.75,
+    borderWidth: 1,
   },
   careRow: {
     flexDirection: "row",
     gap: 7,
     paddingHorizontal: 12,
-    paddingTop: 10,
+    paddingTop: 8,
   },
   careCard: {
     flex: 1,
@@ -354,7 +370,7 @@ export const whalePetStyles = StyleSheet.create({
     borderRadius: 12,
     borderCurve: "continuous",
     paddingHorizontal: 8,
-    paddingVertical: 6.5,
+    paddingVertical: 6,
     borderWidth: 1,
   },
   careCardHeader: {
@@ -367,14 +383,17 @@ export const whalePetStyles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 3,
+    minWidth: 0,
   },
   careLabel: {
     fontSize: 9.5,
     fontWeight: "600",
+    includeFontPadding: false,
   },
   careValue: {
     fontSize: 10,
     fontWeight: "800",
+    includeFontPadding: false,
   },
   careTrack: {
     height: 4,
@@ -385,16 +404,34 @@ export const whalePetStyles = StyleSheet.create({
     height: "100%",
     borderRadius: 99,
   },
-  chatListBox: {
-    marginTop: 10,
+  chatListFrame: {
+    marginTop: 8,
     marginHorizontal: 12,
     borderRadius: 18,
     borderCurve: "continuous",
     borderWidth: 1,
+    paddingVertical: 3,
+    overflow: "hidden",
   },
   chatListContent: {
-    paddingHorizontal: 10,
-    paddingVertical: 10,
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+  },
+  chatEdgeFadeTop: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 8,
+    zIndex: 2,
+  },
+  chatEdgeFadeBottom: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 8,
+    zIndex: 2,
   },
   emptyBox: {
     alignItems: "center",
@@ -419,47 +456,63 @@ export const whalePetStyles = StyleSheet.create({
     fontSize: 10.5,
     fontWeight: "600",
   },
-  quickBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingLeft: 12,
-    paddingRight: 12,
-    paddingTop: 9,
-    paddingBottom: 2,
+  quickGrid: {
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    gap: 6,
     flexShrink: 0,
   },
-  quickScroll: {
-    flex: 1,
-    flexGrow: 0,
-    flexShrink: 1,
-  },
-  quickScrollContent: {
-    gap: 6,
-    paddingRight: 6,
+  quickGridRow: {
+    flexDirection: "row",
     alignItems: "center",
+    gap: 6,
   },
   quickPill: {
-    height: 31,
+    flex: 1,
+    minWidth: 0,
+    height: 32,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 4.5,
-    borderRadius: 999,
+    borderRadius: 12,
+    borderCurve: "continuous",
     borderWidth: 1,
-    paddingHorizontal: 10.5,
+    paddingHorizontal: 6,
   },
   quickPillText: {
+    flexShrink: 1,
     fontSize: 10.5,
     fontWeight: "700",
+    includeFontPadding: false,
   },
-  quickDivider: {
-    width: 1,
-    height: 16,
-    marginHorizontal: 6,
+  utilityRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingTop: 6,
+    paddingBottom: 1,
+    flexShrink: 0,
+  },
+  utilityHintWrap: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4.5,
+  },
+  utilityHintText: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 10.5,
+    fontWeight: "600",
+    includeFontPadding: false,
   },
   dismissPill: {
     flexShrink: 0,
-    height: 31,
+    height: 28,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
@@ -471,5 +524,6 @@ export const whalePetStyles = StyleSheet.create({
   dismissPillText: {
     fontSize: 10.5,
     fontWeight: "700",
+    includeFontPadding: false,
   },
 });
