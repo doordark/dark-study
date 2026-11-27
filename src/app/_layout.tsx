@@ -1,18 +1,21 @@
 import { DarkTheme, DefaultTheme, router, Stack, ThemeProvider, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { colorScheme as appColorScheme, useColorScheme } from "nativewind";
-import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, AppState, Pressable, Text, View } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ActivityIndicator, AppState, Platform, Pressable, Text, View } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { enableFreeze } from "react-native-screens";
+
 import { useDataSession } from '@/store/useDataSession';
 import { recoverInterruptedRestore } from '@/services/restoreTransaction';
 import { flushPendingWrites, withPendingWritesSuspended } from '@/utils/coalescedWriter';
 import { disposeWhaleVoice, stopWhaleVoice } from "@/services/whaleVoice";
+import { releaseVoiceCacheMemory } from "@/services/whaleVoiceCache";
 import { stopAllSfx } from "@/services/soundEffects";
 import { useSoundEffects } from "@/store/useSoundEffects";
 import { useWhaleMemory } from "@/store/useWhaleMemory";
 import { useWhalePet } from "@/store/useWhalePet";
 import { useWhaleVoice } from "@/store/useWhaleVoice";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import { CourseReminderSync } from "@/components/CourseReminderSync";
@@ -20,28 +23,93 @@ import { CourseWidgetSync } from "@/components/CourseWidgetSync";
 import { ImportTaskOverlay } from "@/components/ImportTaskOverlay";
 import { WebdavAutoSync } from "@/components/WebdavAutoSync";
 import { WhalePet } from "@/components/WhalePet";
-import { triggerWhaleWave, WhaleWaveOverlay } from "@/components/WhaleSummonFX";
+import type { WhaleWaveRequest } from "@/components/WhaleSummonFX";
 import { useSettings } from "@/store/useSettings";
+import { LazyBoundary, lazyNamed } from "@/utils/lazyModule";
 import "@/global.css";
+
+if (Platform.OS !== "web") {
+  try {
+    enableFreeze(true);
+  } catch {
+    // Safe fallback in non-native or test environments.
+  }
+}
+
+type WhaleSummonFXModule = typeof import("@/components/WhaleSummonFX");
+let whaleFxModule: WhaleSummonFXModule | null = null;
+function loadWhaleFx(): Promise<WhaleSummonFXModule> {
+  if (whaleFxModule) return Promise.resolve(whaleFxModule);
+  return import("@/components/WhaleSummonFX").then((mod) => {
+    whaleFxModule = mod;
+    return mod;
+  });
+}
+
+const LazyWhaleWaveOverlay = lazyNamed(loadWhaleFx, "WhaleWaveOverlay");
+
+function WhaleWaveReadySignal({
+  onReady,
+  onDispose,
+}: {
+  onReady: () => void;
+  onDispose: () => void;
+}) {
+  useEffect(() => {
+    onReady();
+    return onDispose;
+  }, [onReady, onDispose]);
+  return null;
+}
 
 /** 衔接大肥鱼界面进出、人格切换与主题色温变更时的全局径向水波纹扩散 */
 function WhaleWaveCoordinator() {
   const pathname = usePathname();
+  const whaleActive = useWhaleMemory((s) => s.active);
+  const whalePetVisible = useWhalePet((s) => s.visible);
+  const whaleOn = whaleActive || whalePetVisible;
+  const [waveMounted, setWaveMounted] = useState(
+    () => useWhaleMemory.getState().active || useWhalePet.getState().visible,
+  );
   const prevPathRef = useRef<string | null>(null);
+  const overlayReadyRef = useRef(false);
+  const pendingWaveRef = useRef<WhaleWaveRequest | null>(null);
+
+  const fireWave = useCallback((req: WhaleWaveRequest) => {
+    setWaveMounted(true);
+    if (overlayReadyRef.current && whaleFxModule) {
+      whaleFxModule.triggerWhaleWave(req);
+      return;
+    }
+    pendingWaveRef.current = req;
+  }, []);
+
+  const handleOverlayReady = useCallback(() => {
+    overlayReadyRef.current = true;
+    const pending = pendingWaveRef.current;
+    pendingWaveRef.current = null;
+    if (pending && whaleFxModule) {
+      whaleFxModule.triggerWhaleWave(pending);
+    }
+  }, []);
+
+  const handleOverlayDispose = useCallback(() => {
+    overlayReadyRef.current = false;
+  }, []);
 
   useEffect(() => {
     const prev = prevPathRef.current;
     prevPathRef.current = pathname;
     if (!prev || prev === pathname) return;
-    const whaleOn = useWhaleMemory.getState().active || useWhalePet.getState().visible;
-    if (!whaleOn) return;
+    const isWhaleActive = useWhaleMemory.getState().active || useWhalePet.getState().visible;
+    if (!isWhaleActive) return;
     const tint = useSettings.getState().backgroundTint;
     if (prev === "/assistant" && pathname !== "/assistant") {
-      triggerWhaleWave({ kind: "exit", tint });
+      fireWave({ kind: "exit", tint });
     } else if (prev !== "/assistant" && pathname === "/assistant") {
-      triggerWhaleWave({ kind: "enter", tint });
+      fireWave({ kind: "enter", tint });
     }
-  }, [pathname]);
+  }, [pathname, fireWave]);
 
   useEffect(() => {
     let settingsReady = useSettings.persist.hasHydrated();
@@ -55,27 +123,42 @@ function WhaleWaveCoordinator() {
         next.appearance !== prev.appearance ||
         next.material !== prev.material
       ) {
-        triggerWhaleWave({ kind: "theme", tint: next.backgroundTint });
+        fireWave({ kind: "theme", tint: next.backgroundTint });
       }
     });
     const unsubMemory = useWhaleMemory.subscribe((next, prev) => {
+      if (next.active) setWaveMounted(true);
       if (!prev.hydrated || !next.hydrated) return;
       if (next.active !== prev.active) {
-        triggerWhaleWave({
+        fireWave({
           kind: next.active ? "summon" : "leave",
           tint: useSettings.getState().backgroundTint,
           silent: true,
         });
       }
     });
+    const unsubPet = useWhalePet.subscribe((next) => {
+      if (next.visible) setWaveMounted(true);
+    });
     return () => {
       unsubHydrate();
       unsubSettings();
       unsubMemory();
+      unsubPet();
     };
-  }, []);
+  }, [fireWave]);
 
-  return <WhaleWaveOverlay />;
+  if (!waveMounted && !whaleOn) return null;
+
+  return (
+    <LazyBoundary>
+      <LazyWhaleWaveOverlay />
+      <WhaleWaveReadySignal
+        onReady={handleOverlayReady}
+        onDispose={handleOverlayDispose}
+      />
+    </LazyBoundary>
+  );
 }
 
 export default function RootLayout() {
@@ -102,7 +185,14 @@ export default function RootLayout() {
     void useWhaleVoice.getState().hydrate();
     void useSoundEffects.getState().hydrate();
     const state = AppState.addEventListener("change", (next) => {
-      if (next !== "active") { stopWhaleVoice(); stopAllSfx(); void flushPendingWrites().catch(() => {}); }
+      if (next !== "active") {
+        stopWhaleVoice();
+        stopAllSfx();
+        if (typeof releaseVoiceCacheMemory === "function") {
+          releaseVoiceCacheMemory();
+        }
+        void flushPendingWrites().catch(() => {});
+      }
     });
     const unsubscribe = useWhaleVoice.subscribe((next, prev) => {
       if (!next.on && prev.on) stopWhaleVoice();

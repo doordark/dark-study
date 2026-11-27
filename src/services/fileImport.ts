@@ -21,7 +21,7 @@ export class PermissionDeniedError extends Error {
 }
 
 export interface PickedImage {
-  /** 仅在背景图或显式读取时填充；识别任务按需读取，避免 9 张大图同时占满内存 */
+  /** 仅在显式读取时填充；背景图与识别任务均按需使用 uri，避免大图 base64 占满内存 */
   base64?: string;
   mimeType: string;
   uri: string;
@@ -107,19 +107,14 @@ export async function pickImageForBackground(): Promise<PickedImage | null> {
 
   const result = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ["images"],
-    quality: 0.9,
-    base64: true,
+    quality: 0.85,
+    base64: false,
     allowsEditing: true,
     aspect: [9, 16],
   });
   if (result.canceled || !result.assets?.length) return null;
 
-  const asset = result.assets[0];
-  return {
-    base64: asset.base64 ?? "",
-    mimeType: asset.mimeType ?? "image/jpeg",
-    uri: asset.uri,
-  };
+  return toLazyPickedImage(result.assets[0]);
 }
 
 /** 打开相机拍摄（用于拍课表 / 作息表 / 成绩单） */

@@ -1,4 +1,4 @@
-import { RESIDENTS, RESIDENT_IDS, isResidentId, type ResidentId } from './farmLife';
+import { RESIDENTS, RESIDENT_IDS, isResidentId, type ResidentId } from '../constants/farmResidentsMeta';
 
 export type AssignmentStatus = 'needs_details' | 'walking' | 'talking' | 'answered' | 'unanswered' | 'interrupted' | 'cancelled';
 /** 区分委托/转述的真实社交意图，不再把所有带话都当成“去问一个待核实问题”。 */

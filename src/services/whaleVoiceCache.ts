@@ -3,7 +3,7 @@ import { voiceCacheKey } from "./whaleVoiceCacheKey";
 
 export { voiceCacheIdentity, voiceCacheKey } from "./whaleVoiceCacheKey";
 
-const MAX_BYTES = 50 * 1024 * 1024;
+const MAX_BYTES = 24 * 1024 * 1024;
 
 interface Entry {
   key: string;
@@ -66,6 +66,7 @@ async function load(): Promise<Entry[]> {
 }
 
 async function save() {
+  if (!entries) return;
   await new File(directory(), "index.json").write(JSON.stringify(entries));
 }
 
@@ -125,6 +126,12 @@ export function getVoiceCacheSize(): Promise<number> {
     const list = await load();
     return list.reduce((n, e) => n + e.size, 0);
   });
+}
+
+export function releaseVoiceCacheMemory(): void {
+  void serial(async () => {
+    entries = null;
+  }).catch(() => {});
 }
 
 export function releaseVoiceUri(_uri: string) {
