@@ -76,7 +76,9 @@ export interface PlaySfxOptions {
 }
 
 const MAX_ACTIVE_PLAYERS = 4;
+const MAX_COOLDOWN_ENTRIES = 32;
 const COOLDOWN_MS = 160;
+const COOLDOWN_TTL_MS = COOLDOWN_MS * 4;
 const GLOBAL_COOLDOWN_MS = 90;
 const SAFETY_TIMEOUT_MS = 4000;
 
@@ -90,6 +92,19 @@ const lastPlayedAt = new Map<SfxId, number>();
 let lastGlobalPlayedAt = 0;
 let playGeneration = 0;
 let audioModeReady: Promise<void> | null = null;
+
+function pruneLastPlayedAt(now: number) {
+  for (const [key, ts] of lastPlayedAt) {
+    if (now - ts >= COOLDOWN_TTL_MS || ts > now) {
+      lastPlayedAt.delete(key);
+    }
+  }
+  while (lastPlayedAt.size >= MAX_COOLDOWN_ENTRIES) {
+    const oldest = lastPlayedAt.keys().next().value;
+    if (!oldest) break;
+    lastPlayedAt.delete(oldest);
+  }
+}
 
 function ensureAudioMode() {
   if (!audioModeReady) {
@@ -111,11 +126,17 @@ function disposeHandle(handle: ActiveHandle) {
   handle.cleanup();
 }
 
+export function releaseSfxMemory() {
+  lastPlayedAt.clear();
+  lastGlobalPlayedAt = 0;
+}
+
 export function stopAllSfx() {
   playGeneration += 1;
   for (const handle of [...activeHandles]) {
     disposeHandle(handle);
   }
+  releaseSfxMemory();
 }
 
 export function playSfx(id: SfxId, opts: PlaySfxOptions = {}): void {
@@ -132,6 +153,12 @@ export function playSfx(id: SfxId, opts: PlaySfxOptions = {}): void {
     if (now - prev < COOLDOWN_MS) return;
     if (now - lastGlobalPlayedAt < GLOBAL_COOLDOWN_MS) return;
     lastGlobalPlayedAt = now;
+  }
+  if (lastPlayedAt.size >= MAX_COOLDOWN_ENTRIES) {
+    pruneLastPlayedAt(now);
+  }
+  if (lastPlayedAt.has(id)) {
+    lastPlayedAt.delete(id);
   }
   lastPlayedAt.set(id, now);
 

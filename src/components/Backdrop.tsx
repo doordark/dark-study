@@ -153,6 +153,8 @@ export function Backdrop({ children }: { children?: React.ReactNode }) {
             source={{ uri: backgroundImage }}
             style={StyleSheet.absoluteFill}
             resizeMode="cover"
+            resizeMethod="resize"
+            fadeDuration={0}
           />
           {/* 可调可读性遮罩 + 轻色调薄雾，避免花哨壁纸导致课表文字看不清 */}
           <View
