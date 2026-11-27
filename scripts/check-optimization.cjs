@@ -59,6 +59,7 @@ const checks = [
   'check-whale-copilot',
   'check-study-loop',
   'check-modular-refactor',
+  'check-architecture-health',
 ];
 for (const check of checks) {
   const result = spawnSync(process.execPath, [path.join(__dirname, `${check}.cjs`)], { stdio: 'inherit', cwd: path.join(__dirname, '..') });
