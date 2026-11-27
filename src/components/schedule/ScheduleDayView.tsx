@@ -209,7 +209,7 @@ export const ScheduleDayView = React.memo(function ScheduleDayView({
                 .easing(Easing.out(Easing.cubic))
         }
       >
-        <View className="mt-1.5 px-4">
+        <View className="mt-2 px-4">
           <GlassContainer radius={16} intensity={42} borderOpacity={0.2}>
             <View className="flex-row p-1">
               {WEEKDAY_LABELS.map((label, i) => {
@@ -228,7 +228,7 @@ export const ScheduleDayView = React.memo(function ScheduleDayView({
                     <View
                       className={`items-center rounded-[11px] border py-1.5 ${
                         isSel
-                          ? "border-white/35 bg-white/35 dark:border-white/15 dark:bg-white/[0.12]"
+                          ? "border-white/45 bg-white/45 dark:border-white/15 dark:bg-white/[0.12]"
                           : "border-transparent"
                       }`}
                     >
@@ -236,14 +236,14 @@ export const ScheduleDayView = React.memo(function ScheduleDayView({
                         className={`text-[11.5px] font-semibold ${
                           isSel
                             ? "text-sky-600 dark:text-sky-300"
-                            : "text-slate-500 dark:text-slate-400"
+                            : "text-slate-600 dark:text-slate-400"
                         }`}
                       >
                         {label}
                       </Text>
                       <View
-                        className={`mt-0.5 h-1 w-1 rounded-full ${
-                          isToday ? "bg-sky-400" : "bg-transparent"
+                        className={`mt-1 h-1 w-1 rounded-full ${
+                          isToday ? "bg-sky-500 dark:bg-sky-400" : "bg-transparent"
                         }`}
                       />
                     </View>
@@ -263,7 +263,7 @@ export const ScheduleDayView = React.memo(function ScheduleDayView({
               className="flex-1"
               contentContainerStyle={{
                 paddingHorizontal: 16,
-                paddingBottom: 96,
+                paddingBottom: 100,
               }}
               showsVerticalScrollIndicator={false}
             >
@@ -308,7 +308,7 @@ export const ScheduleDayView = React.memo(function ScheduleDayView({
                   </GlassContainer>
                 </Animated.View>
               ) : (
-                <View className="gap-y-2">
+                <View className="gap-y-2.5">
                   {dayCourses.map((course, i) => {
                     const courseActive =
                       todayNow !== null &&

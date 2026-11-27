@@ -151,6 +151,9 @@ const AssistantUndoBanner = React.memo(function AssistantUndoBanner() {
   );
 });
 
+const QUICK_TOOL_PILL_CLASS =
+  "h-8 flex-row items-center rounded-full border border-white/35 bg-white/45 px-3 dark:border-white/12 dark:bg-white/[0.07]";
+
 const StudyToolsPill = React.memo(function StudyToolsPill({
   schedule,
   onPress,
@@ -176,7 +179,7 @@ const StudyToolsPill = React.memo(function StudyToolsPill({
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      className="flex-row items-center rounded-full border border-white/25 bg-white/30 px-2.5 py-1 dark:border-white/10 dark:bg-white/[0.06]"
+      className={QUICK_TOOL_PILL_CLASS}
     >
       <Ionicons name="timer-outline" size={12} color="#10B981" />
       <Text className="ml-1 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
@@ -241,7 +244,7 @@ const ScheduleFocusBanners = React.memo(function ScheduleFocusBanners({
       ) : null}
 
       {focusDoneNotice && !activeFocusSession && !studyModalOpen ? (
-        <View className="px-4 pt-1.5">
+        <View className="mt-2 px-4">
           <GlassContainer radius={16} intensity={40} borderOpacity={0.25}>
             <View className="flex-row items-center px-3 py-2">
               <Ionicons
@@ -342,8 +345,9 @@ export const ScheduleHeader = React.memo(function ScheduleHeader({
 
   /** 横向周次条自动滚到当前选中周居中 */
   useEffect(() => {
-    // 每颗周次胶囊约 32px + 6px 间距 = 38px，左右内边距 20px
-    const x = Math.max(0, (activeWeek - 1) * 38 + 20 - winW / 2 + 16);
+    // 每颗周次胶囊 34px + 6px 间距 = 40px，容器左右外边距各 16px，内部左右内边距各 6px
+    const viewportW = Math.max(0, winW - 32);
+    const x = Math.max(0, (activeWeek - 1) * 40 + 23 - viewportW / 2);
     const id = setTimeout(() => {
       weekScrollRef.current?.scrollTo({ x, animated: !reducedMotion });
     }, 40);
@@ -356,7 +360,7 @@ export const ScheduleHeader = React.memo(function ScheduleHeader({
   return (
     <>
       {/* ---------- 顶部：日期 + 周次 + 回今天 + 视图切换 ---------- */}
-      <View className="px-5 pb-0.5 pt-1">
+      <View className="px-4 pt-1">
         <AssistantUndoBanner />
 
         {holidayUndo && holidayUndo.scheduleId === activeScheduleId ? (
@@ -396,43 +400,43 @@ export const ScheduleHeader = React.memo(function ScheduleHeader({
               : FadeInDown.duration(220).easing(Easing.out(Easing.cubic))
           }
         >
-          <View className="flex-row items-center justify-between">
-            <View className="min-w-0 flex-1 pr-2">
-              {/* 课表名称 + 学期外状态标签 */}
-              <View className="flex-row items-center gap-x-2">
-                <Pressable
-                  onPress={onOpenSwitcher}
-                  onLongPress={onAfterHoursPlatform}
-                  delayLongPress={1600}
-                  className="flex-row items-center self-start rounded-full py-0.5 pr-1.5"
-                  style={{ flexShrink: 1 }}
+          {/* 课表名称 + 学期外状态标签 */}
+          <View className="flex-row items-center gap-x-2">
+            <Pressable
+              onPress={onOpenSwitcher}
+              onLongPress={onAfterHoursPlatform}
+              delayLongPress={1600}
+              className="flex-row items-center self-start rounded-full py-0.5 pr-1.5"
+              style={{ flexShrink: 1 }}
+            >
+              <Text
+                numberOfLines={1}
+                className="text-[10.5px] font-semibold tracking-wider text-sky-600/90 dark:text-sky-300/85"
+                style={{ flexShrink: 1 }}
+              >
+                {schedule.name}
+              </Text>
+              <Ionicons
+                name="chevron-down"
+                size={11}
+                color="#38BDF8"
+                style={{ marginLeft: 2, flexShrink: 0 }}
+              />
+            </Pressable>
+            {semesterBadge ? (
+              <View className="shrink-0 rounded-full bg-amber-400/20 px-2 py-0.5">
+                <Text
+                  numberOfLines={1}
+                  className="text-[9.5px] font-bold text-amber-700 dark:text-amber-300"
                 >
-                  <Text
-                    numberOfLines={1}
-                    className="text-[10.5px] font-semibold tracking-wider text-sky-600/90 dark:text-sky-300/85"
-                    style={{ flexShrink: 1 }}
-                  >
-                    {schedule.name}
-                  </Text>
-                  <Ionicons
-                    name="chevron-down"
-                    size={11}
-                    color="#38BDF8"
-                    style={{ marginLeft: 2, flexShrink: 0 }}
-                  />
-                </Pressable>
-                {semesterBadge ? (
-                  <View className="shrink-0 rounded-full bg-amber-400/20 px-2 py-0.5">
-                    <Text
-                      numberOfLines={1}
-                      className="text-[9.5px] font-bold text-amber-700 dark:text-amber-300"
-                    >
-                      {semesterBadge}
-                    </Text>
-                  </View>
-                ) : null}
+                  {semesterBadge}
+                </Text>
               </View>
+            ) : null}
+          </View>
 
+          <View className="flex-row items-center justify-between gap-x-2">
+            <View className="min-w-0 flex-1">
               <Pressable
                 onLongPress={onWeekTitleLongPress}
                 delayLongPress={800}
@@ -468,7 +472,7 @@ export const ScheduleHeader = React.memo(function ScheduleHeader({
                     onPress={onJumpToToday}
                     accessibilityRole="button"
                     accessibilityLabel="回到今天"
-                    className="rounded-[12px] border border-sky-400/45 bg-sky-500/20 px-2.5 py-1.5"
+                    className="h-8 min-w-[32px] items-center justify-center rounded-[14px] border border-sky-400/45 bg-sky-500/20 px-2.5"
                   >
                     <Text
                       numberOfLines={1}
@@ -481,8 +485,13 @@ export const ScheduleHeader = React.memo(function ScheduleHeader({
               ) : null}
 
               {/* 视图切换 */}
-              <GlassContainer radius={13} intensity={42} borderOpacity={0.2}>
-                <View className="flex-row p-0.5">
+              <GlassContainer
+                radius={14}
+                intensity={42}
+                borderOpacity={0.2}
+                style={{ height: 32, justifyContent: "center" }}
+              >
+                <View className="flex-1 flex-row items-center p-0.5">
                   {(
                     [
                       ["day", "today"],
@@ -496,7 +505,7 @@ export const ScheduleHeader = React.memo(function ScheduleHeader({
                       delayLongPress={1400}
                       accessibilityRole="button"
                       accessibilityLabel={key === "day" ? "日视图" : "周视图"}
-                      className={`h-7 w-8 items-center justify-center rounded-[10px] ${
+                      className={`h-full w-8 items-center justify-center rounded-[11px] ${
                         mode === key ? "bg-sky-400/85" : ""
                       }`}
                     >
@@ -512,13 +521,14 @@ export const ScheduleHeader = React.memo(function ScheduleHeader({
 
               {/* 时钟 */}
               <GlassContainer
-                radius={13}
+                radius={14}
                 intensity={42}
                 borderOpacity={0.2 + secretCharge * 0.045}
+                style={{ height: 32, justifyContent: "center" }}
               >
                 <Pressable
                   onPress={onClockTap}
-                  className="flex-row items-center px-2.5 py-1.5"
+                  className="h-full flex-row items-center justify-center px-2.5"
                   style={
                     secretCharge > 0
                       ? {
@@ -534,6 +544,7 @@ export const ScheduleHeader = React.memo(function ScheduleHeader({
                   />
                   <Text
                     numberOfLines={1}
+                    style={{ fontVariant: ["tabular-nums"] }}
                     className={`ml-1 text-[11px] font-semibold ${
                       secretCharge >= 3
                         ? "text-sky-500 dark:text-sky-300"
@@ -587,57 +598,70 @@ export const ScheduleHeader = React.memo(function ScheduleHeader({
             ? undefined
             : FadeInDown.delay(50).duration(220).easing(Easing.out(Easing.cubic))
         }
-        className="pt-1.5"
+        className="mt-2 px-4"
       >
-        <ScrollView
-          ref={weekScrollRef}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 20, gap: 6 }}
-        >
-          {Array.from({ length: totalWeeks }, (_, i) => i + 1).map((w) => {
-            const isNow = currentRealWeek !== null && w === currentRealWeek;
-            const isSel = w === activeWeek;
-            return (
-              <Pressable key={w} onPress={() => onSelectWeek(w)}>
-                <View
-                  className={`h-8 min-w-[32px] items-center justify-center rounded-full border px-2 ${
-                    isSel
-                      ? "border-sky-400/70 bg-sky-400/85"
-                      : isNow
-                        ? "border-sky-400/55 bg-white/30 dark:bg-white/[0.08]"
-                        : "border-white/15 bg-white/20 dark:border-white/[0.06] dark:bg-white/[0.04]"
-                  }`}
+        <GlassContainer radius={16} intensity={40} borderOpacity={0.2}>
+          <ScrollView
+            ref={weekScrollRef}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{
+              paddingHorizontal: 6,
+              paddingVertical: 5,
+              gap: 6,
+            }}
+          >
+            {Array.from({ length: totalWeeks }, (_, i) => i + 1).map((w) => {
+              const isNow = currentRealWeek !== null && w === currentRealWeek;
+              const isSel = w === activeWeek;
+              return (
+                <Pressable
+                  key={w}
+                  onPress={() => onSelectWeek(w)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`第 ${w} 周`}
+                  accessibilityState={{ selected: isSel }}
                 >
-                  <Text
-                    className={`text-[12px] font-bold ${
+                  <View
+                    className={`h-7 min-w-[34px] items-center justify-center rounded-[10px] border px-1.5 ${
                       isSel
-                        ? "text-white"
+                        ? "border-sky-400/75 bg-sky-400/90"
                         : isNow
-                          ? "text-sky-600 dark:text-sky-300"
-                          : "text-slate-500 dark:text-slate-400"
+                          ? "border-sky-400/55 bg-sky-500/12 dark:border-sky-400/45 dark:bg-sky-400/15"
+                          : "border-transparent bg-transparent"
                     }`}
                   >
-                    {w}
-                  </Text>
-                </View>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+                    <Text
+                      style={{ fontVariant: ["tabular-nums"] }}
+                      className={`text-[12px] font-bold ${
+                        isSel
+                          ? "text-white"
+                          : isNow
+                            ? "text-sky-600 dark:text-sky-300"
+                            : "text-slate-600 dark:text-slate-300"
+                      }`}
+                    >
+                      {w}
+                    </Text>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </GlassContainer>
       </Animated.View>
 
       {/* ---------- 快捷工具胶囊条（待办 / 专注 / 对比 / 搜索统计 / 调休 / 导出壁纸） ---------- */}
-      <View className="pt-1.5">
+      <View className="mt-2">
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 16, gap: 6 }}
+          contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}
         >
           <Pressable
             onPress={onOpenTaskSheet}
             accessibilityRole="button"
-            className="flex-row items-center rounded-full border border-white/25 bg-white/30 px-2.5 py-1 dark:border-white/10 dark:bg-white/[0.06]"
+            className={QUICK_TOOL_PILL_CLASS}
           >
             <Ionicons name="checkbox-outline" size={12} color="#F43F5E" />
             <Text className="ml-1 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
@@ -663,7 +687,7 @@ export const ScheduleHeader = React.memo(function ScheduleHeader({
               onOpenPeerCompare();
             }}
             accessibilityRole="button"
-            className="flex-row items-center rounded-full border border-white/25 bg-white/30 px-2.5 py-1 dark:border-white/10 dark:bg-white/[0.06]"
+            className={QUICK_TOOL_PILL_CLASS}
           >
             <Ionicons name="people-outline" size={12} color="#06B6D4" />
             <Text className="ml-1 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
@@ -677,7 +701,7 @@ export const ScheduleHeader = React.memo(function ScheduleHeader({
               onOpenSearchStats();
             }}
             accessibilityRole="button"
-            className="flex-row items-center rounded-full border border-white/25 bg-white/30 px-2.5 py-1 dark:border-white/10 dark:bg-white/[0.06]"
+            className={QUICK_TOOL_PILL_CLASS}
           >
             <Ionicons name="search-outline" size={12} color="#38BDF8" />
             <Text className="ml-1 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
@@ -691,7 +715,7 @@ export const ScheduleHeader = React.memo(function ScheduleHeader({
               onOpenHolidayShift();
             }}
             accessibilityRole="button"
-            className="flex-row items-center rounded-full border border-white/25 bg-white/30 px-2.5 py-1 dark:border-white/10 dark:bg-white/[0.06]"
+            className={QUICK_TOOL_PILL_CLASS}
           >
             <Ionicons
               name="swap-horizontal-outline"
@@ -709,7 +733,7 @@ export const ScheduleHeader = React.memo(function ScheduleHeader({
               onOpenExport();
             }}
             accessibilityRole="button"
-            className="flex-row items-center rounded-full border border-white/25 bg-white/30 px-2.5 py-1 dark:border-white/10 dark:bg-white/[0.06]"
+            className={QUICK_TOOL_PILL_CLASS}
           >
             <Ionicons name="share-outline" size={12} color="#8B5CF6" />
             <Text className="ml-1 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
@@ -729,14 +753,14 @@ export const ScheduleHeader = React.memo(function ScheduleHeader({
 
       {/* ---------- 考试 / DDL 倒计时条（有未完成任务时显示，可折叠） ---------- */}
       {topTask && topCountdown ? (
-        <View className="px-4 pt-1.5">
+        <View className="mt-2 px-4">
           {taskBannerCollapsed ? (
             <Pressable
               onPress={() => {
                 selectHaptic();
                 setTaskBannerCollapsed(false);
               }}
-              className="flex-row items-center justify-between self-start rounded-full border border-white/25 bg-white/30 px-3 py-1 dark:border-white/10 dark:bg-white/[0.06]"
+              className="h-8 flex-row items-center justify-between self-start rounded-full border border-white/35 bg-white/45 px-3 dark:border-white/12 dark:bg-white/[0.07]"
             >
               <Ionicons name="alarm-outline" size={11.5} color="#F43F5E" />
               <Text className="ml-1 text-[10.5px] font-semibold text-slate-600 dark:text-slate-300">
