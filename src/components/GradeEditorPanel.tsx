@@ -24,6 +24,7 @@ import { useSettings } from "@/store/useSettings";
 import { useStore } from "@/store/useStore";
 import type {
   GradeRecord,
+  GradeRetakePolicy,
   GradeRule,
   GradeScoreType,
   GradeYear,
@@ -32,7 +33,10 @@ import type {
 import {
   deriveGpa,
   getGpaScaleMeta,
+  getRetakePolicyMeta,
+  GRADE_RETAKE_POLICIES,
   GRADE_SEMESTERS,
+  resolveRetakePolicy,
 } from "@/utils/grades";
 
 const SCORE_TYPE_LABEL: Record<GradeScoreType, string> = {
@@ -742,6 +746,7 @@ export interface GradeRuleEditorProps {
   onSave: (data: {
     name: string;
     excludedTypes: string[];
+    retakePolicy: GradeRetakePolicy;
     clearManual: boolean;
   }) => void;
   onDelete?: () => void;
@@ -756,10 +761,13 @@ export function GradeRuleEditor({
   onDelete,
 }: GradeRuleEditorProps) {
   const types = useStore((s) => s.gradeTypes);
-  const sheetH = useSheetHeight(0.68);
+  const sheetH = useSheetHeight(0.76);
   const [name, setName] = useState(rule?.name ?? "");
   const [excludedTypes, setExcludedTypes] = useState<string[]>(
     rule?.excludedTypes ?? [],
+  );
+  const [retakePolicy, setRetakePolicy] = useState<GradeRetakePolicy>(
+    resolveRetakePolicy(rule?.retakePolicy),
   );
   const [clearManual, setClearManual] = useState(false);
 
@@ -774,7 +782,7 @@ export function GradeRuleEditor({
       Alert.alert("请给计算规则命名", "例如「综测绩点」「保研绩点」");
       return;
     }
-    onSave({ name: trimmed, excludedTypes, clearManual });
+    onSave({ name: trimmed, excludedTypes, retakePolicy, clearManual });
   };
 
   const confirmDeleteRule = () => {
@@ -910,6 +918,41 @@ export function GradeRuleEditor({
                       </Text>
                     </Pressable>
                   ) : null}
+
+                  <Text className="mb-1.5 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                    重修计分策略
+                  </Text>
+                  <View className="mb-1.5 flex-row gap-x-2">
+                    {GRADE_RETAKE_POLICIES.map((item) => {
+                      const on = retakePolicy === item.id;
+                      return (
+                        <Pressable
+                          key={item.id}
+                          accessibilityRole="radio"
+                          accessibilityState={{ checked: on }}
+                          onPress={() => setRetakePolicy(item.id)}
+                          className={`flex-1 items-center rounded-xl border py-2 ${
+                            on
+                              ? "border-sky-400/70 bg-sky-400/80"
+                              : "border-white/30 bg-white/25 dark:border-white/10 dark:bg-white/[0.05]"
+                          }`}
+                        >
+                          <Text
+                            className={`text-[11.5px] font-semibold ${
+                              on
+                                ? "text-white"
+                                : "text-slate-600 dark:text-slate-300"
+                            }`}
+                          >
+                            {item.label}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                  <Text className="mb-3 text-[10px] leading-4 text-slate-400 dark:text-slate-500">
+                    {getRetakePolicyMeta(retakePolicy).description}
+                  </Text>
 
                   <View className="mt-1 rounded-2xl bg-white/20 px-3.5 py-2.5 dark:bg-white/[0.05]">
                     <Text className="text-[10.5px] leading-4 text-slate-500 dark:text-slate-400">

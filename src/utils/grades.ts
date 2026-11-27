@@ -2,6 +2,7 @@ import type {
   GpaScaleId,
   GradeDraft,
   GradeRecord,
+  GradeRetakePolicy,
   GradeRule,
   GradeScoreType,
   GradeType,
@@ -303,6 +304,212 @@ export function isGradePassed(grade: GradeRecord): boolean {
   return grade.gpa != null && grade.gpa > 0;
 }
 
+/** 重修计分策略元信息 */
+export interface RetakePolicyMeta {
+  id: GradeRetakePolicy;
+  label: string;
+  shortLabel: string;
+  description: string;
+}
+
+export const GRADE_RETAKE_POLICIES: readonly RetakePolicyMeta[] = [
+  {
+    id: "all",
+    label: "全部计入",
+    shortLabel: "全部计入",
+    description: "重复修读的同名课程每次成绩均参与绩点与均分统计",
+  },
+  {
+    id: "highest",
+    label: "重修取最高",
+    shortLabel: "重修取最高",
+    description: "同名课程仅计入绩点最高的一次（同绩点取更高分/较新记录）",
+  },
+  {
+    id: "latest",
+    label: "重修取最新",
+    shortLabel: "重修取最新",
+    description: "同名课程仅计入最近修读的一次成绩，旧记录标记为已覆盖",
+  },
+];
+
+export function resolveRetakePolicy(value: unknown): GradeRetakePolicy {
+  return value === "highest" || value === "latest" ? value : "all";
+}
+
+export function getRetakePolicyMeta(
+  policy: GradeRetakePolicy = "all",
+): RetakePolicyMeta {
+  return (
+    GRADE_RETAKE_POLICIES.find((item) => item.id === policy) ??
+    GRADE_RETAKE_POLICIES[0]
+  );
+}
+
+const SEMESTER_CHRONOLOGY_RANK: Record<SemesterKind, number> = {
+  fall: 0,
+  spring: 1,
+  summer: 2,
+};
+
+function parseStructuredYearOrder(yearId: string): number | null {
+  const trimmed = String(yearId ?? "").trim();
+  const yMatch = /^(?:y|year[-_]?)(\d+)$/i.exec(trimmed);
+  if (yMatch) return Number(yMatch[1]);
+  const calMatch = /^(\d{4})(?:[-_/]\d{2,4})?$/.exec(trimmed);
+  if (calMatch) return Number(calMatch[1]);
+  return null;
+}
+
+function parseValidNumericScore(grade: GradeRecord): number | null {
+  if (grade.scoreType !== "numeric") return null;
+  const text = (grade.score ?? "").trim();
+  if (!text) return null;
+  const num = Number(text);
+  return Number.isFinite(num) && num >= 0 && num <= 100 ? num : null;
+}
+
+function compareGradeRecency(
+  a: { grade: GradeRecord; index: number },
+  b: { grade: GradeRecord; index: number },
+  yearOrderMap: ReadonlyMap<string, number> | null,
+): number {
+  if (a.grade.yearId !== b.grade.yearId) {
+    if (yearOrderMap) {
+      const ya = yearOrderMap.get(a.grade.yearId);
+      const yb = yearOrderMap.get(b.grade.yearId);
+      if (ya !== undefined && yb !== undefined && ya !== yb) {
+        return ya - yb;
+      }
+    } else {
+      const na = parseStructuredYearOrder(a.grade.yearId);
+      const nb = parseStructuredYearOrder(b.grade.yearId);
+      if (na !== null && nb !== null && na !== nb) {
+        return na - nb;
+      }
+    }
+    return a.index - b.index;
+  }
+  const sa = SEMESTER_CHRONOLOGY_RANK[a.grade.semester] ?? 0;
+  const sb = SEMESTER_CHRONOLOGY_RANK[b.grade.semester] ?? 0;
+  if (sa !== sb) return sa - sb;
+  return a.index - b.index;
+}
+
+function compareGradeHighest(
+  a: { grade: GradeRecord; index: number },
+  b: { grade: GradeRecord; index: number },
+  yearOrderMap: ReadonlyMap<string, number> | null,
+): number {
+  const gpaA =
+    a.grade.gpa != null && Number.isFinite(a.grade.gpa) ? a.grade.gpa : null;
+  const gpaB =
+    b.grade.gpa != null && Number.isFinite(b.grade.gpa) ? b.grade.gpa : null;
+
+  if (gpaA !== null && gpaB !== null) {
+    if (Math.abs(gpaA - gpaB) > 1e-9) return gpaA - gpaB;
+  } else if (gpaA !== null || gpaB !== null) {
+    const passedA = isGradePassed(a.grade);
+    const passedB = isGradePassed(b.grade);
+    if (passedA !== passedB) return passedA ? 1 : -1;
+    return gpaA !== null ? 1 : -1;
+  } else {
+    const passedA = isGradePassed(a.grade);
+    const passedB = isGradePassed(b.grade);
+    if (passedA !== passedB) return passedA ? 1 : -1;
+  }
+
+  const numA = parseValidNumericScore(a.grade);
+  const numB = parseValidNumericScore(b.grade);
+  if (numA !== null && numB !== null) {
+    if (Math.abs(numA - numB) > 1e-9) return numA - numB;
+  } else if (numA !== null || numB !== null) {
+    return numA !== null ? 1 : -1;
+  }
+
+  return compareGradeRecency(a, b, yearOrderMap);
+}
+
+function buildYearOrderMap(
+  gradeYears?: readonly GradeYear[],
+): Map<string, number> | null {
+  if (!gradeYears?.length) return null;
+  const map = new Map<string, number>();
+  gradeYears.forEach((y, idx) => {
+    map.set(y.id, idx);
+  });
+  return map;
+}
+
+export interface EffectiveGradesResult {
+  /** 实际参与计算的成绩记录（已应用规则排除与重修覆盖策略） */
+  included: GradeRecord[];
+  /** 在规则范围内但因重修策略被覆盖的成绩 id 集合 */
+  overriddenIds: Set<string>;
+}
+
+/**
+ * 结合当前计算规则（类型/单科排除 + 重修覆盖策略）解析真正参与计算的成绩集合
+ */
+export function resolveEffectiveGrades(
+  rule: GradeRule | undefined,
+  grades: readonly GradeRecord[],
+  gradeYears?: readonly GradeYear[],
+): EffectiveGradesResult {
+  const baseIncluded = grades.filter((g) => isGradeIncluded(rule, g));
+  const policy = resolveRetakePolicy(rule?.retakePolicy);
+  const overriddenIds = new Set<string>();
+
+  if (policy === "all" || baseIncluded.length <= 1) {
+    return { included: baseIncluded, overriddenIds };
+  }
+
+  const yearOrderMap = buildYearOrderMap(gradeYears);
+  const groups = new Map<string, { grade: GradeRecord; index: number }[]>();
+
+  baseIncluded.forEach((grade, index) => {
+    const rawName = String(grade.name ?? "");
+    // 试算模块里未命名的占位课程各自独立，不应互相覆盖
+    if (grade.id.startsWith("projection-") && rawName.trim() === "试算课程") {
+      return;
+    }
+    const norm = normalizeGradeCourseName(rawName);
+    if (!norm) return;
+    const list = groups.get(norm);
+    if (list) list.push({ grade, index });
+    else groups.set(norm, [{ grade, index }]);
+  });
+
+  const overriddenIndices = new Set<number>();
+  for (const entries of groups.values()) {
+    if (entries.length <= 1) continue;
+    let winner = entries[0];
+    for (let i = 1; i < entries.length; i++) {
+      const candidate = entries[i];
+      const cmp =
+        policy === "highest"
+          ? compareGradeHighest(candidate, winner, yearOrderMap)
+          : compareGradeRecency(candidate, winner, yearOrderMap);
+      if (cmp > 0) winner = candidate;
+    }
+    for (const entry of entries) {
+      if (entry.index !== winner.index) {
+        overriddenIndices.add(entry.index);
+        overriddenIds.add(entry.grade.id);
+      }
+    }
+  }
+
+  if (!overriddenIndices.size) {
+    return { included: baseIncluded, overriddenIds };
+  }
+
+  return {
+    included: baseIncluded.filter((_, idx) => !overriddenIndices.has(idx)),
+    overriddenIds,
+  };
+}
+
 export interface GradeStats {
   /** 学分加权平均绩点 */
   value: number | null;
@@ -322,13 +529,21 @@ export interface GradeStats {
   missing: number;
   /** 缺少学分、暂未计入加权计算的课程数 */
   missingCredit: number;
+  /** 因重修覆盖策略未计入的重复修读课程条数 */
+  overriddenCount: number;
 }
 
 /** 学分加权平均绩点：Σ(绩点 × 学分) / Σ学分，同时计算加权平均分与已获总学分 */
 export function calcGradeStats(
   rule: GradeRule | undefined,
   grades: GradeRecord[],
+  gradeYears?: readonly GradeYear[],
 ): GradeStats {
+  const { included, overriddenIds } = resolveEffectiveGrades(
+    rule,
+    grades,
+    gradeYears,
+  );
   let weighted = 0;
   let credits = 0;
   let count = 0;
@@ -339,8 +554,7 @@ export function calcGradeStats(
   let weightedScoreCount = 0;
   let earnedCredits = 0;
 
-  for (const grade of grades) {
-    if (!isGradeIncluded(rule, grade)) continue;
+  for (const grade of included) {
     const credit = Number(grade.credit);
     const hasCredit =
       grade.credit != null && Number.isFinite(credit) && credit > 0;
@@ -383,6 +597,7 @@ export function calcGradeStats(
     total: grades.length,
     missing,
     missingCredit,
+    overriddenCount: overriddenIds.size,
   };
 }
 
@@ -749,4 +964,257 @@ export function buildScheduleGradeCandidates(
   }
 
   return [...byNorm.values()];
+}
+
+/** 毕业总学分目标的保留覆写键（未设置时自动按各课程类型目标之和计算） */
+export const GRADUATION_TOTAL_TARGET_KEY = "_total";
+
+/** 单个课程类型的毕业学分进度 */
+export interface GraduationCategoryProgress {
+  typeId: string;
+  typeName: string;
+  earnedCredits: number;
+  targetCredits: number;
+  /** 达成比例（0 ~ 1，无目标时为 0） */
+  ratio: number;
+  /** 距离目标还差多少学分（>= 0，无目标时为 0） */
+  remainingCredits: number;
+  /** 已通过计入毕业学分的去重课程数 */
+  passedCourseCount: number;
+}
+
+/** 毕业学分整体与分类进度汇总 */
+export interface GraduationProgress {
+  categories: GraduationCategoryProgress[];
+  totalEarnedCredits: number;
+  totalTargetCredits: number;
+  /** 整体达成比例（0 ~ 1，无目标时为 0） */
+  overallRatio: number;
+  /** 距离总目标还差多少学分（>= 0，无目标时为 0） */
+  overallRemainingCredits: number;
+  /** 已通过计入毕业学分的去重课程总数 */
+  passedCourseCount: number;
+  /** 因重修已通过而被去重、避免重复计入毕业学分的记录数 */
+  dedupedRetakeCount: number;
+  /** 是否至少配置了任一有效目标学分 */
+  hasTargets: boolean;
+}
+
+/**
+ * 按常见培养方案比例，为当前课程类型生成总计等于 totalCredits 的预设毕业学分目标
+ */
+export function buildGraduationPresetTargets(
+  totalCredits: number,
+  gradeTypes: readonly GradeType[],
+): Record<string, number> {
+  const total = Math.round(totalCredits);
+  if (!Number.isFinite(total) || total <= 0 || gradeTypes.length === 0) {
+    return {};
+  }
+  if (gradeTypes.length === 1) {
+    return { [gradeTypes[0].id]: total };
+  }
+  const weightOf = (t: GradeType): number => {
+    if (t.id === "required" || /必修|学位|核心/.test(t.name)) return 62.5;
+    if (t.id === "general" || /通识|公选|通选/.test(t.name)) return 12.5;
+    if (t.id === "elective" || /选修|限选|任选/.test(t.name)) return 25;
+    return 12.5;
+  };
+  const weights = gradeTypes.map((t) => weightOf(t));
+  const weightSum = weights.reduce((acc, w) => acc + w, 0);
+  const out: Record<string, number> = {};
+  let allocated = 0;
+
+  for (let i = 0; i < gradeTypes.length; i++) {
+    if (i === gradeTypes.length - 1) {
+      out[gradeTypes[i].id] = Math.max(0, total - allocated);
+    } else {
+      const share = Math.round((total * weights[i]) / weightSum);
+      out[gradeTypes[i].id] = share;
+      allocated += share;
+    }
+  }
+
+  const actualSum = Object.values(out).reduce((acc, n) => acc + n, 0);
+  if (actualSum !== total) {
+    let maxIdx = 0;
+    for (let i = 1; i < weights.length; i++) {
+      if (weights[i] > weights[maxIdx]) maxIdx = i;
+    }
+    const key = gradeTypes[maxIdx].id;
+    out[key] = Math.max(0, (out[key] ?? 0) + (total - actualSum));
+  }
+
+  return out;
+}
+
+/**
+ * 计算毕业学分整体与各课程类型进度：
+ * - 自动对已通过的同名重修课程按归一化名称去重，避免重修刷分虚增毕业学分
+ * - 兼容合格/通过制无绩点课程
+ */
+export function computeGraduationProgress(
+  grades: readonly GradeRecord[],
+  gradeTypes: readonly GradeType[],
+  targets: Record<string, number> | null | undefined,
+  rule?: GradeRule,
+  gradeYears?: readonly GradeYear[],
+): GraduationProgress {
+  const safeTargets = targets && typeof targets === "object" ? targets : {};
+  const policy = resolveRetakePolicy(rule?.retakePolicy);
+  const yearOrderMap = buildYearOrderMap(gradeYears);
+
+  const passedEntries: { grade: GradeRecord; index: number }[] = [];
+  grades.forEach((grade, index) => {
+    if (!isGradeIncluded(rule, grade)) return;
+    if (!isGradePassed(grade)) return;
+    passedEntries.push({ grade, index });
+  });
+
+  const groups = new Map<string, { grade: GradeRecord; index: number }[]>();
+  const uniquePassed: { grade: GradeRecord; credit: number | null }[] = [];
+  let dedupedRetakeCount = 0;
+
+  for (const entry of passedEntries) {
+    const norm = normalizeGradeCourseName(String(entry.grade.name ?? ""));
+    if (!norm) {
+      const c = Number(entry.grade.credit);
+      uniquePassed.push({
+        grade: entry.grade,
+        credit:
+          entry.grade.credit != null && Number.isFinite(c) && c > 0 ? c : null,
+      });
+      continue;
+    }
+    const list = groups.get(norm);
+    if (list) list.push(entry);
+    else groups.set(norm, [entry]);
+  }
+
+  for (const entries of groups.values()) {
+    let winner = entries[0];
+    for (let i = 1; i < entries.length; i++) {
+      const candidate = entries[i];
+      const cmp =
+        policy === "latest"
+          ? compareGradeRecency(candidate, winner, yearOrderMap)
+          : compareGradeHighest(candidate, winner, yearOrderMap);
+      if (cmp > 0) winner = candidate;
+    }
+    if (entries.length > 1) {
+      dedupedRetakeCount += entries.length - 1;
+    }
+
+    const winnerCreditRaw = Number(winner.grade.credit);
+    let effectiveCredit =
+      winner.grade.credit != null &&
+      Number.isFinite(winnerCreditRaw) &&
+      winnerCreditRaw > 0
+        ? winnerCreditRaw
+        : null;
+    if (effectiveCredit === null) {
+      for (const item of entries) {
+        const c = Number(item.grade.credit);
+        if (item.grade.credit != null && Number.isFinite(c) && c > 0) {
+          if (effectiveCredit === null || c > effectiveCredit) {
+            effectiveCredit = c;
+          }
+        }
+      }
+    }
+    uniquePassed.push({ grade: winner.grade, credit: effectiveCredit });
+  }
+
+  const accMap = new Map<
+    string,
+    {
+      typeId: string;
+      typeName: string;
+      earnedRaw: number;
+      passedCourseCount: number;
+    }
+  >();
+
+  for (const t of gradeTypes) {
+    accMap.set(t.id, {
+      typeId: t.id,
+      typeName: t.name,
+      earnedRaw: 0,
+      passedCourseCount: 0,
+    });
+  }
+
+  let totalEarnedRaw = 0;
+  for (const item of uniquePassed) {
+    let bucket = accMap.get(item.grade.type);
+    if (!bucket) {
+      bucket = {
+        typeId: item.grade.type,
+        typeName: "其他类型",
+        earnedRaw: 0,
+        passedCourseCount: 0,
+      };
+      accMap.set(item.grade.type, bucket);
+    }
+    bucket.passedCourseCount += 1;
+    if (item.credit != null && item.credit > 0) {
+      bucket.earnedRaw += item.credit;
+      totalEarnedRaw += item.credit;
+    }
+  }
+
+  const readTarget = (key: string): number => {
+    const raw = Number(safeTargets[key]);
+    return Number.isFinite(raw) && raw > 0 ? round2(raw) : 0;
+  };
+
+  let sumCategoryTargets = 0;
+  const categories: GraduationCategoryProgress[] = [...accMap.values()].map(
+    (item) => {
+      const earnedCredits = round2(item.earnedRaw);
+      const targetCredits = readTarget(item.typeId);
+      sumCategoryTargets += targetCredits;
+      const ratio =
+        targetCredits > 0 ? Math.min(1, earnedCredits / targetCredits) : 0;
+      const remainingCredits =
+        targetCredits > 0
+          ? round2(Math.max(0, targetCredits - earnedCredits))
+          : 0;
+      return {
+        typeId: item.typeId,
+        typeName: item.typeName,
+        earnedCredits,
+        targetCredits,
+        ratio,
+        remainingCredits,
+        passedCourseCount: item.passedCourseCount,
+      };
+    },
+  );
+
+  const explicitTotalTarget = readTarget(GRADUATION_TOTAL_TARGET_KEY);
+  const totalTargetCredits =
+    explicitTotalTarget > 0 ? explicitTotalTarget : round2(sumCategoryTargets);
+  const totalEarnedCredits = round2(totalEarnedRaw);
+  const overallRatio =
+    totalTargetCredits > 0
+      ? Math.min(1, totalEarnedCredits / totalTargetCredits)
+      : 0;
+  const overallRemainingCredits =
+    totalTargetCredits > 0
+      ? round2(Math.max(0, totalTargetCredits - totalEarnedCredits))
+      : 0;
+  const hasTargets =
+    totalTargetCredits > 0 || categories.some((c) => c.targetCredits > 0);
+
+  return {
+    categories,
+    totalEarnedCredits,
+    totalTargetCredits,
+    overallRatio,
+    overallRemainingCredits,
+    passedCourseCount: uniquePassed.length,
+    dedupedRetakeCount,
+    hasTargets,
+  };
 }

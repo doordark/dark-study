@@ -90,6 +90,8 @@ interface SettingsState {
   whaleShareGrades: boolean;
   /** 是否开启常驻上课进度通知 */
   liveClassNotification: boolean;
+  /** 毕业学分目标：课程类型 id（或 "_total" 总目标覆写）-> 目标学分 */
+  graduationCreditTargets: Record<string, number>;
   setApiKey: (key: string) => void;
   setAiProvider: (provider: AiProviderId) => void;
   setAiBaseUrl: (url: string) => void;
@@ -109,6 +111,8 @@ interface SettingsState {
   setWhalePhrase: (p: string) => void;
   setWhaleShareGrades: (v: boolean) => void;
   setLiveClassNotification: (v: boolean) => void;
+  setGraduationCreditTargets: (targets: Record<string, number>) => void;
+  setGraduationCreditTarget: (typeId: string, target: number | null) => void;
 }
 
 type PersistedSettingsState = Pick<
@@ -137,6 +141,7 @@ type PersistedSettingsState = Pick<
   | "whalePhrase"
   | "whaleShareGrades"
   | "liveClassNotification"
+  | "graduationCreditTargets"
 >;
 
 const SETTINGS_STORAGE_KEY = "dark-study-settings";
@@ -148,6 +153,33 @@ export function sanitizeUpdateMirrorPrefix(value: unknown): string {
   const normalized = normalizeBaseUrl(value);
   if (!normalized || normalized.length > MAX_MIRROR_PREFIX_LENGTH) return "";
   return `${normalized}/`;
+}
+
+export function sanitizeGraduationCreditTargets(
+  value: unknown,
+): Record<string, number> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const clean: Record<string, number> = {};
+  for (const [rawKey, rawVal] of Object.entries(
+    value as Record<string, unknown>,
+  )) {
+    const key = rawKey.trim();
+    if (
+      !key ||
+      key.length > 100 ||
+      key === "__proto__" ||
+      key === "constructor" ||
+      key === "prototype"
+    ) {
+      continue;
+    }
+    const num = Number(rawVal);
+    if (!Number.isFinite(num) || num <= 0) continue;
+    clean[key] = Math.min(500, Math.round(num * 100) / 100);
+  }
+  return clean;
 }
 
 function syncUpdateMirrorPrefix(prefix: string): void {
@@ -191,6 +223,7 @@ function pickPersistedSettings(s: SettingsState): PersistedSettingsState {
     whalePhrase: s.whalePhrase,
     whaleShareGrades: s.whaleShareGrades,
     liveClassNotification: s.liveClassNotification,
+    graduationCreditTargets: s.graduationCreditTargets,
   };
 }
 
@@ -369,6 +402,7 @@ export const useSettings = create<SettingsState>()(
       whalePhrase: "大爹来了",
       whaleShareGrades: true,
       liveClassNotification: false,
+      graduationCreditTargets: {},
       setApiKey: (apiKey) => {
         const trimmed = apiKey.trim();
         apiKeyRevision += 1;
@@ -418,6 +452,30 @@ export const useSettings = create<SettingsState>()(
         set({ whaleShareGrades: Boolean(whaleShareGrades) }),
       setLiveClassNotification: (liveClassNotification) =>
         set({ liveClassNotification: Boolean(liveClassNotification) }),
+      setGraduationCreditTargets: (targets) =>
+        set({
+          graduationCreditTargets: sanitizeGraduationCreditTargets(targets),
+        }),
+      setGraduationCreditTarget: (typeId, target) =>
+        set((s) => {
+          const key = typeId.trim();
+          if (
+            !key ||
+            key.length > 100 ||
+            key === "__proto__" ||
+            key === "constructor" ||
+            key === "prototype"
+          ) {
+            return {};
+          }
+          const next = { ...s.graduationCreditTargets };
+          if (target == null || !Number.isFinite(target) || target <= 0) {
+            delete next[key];
+          } else {
+            next[key] = Math.min(500, Math.round(target * 100) / 100);
+          }
+          return { graduationCreditTargets: next };
+        }),
     }),
     {
       name: SETTINGS_STORAGE_KEY,
@@ -473,6 +531,12 @@ export const useSettings = create<SettingsState>()(
         const mergedMaterial = Object.hasOwn(raw, "material")
           ? resolveMaterial(raw.material)
           : current.material;
+        const mergedGraduationCreditTargets = Object.hasOwn(
+          raw,
+          "graduationCreditTargets",
+        )
+          ? sanitizeGraduationCreditTargets(raw.graduationCreditTargets)
+          : current.graduationCreditTargets;
         return {
           ...current,
           ...safePersisted,
@@ -484,6 +548,7 @@ export const useSettings = create<SettingsState>()(
           updateMirrorPrefix: mergedUpdateMirrorPrefix,
           whaleShareGrades: mergedWhaleShareGrades,
           liveClassNotification: mergedLiveClassNotification,
+          graduationCreditTargets: mergedGraduationCreditTargets,
           apiKey:
             apiKeyRevision > 0 ? current.apiKey : legacyKey || current.apiKey,
           apiKeyHydrated: current.apiKeyHydrated,

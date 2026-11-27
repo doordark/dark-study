@@ -1,6 +1,6 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -23,6 +23,7 @@ import {
   GradeYearEditor,
 } from "@/components/GradeEditorPanel";
 import { GradeProjection } from "@/components/GradeProjection";
+import { GraduationProgressCard } from "@/components/GraduationProgressCard";
 import { PasteImportModal } from "@/components/PasteImportModal";
 import {
   runTextImportTask,
@@ -34,6 +35,7 @@ import { useActiveSchedule, useStore } from "@/store/useStore";
 import type {
   GpaScaleId,
   GradeRecord,
+  GradeRetakePolicy,
   GradeRule,
   GradeScoreType,
   GradeYear,
@@ -48,11 +50,14 @@ import {
   formatGpa,
   formatWeightedScore,
   getGpaScaleMeta,
+  getRetakePolicyMeta,
   GPA_SCALES,
   GRADE_SEMESTERS,
   gradeDuplicateKey,
   isGradeIncluded,
   normalizeGradeCourseName,
+  resolveEffectiveGrades,
+  resolveRetakePolicy,
   semesterLabel,
 } from "@/utils/grades";
 
@@ -146,7 +151,7 @@ export function GradesScreen() {
   /** 勾选编辑模式 */
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const longPressed = React.useRef(false);
+  const longPressed = useRef(false);
 
   const activeRule =
     gradeRules.find((r) => r.id === activeGradeRuleId) ?? gradeRules[0];
@@ -165,9 +170,14 @@ export function GradesScreen() {
     [grades, currentYear, semScope],
   );
 
+  const effectiveScope = useMemo(
+    () => resolveEffectiveGrades(activeRule, scopedGrades, gradeYears),
+    [activeRule, scopedGrades, gradeYears],
+  );
+
   const stats = useMemo(
-    () => calcGradeStats(activeRule, scopedGrades),
-    [activeRule, scopedGrades],
+    () => calcGradeStats(activeRule, scopedGrades, gradeYears),
+    [activeRule, scopedGrades, gradeYears],
   );
 
   const visibleGrades = useMemo(() => {
@@ -182,7 +192,10 @@ export function GradesScreen() {
         return g.gpa == null || !Number.isFinite(g.gpa);
       }
       if (filterKey === "excluded") {
-        return activeRule != null && !isGradeIncluded(activeRule, g);
+        return (
+          (activeRule != null && !isGradeIncluded(activeRule, g)) ||
+          effectiveScope.overriddenIds.has(g.id)
+        );
       }
       return g.type === filterKey;
     });
@@ -200,7 +213,14 @@ export function GradesScreen() {
       return (b.gpa ?? -1) - (a.gpa ?? -1);
     });
     return copy;
-  }, [scopedGrades, searchQuery, filterKey, sortBy, activeRule]);
+  }, [
+    scopedGrades,
+    searchQuery,
+    filterKey,
+    sortBy,
+    activeRule,
+    effectiveScope,
+  ]);
 
   const yearName = (id: string) =>
     gradeYears.find((y) => y.id === id)?.name ?? "未分学年";
@@ -577,17 +597,22 @@ export function GradesScreen() {
   const saveRule = (data: {
     name: string;
     excludedTypes: string[];
+    retakePolicy: GradeRetakePolicy;
     clearManual: boolean;
   }) => {
     if (editingRule) {
       updateGradeRule(editingRule.id, {
         name: data.name,
         excludedTypes: data.excludedTypes,
+        retakePolicy: data.retakePolicy,
         ...(data.clearManual ? { excludedCourseIds: [] } : {}),
       });
     } else {
       const id = addGradeRule(data.name);
-      updateGradeRule(id, { excludedTypes: data.excludedTypes });
+      updateGradeRule(id, {
+        excludedTypes: data.excludedTypes,
+        retakePolicy: data.retakePolicy,
+      });
     }
     setRuleVisible(false);
   };
@@ -618,6 +643,8 @@ export function GradesScreen() {
       : `${currentYear.name} · ${semesterLabel(semScope)}`
     : "全部学年总成绩";
   const ruleName = activeRule?.name ?? "默认规则";
+  const activeRetakePolicy = resolveRetakePolicy(activeRule?.retakePolicy);
+  const activeRetakeMeta = getRetakePolicyMeta(activeRetakePolicy);
   const ruleHint =
     activeRule == null
       ? "全部课程计入"
@@ -629,6 +656,13 @@ export function GradesScreen() {
             : null,
           activeRule.excludedCourseIds.length
             ? `手动排除 ${activeRule.excludedCourseIds.length} 门`
+            : null,
+          activeRetakePolicy !== "all"
+            ? `${activeRetakeMeta.shortLabel}${
+                stats.overriddenCount > 0
+                  ? `（覆盖 ${stats.overriddenCount} 条）`
+                  : ""
+              }`
             : null,
         ]
           .filter(Boolean)
@@ -648,6 +682,7 @@ export function GradesScreen() {
           grades.filter(
             (g) => g.yearId === currentYear.id && g.semester === s.kind,
           ),
+          gradeYears,
         ),
         onPress: () => switchSem(s.kind),
       }))
@@ -657,6 +692,7 @@ export function GradesScreen() {
         stats: calcGradeStats(
           activeRule,
           grades.filter((g) => g.yearId === y.id),
+          gradeYears,
         ),
         onPress: () => switchYear(y.id),
       }));
@@ -900,6 +936,11 @@ export function GradesScreen() {
                       已获总学分 {stats.earnedCredits}
                     </Text>
                   ) : null}
+                  {stats.overriddenCount > 0 ? (
+                    <Text className="text-[11px] font-semibold text-amber-600 dark:text-amber-300">
+                      重修覆盖 {stats.overriddenCount} 条
+                    </Text>
+                  ) : null}
                   <Text className="text-[11px] text-slate-500 dark:text-slate-400">
                     共 {stats.total} 门
                   </Text>
@@ -1050,6 +1091,19 @@ export function GradesScreen() {
               />
             </Animated.View>
           ) : null}
+
+          {/* 毕业学分进度追踪（可折叠） */}
+          <Animated.View
+            entering={FadeInDown.delay(105).springify()}
+            className="mt-3"
+          >
+            <GraduationProgressCard
+              grades={grades}
+              gradeTypes={gradeTypes}
+              rule={activeRule}
+              gradeYears={gradeYears}
+            />
+          </Animated.View>
 
           {/* 总览 */}
           {semScope === "all" ? (
@@ -1260,10 +1314,13 @@ export function GradesScreen() {
                 ) : (
                   <View className="mt-2">
                     {visibleGrades.map((g) => {
-                      const included =
+                      const ruleIncluded =
                         activeRule != null
                           ? isGradeIncluded(activeRule, g)
                           : true;
+                      const isOverridden =
+                        ruleIncluded && effectiveScope.overriddenIds.has(g.id);
+                      const included = ruleIncluded && !isOverridden;
                       const meta = [
                         typeName(g.type),
                         g.credit != null ? `${g.credit} 学分` : "学分待补",
@@ -1320,21 +1377,34 @@ export function GradesScreen() {
                             className="flex-1 flex-row items-center"
                           >
                             <View className="flex-1">
-                              <Text
-                                numberOfLines={1}
-                                className={`text-[13px] font-semibold ${
-                                  included
-                                    ? "text-slate-800 dark:text-white"
-                                    : "text-slate-400 dark:text-slate-500"
-                                }`}
-                              >
-                                {g.name}
-                              </Text>
+                              <View className="flex-row items-center gap-1.5">
+                                <Text
+                                  numberOfLines={1}
+                                  className={`flex-shrink text-[13px] font-semibold ${
+                                    included
+                                      ? "text-slate-800 dark:text-white"
+                                      : "text-slate-400 dark:text-slate-500"
+                                  }`}
+                                >
+                                  {g.name}
+                                </Text>
+                                {isOverridden ? (
+                                  <View className="rounded-full border border-amber-400/35 bg-amber-400/15 px-1.5 py-0.5">
+                                    <Text className="text-[9px] font-bold text-amber-600 dark:text-amber-300">
+                                      重修已覆盖
+                                    </Text>
+                                  </View>
+                                ) : null}
+                              </View>
                               <Text className="mt-0.5 text-[10.5px] text-slate-400 dark:text-slate-500">
                                 {meta}
                               </Text>
                             </View>
-                            <View className="ml-2 items-end">
+                            <View
+                              className={`ml-2 items-end ${
+                                included ? "" : "opacity-55"
+                              }`}
+                            >
                               <Text
                                 className={`text-[16px] font-bold ${
                                   g.score
