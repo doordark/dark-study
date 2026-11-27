@@ -197,7 +197,7 @@ function TabButton({ item }: { item: ActionItem }) {
       ref={isPrimary ? primaryRef : undefined}
       collapsable={false}
       onLayout={isPrimary ? () => measurePrimaryOrigin() : undefined}
-      style={{ alignItems: "center", justifyContent: "center" }}
+      style={{ flex: 1, alignItems: "center", justifyContent: "center" }}
     >
       {/* 点击大肥鱼底栏按钮时绽放的贴身水环微涟漪 */}
       {isWhaleDock ? (
@@ -338,7 +338,7 @@ export function ActionBar({ items }: { items: ActionItem[] }) {
   const insets = useSafeAreaInsets();
   return (
     <View
-      className="px-5"
+      className="px-4"
       style={{ paddingBottom: Math.max(insets.bottom, 12) }}
     >
       <GlassContainer
@@ -346,7 +346,7 @@ export function ActionBar({ items }: { items: ActionItem[] }) {
         variant="floating"
         borderOpacity={0.26}
       >
-        <View className="flex-row items-center justify-around px-2 py-2.5">
+        <View className="flex-row items-center px-1.5 py-2">
           {items.map((item) => (
             <TabButton key={item.key} item={item} />
           ))}

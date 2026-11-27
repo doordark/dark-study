@@ -178,7 +178,7 @@ export const CourseCard = React.memo(function CourseCard({
   return (
     /* 入场动画、按压缩放与完成弱化透明度分层，避免 FadeInDown 覆写 opacity 或 transform */
     <Animated.View entering={entering}>
-      <View style={dimmed ? { opacity: 0.62 } : undefined}>
+      <View style={dimmed ? { opacity: 0.76 } : undefined}>
       <Animated.View style={pressStyle}>
         <GestureDetector gesture={gesture}>
           <View>
@@ -211,70 +211,75 @@ export const CourseCard = React.memo(function CourseCard({
                   pointerEvents="none"
                   style={{
                     position: "absolute",
-                    left: 0,
-                    top: 18,
-                    bottom: 18,
+                    left: 4,
+                    top: 14,
+                    bottom: 14,
                     width: 3.5,
                     borderRadius: 2,
                     backgroundColor: palette.solid,
-                    opacity: active ? 0.95 : dimmed ? 0.35 : 0.72,
+                    opacity: active ? 0.95 : dimmed ? 0.45 : 0.78,
                   }}
                 />
               ) : null}
 
-              <View className="relative px-4 py-3.5">
-                {/* 状态胶囊：进行中 / 倒计时 / 已结束 */}
-                {statusPill ? (
-                  <View
-                    className={`absolute right-3.5 top-3.5 flex-row items-center rounded-full border px-2.5 py-1 ${
-                      active
-                        ? translucent
-                          ? "border-white/95 bg-white/88"
-                          : "border-white/25 bg-white/18"
-                        : dimmed
-                          ? "border-slate-300/30 bg-slate-400/15 dark:border-white/10 dark:bg-white/[0.06]"
-                          : translucent
-                            ? "border-white/75 bg-white/55 dark:border-white/20 dark:bg-white/15"
-                            : "border-sky-400/35 bg-sky-400/15"
+              <View className="px-4 py-3.5">
+                {/* 课程名 + 状态胶囊（Flex 自然对齐，避免绝对定位挤压留白） */}
+                <View className="flex-row items-start justify-between gap-2.5">
+                  {/* 课程名：不设 lineHeight 避免 Android 提前截断 */}
+                  <Text
+                    numberOfLines={2}
+                    className={`min-w-0 flex-1 text-[15.5px] font-bold ${
+                      solidActive ? "text-white" : "text-slate-800 dark:text-slate-100"
                     }`}
                   >
-                    {active ? (
-                      <View
-                        className="mr-1.5 h-1.5 w-1.5 rounded-full"
-                        style={{ backgroundColor: translucent ? palette.solid : "#FFFFFF" }}
-                      />
-                    ) : null}
-                    <Text
-                      className={`text-[10px] font-semibold tracking-wide ${
-                        solidActive
-                          ? "text-white"
-                          : active
-                            ? translucent
-                              ? "text-slate-800"
-                              : "text-slate-700 dark:text-slate-100"
-                            : dimmed
-                              ? "text-slate-500 dark:text-slate-400"
-                              : "text-sky-700 dark:text-sky-300"
+                    {course.name}
+                  </Text>
+
+                  {/* 状态胶囊：进行中 / 倒计时 / 已结束 */}
+                  {statusPill ? (
+                    <View
+                      className={`mt-0.5 shrink-0 flex-row items-center rounded-full border px-2.5 py-0.5 ${
+                        active
+                          ? translucent
+                            ? "border-white/95 bg-white/88"
+                            : "border-white/25 bg-white/18"
+                          : dimmed
+                            ? "border-slate-400/30 bg-slate-500/12 dark:border-white/12 dark:bg-white/[0.08]"
+                            : translucent
+                              ? "border-white/75 bg-white/60 dark:border-white/20 dark:bg-white/15"
+                              : "border-sky-400/35 bg-sky-400/15"
                       }`}
                     >
-                      {statusPill}
-                    </Text>
-                  </View>
-                ) : null}
-
-                {/* 课程名：不设 lineHeight 避免 Android 提前截断 */}
-                <Text
-                  numberOfLines={2}
-                  className={`text-[15.5px] font-bold ${statusPill ? "pr-20" : ""} ${
-                    solidActive ? "text-white" : "text-slate-800 dark:text-slate-100"
-                  }`}
-                >
-                  {course.name}
-                </Text>
+                      {active ? (
+                        <View
+                          className="mr-1.5 h-1.5 w-1.5 rounded-full"
+                          style={{ backgroundColor: translucent ? palette.solid : "#FFFFFF" }}
+                        />
+                      ) : null}
+                      <Text
+                        numberOfLines={1}
+                        className={`text-[10px] font-semibold tracking-wide ${
+                          solidActive
+                            ? "text-white"
+                            : active
+                              ? translucent
+                                ? "text-slate-800"
+                                : "text-slate-700 dark:text-slate-100"
+                              : dimmed
+                                ? "text-slate-600 dark:text-slate-300"
+                                : "text-sky-700 dark:text-sky-300"
+                        }`}
+                      >
+                        {statusPill}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
 
                 {/* 时间 + 节次 + 周次 */}
                 <View className="mt-1.5 flex-row flex-wrap items-center gap-x-2 gap-y-1">
                   <Text
+                    style={{ fontVariant: ["tabular-nums"] }}
                     className={`text-[11.5px] font-semibold ${
                       solidActive
                         ? "text-white/90"
@@ -302,10 +307,10 @@ export const CourseCard = React.memo(function CourseCard({
                   </View>
                   {weeksSummary ? (
                     <Text
-                      className={`text-[10px] ${
+                      className={`text-[10px] font-medium ${
                         solidActive
                           ? "text-white/75"
-                          : "text-slate-400 dark:text-slate-500"
+                          : "text-slate-500 dark:text-slate-400"
                       }`}
                     >
                       {weeksSummary}
@@ -454,9 +459,9 @@ export const EmptySlotCard = React.memo(function EmptySlotCard({ label }: { labe
           playSfx("owl_hoot", { volume: 0.52 });
           setAmbientOpen(true);
         }}
-        className="items-center justify-center rounded-[24px] border border-dashed border-slate-300/60 bg-white/25 px-3 py-4 dark:border-slate-600/50 dark:bg-white/[0.03]"
+        className="items-center justify-center rounded-[22px] border border-dashed border-slate-400/45 bg-white/35 px-3 py-4 dark:border-slate-500/45 dark:bg-white/[0.04]"
       >
-        <Text className="text-[10.5px] text-slate-400 dark:text-slate-500">
+        <Text className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
           {label}
         </Text>
       </Pressable>
