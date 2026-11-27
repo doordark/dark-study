@@ -70,7 +70,7 @@ export interface FocusSettlement {
   growthBoostMs: number;
 }
 
-/** 结算一次农场自习伴读，发放金币/有机肥/作物生长加速，并写入陪读家人的人格记忆。 */
+/** 结算一次农场自习伴读，发放dark币/有机肥/作物生长加速，并写入陪读家人的人格记忆。 */
 export function settleFocusSession(options: {
   stats: FarmFocusStats;
   memories: FarmMemories;

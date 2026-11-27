@@ -217,7 +217,7 @@ export function FarmFocusModal({
                 </FarmParchmentCard>
 
                 <FarmButton
-                  label={`开始 ${preset} 分钟伴读（奖励 ${activePreset.coins} 金币 + 加速作物生长）`}
+                  label={`开始 ${preset} 分钟伴读（奖励 ${activePreset.coins} dark币 + 加速作物生长）`}
                   tone="sage"
                   onPress={startSession}
                 />
@@ -301,7 +301,7 @@ export function FarmFocusModal({
                 </FarmText>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 99, backgroundColor: '#FFF9EC', borderWidth: 1, borderColor: '#D6C3A4' }}>
                   <FarmUiIcon name="coin" size={16} />
-                  <FarmText style={{ color: '#8A6329', fontSize: 12, fontWeight: '800' }}>已入账金币</FarmText>
+                  <FarmText style={{ color: '#8A6329', fontSize: 12, fontWeight: '800' }}>已入账dark币</FarmText>
                   <FarmToolSprite kind="compost" size={16} />
                   <FarmText style={{ color: '#4B6935', fontSize: 12, fontWeight: '800' }}>作物加速 & 已写入记忆本</FarmText>
                 </View>

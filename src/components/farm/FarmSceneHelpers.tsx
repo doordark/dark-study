@@ -354,7 +354,7 @@ export function FarmHeaderBar({
           </Text>
         </View>
         <View style={st.headerActions}>
-          <View accessibilityLabel={"金币 " + coins} style={st.coinPill}>
+          <View accessibilityLabel={"dark币 " + coins} style={st.coinPill}>
             <FarmUiIcon name="coin" size={15} />
             <Text style={st.coinText}>{coins}</Text>
           </View>
@@ -893,7 +893,7 @@ export function FarmShopSectionContent({
                   item.label +
                   " · " +
                   vendorPrice(vendor, item.price) +
-                  " 金币"
+                  " dark币"
                 }
                 disabled={coins < vendorPrice(vendor, item.price)}
                 onPress={() => onSmithService(item.id)}
@@ -902,7 +902,7 @@ export function FarmShopSectionContent({
           {economy.irrigation < 3 ? (
             <FarmButton
               label={
-                "保水改良 · " + irrigationCost(economy.irrigation) + " 金币"
+                "保水改良 · " + irrigationCost(economy.irrigation) + " dark币"
               }
               onPress={() => onImproveIrrigation("smith")}
             />
@@ -926,7 +926,7 @@ export function FarmShopSectionContent({
                 label={
                   gear.coop[id]
                     ? "已安装"
-                    : vendorPrice(vendor, COOP_SUPPLIES[id].price) + " 金币"
+                    : vendorPrice(vendor, COOP_SUPPLIES[id].price) + " dark币"
                 }
                 disabled={
                   Boolean(gear.coop[id]) ||
@@ -985,7 +985,7 @@ export function FarmShopSectionContent({
                   level < offerLevel(offer)
                     ? "Lv." + offerLevel(offer) + " 解锁"
                     : left
-                      ? price + " 金币 · 买 1"
+                      ? price + " dark币 · 买 1"
                       : "售罄"
                 }
                 disabled={
@@ -1005,7 +1005,7 @@ export function FarmShopSectionContent({
         <View style={st.shopRequestCard}>
           <Text variant="label">{VENDOR_NAMES[vendor]}的委托</Text>
           <Text>
-            收购 {CROP_ART[requestCrop].label} ×{amount} · 报酬 {reward} 金币
+            收购 {CROP_ART[requestCrop].label} ×{amount} · 报酬 {reward} dark币
           </Text>
           <FarmButton
             label={request?.delivered ? "已交付" : request ? "交付" : "接取"}

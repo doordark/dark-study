@@ -215,7 +215,7 @@ export function fallbackLine(
 ) {
   const gu = [
     `第 ${ctx.day} 天了，作物在长，你也要好好吃饭。`,
-    `金币 ${ctx.coins}，别全买种子，留一点给自己买杯热牛奶。`,
+    `dark币 ${ctx.coins}，别全买种子，留一点给自己买杯热牛奶。`,
     ctx.growing > 0
       ? `还有 ${ctx.growing} 株没长大，浇水的时候顺便把心情也浇一浇。`
       : "地里空空的，要不要种点什么？我比较想看星星果。",
@@ -232,7 +232,7 @@ export function fallbackLine(
     `第 ${ctx.day} 天，代码 0 报错，作物 0 枯死，今天算顺利。`,
     "别问我为什么课表里藏农场，问就是想让学习這件事轻一点。",
     "顾让我喊三个孩子吃饭，结果唯刚先把坤坤喊来了。",
-    `金币 ${ctx.coins}，够买种子，不够买显卡。`,
+    `dark币 ${ctx.coins}，够买种子，不够买显卡。`,
     "写这个应用的时候，我最想做的其实是一个能喘气的地方。",
     ctx.growing > 0
       ? "地里的东西不用一直盯着，它们比你更懂慢慢来。"
@@ -249,7 +249,7 @@ export function fallbackLine(
     "咕，我叫坤坤！唯刚说我的鸡窝有保暖魔法。",
     `第 ${ctx.day} 天啦，咕，我数不清，但看你来了就开心。`,
     "怕猫，但我更怕你走了不回来，咕。",
-    `金币 ${ctx.coins} 也用不完我的一粒米，咕咕。`,
+    `dark币 ${ctx.coins} 也用不完我的一粒米，咕咕。`,
     "累了就坐在田边吧，我陪你，反正我也没别的事，咕。",
   ];
   const xiaoba = [
@@ -258,7 +258,7 @@ export function fallbackLine(
     ctx.growing > 0
       ? `还有 ${ctx.growing} 株在长，水我浇过一遍了，你歇着。`
       : "地空着也好看，风一吹全是草的味道。",
-    `金币 ${ctx.coins}，别乱花，弟弟们还等着买种子。`,
+    `dark币 ${ctx.coins}，别乱花，弟弟们还等着买种子。`,
     ctx.harvested > 0
       ? `收了 ${ctx.harvested} 次啦，你比我会照顾东西。`
       : "第一颗种子最难，种下去就赢了一半。",
@@ -268,7 +268,7 @@ export function fallbackLine(
   ];
   const yujie = [
     "今天有没有熟的？我饿了，真的很饿。",
-    `金币 ${ctx.coins}！够买三根烤肠了吧？`,
+    `dark币 ${ctx.coins}！够买三根烤肠了吧？`,
     ctx.growing > 0
       ? `那 ${ctx.growing} 株还没好，我盯它们好久了，一点动静都没有。`
       : "地里空空的，我哥说种子不能偷吃，我觉得可以商量。",
@@ -288,7 +288,7 @@ export function fallbackLine(
       ? `那 ${ctx.growing} 株苗分两垄，浇水前算一算就知道要提几壶。`
       : "空地正好，我想拿石子摆个图，看看那道题还有没有别的解法。",
     "我读仙侠喜欢看人家怎么破阵。有时候画个图，比硬算快多了。",
-    `金币 ${ctx.coins}，我想攒着换卷细鱼线。`,
+    `dark币 ${ctx.coins}，我想攒着换卷细鱼线。`,
     "钓得多也可能只是等得久。我在算每个钓位平均多久上一条鱼。",
   ];
   const bank: Record<Speaker, string[]> = {
@@ -319,7 +319,7 @@ export function farmSystemPrompt(
 ) {
   return `你在像素农场「doordoor农场」里扮演 ${RESIDENTS[who].name}（${RESIDENTS[who].identity}）。${RESIDENTS[who].persona}
 ${FARM_FAMILY_CONTEXT}
-当前农场状态：第 ${ctx.day} 天（${ctx.season}天 · ${ctx.periodLabel}），实时天气：${ctx.weatherLabel}（${ctx.weatherDetail}），你此刻的状态：${ctx.weatherActivityNote}。金币 ${ctx.coins}，${ctx.growing} 株作物还没成熟，累计收获 ${ctx.harvested} 次。
+当前农场状态：第 ${ctx.day} 天（${ctx.season}天 · ${ctx.periodLabel}），实时天气：${ctx.weatherLabel}（${ctx.weatherDetail}），你此刻的状态：${ctx.weatherActivityNote}。dark币 ${ctx.coins}，${ctx.growing} 株作物还没成熟，累计收获 ${ctx.harvested} 次。
 规则：用中文口语聊天，能自然感知当下实时天气与时间；每次回复 1-3 句、不超过 80 个字；不要用引号包住整段话，不要写括号动作或旁白，不要提及 AI、模型或提示词；可以自然聊农场、天气、课表、写代码和日常；遇到不适合回答的话题就轻轻岔开。`;
 }
 

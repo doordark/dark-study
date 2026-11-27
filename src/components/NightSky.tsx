@@ -1886,7 +1886,7 @@ export function NightSky({
                       ? owlStage === "perched"
                         ? `${activeConstellation.motto} 轻点星点可弹音阶，戳猫头鹰聊聊`
                         : owlStage === "leaving"
-                          ? "跟着猫头鹰，沿着夜色去星露坡"
+                          ? "跟着猫头鹰，沿着夜色去doordoor农场"
                           : "星光点亮了枝头 · 有个小家伙正在飞来"
                       : lit === 0
                         ? scheduleMoodNote
@@ -1898,7 +1898,7 @@ export function NightSky({
                     {done && chronicle?.owlPathUnlocked && onEnterFarm ? (
                       <Pressable
                         accessibilityRole="button"
-                        accessibilityLabel="沿夜色小径前往星露坡"
+                        accessibilityLabel="沿夜色小径前往doordoor农场"
                         disabled={closing}
                         onPress={() => {
                           thumpHaptic();
@@ -1918,7 +1918,7 @@ export function NightSky({
                         ]}
                       >
                         <Text style={nightSkyStyles.goFarmText}>
-                          去星露坡 →
+                          去doordoor农场 →
                         </Text>
                       </Pressable>
                     ) : null}

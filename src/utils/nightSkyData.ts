@@ -371,10 +371,10 @@ export function getOwlDialogue(options: {
         : `老朋友，欢迎第 ${visits} 次回到这片夜空。`,
     `今晚的「${constellationName}」很亮，试着按 1-1-5-5-6-6-5 轻点星点会有惊喜哦。`,
     heavyDay
-      ? `今天上了 ${safeCount} 节课一定累坏了，山坡上的灯正为你留着。`
+      ? `今天上了 ${safeCount} 节课一定累坏了，doordoor农场的灯正为你留着。`
       : isSleepy
-        ? "我眼皮都快打架了，不过山坡上的灯还亮着，随时可以过去坐坐。"
-        : "山坡上的灯还为你留着，随时都可以再过去坐坐。",
+        ? "我眼皮都快打架了，不过doordoor农场的灯还亮着，随时可以过去坐坐。"
+        : "doordoor农场的灯还为你留着，随时都可以再过去坐坐。",
     "要现在出发吗？跟紧我的翅膀，走吧。",
   ];
 }
@@ -967,7 +967,7 @@ export function getCelestialEvent(
     return {
       id: "full-moon",
       badge: "满月之夜",
-      subtitle: "清辉倾洒山坡，今夜宜许长愿",
+      subtitle: "清辉倾洒doordoor农场，今夜宜许长愿",
       meteorRateBoost: false,
       sleepyOwl,
       auroraPrimary: "#E0F2FE",
@@ -1121,7 +1121,7 @@ export function buildWhaleSkyLine(options: {
 }
 
 /* -------------------------------------------------------------------------- */
-/*  星空 ↔ 星露山坡 双向赐福桥                                                  */
+/*  星空 ↔ doordoor农场 双向赐福桥                                              */
 /* -------------------------------------------------------------------------- */
 
 export interface StarDewBlessing {
@@ -1239,7 +1239,7 @@ export function buildStarDewTownEvent(
   return {
     id: `stardew-blessing-${blessing.constellationId}-${safeAt}`,
     title: `星露垂落 · ${blessing.constellationName}`,
-    detail: `夜空中刚刚点亮了「${blessing.constellationName}」（${blessing.constellationSubtitle}），一层清凉的星露轻轻落在了山坡田埂上。`,
+    detail: `夜空中刚刚点亮了「${blessing.constellationName}」（${blessing.constellationSubtitle}），一层清凉的星露轻轻落在了doordoor农场的田埂上。`,
     kind: "rumor",
     knownBy: ["gu", "door", "xiaoba", "yujie"],
     hotspot: "plaza",

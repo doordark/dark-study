@@ -162,6 +162,6 @@ export function localNpcCommand(text: string, who: ResidentId): NpcAction | null
   return null;
 }
 
-const BASE_NPC_ACTION_SCHEMA = '严格 JSON：{"reply":"自然贴合人设的中文回答，最多120字","action":null}。明确要求做事时 action 只能是 {"type":"fetch_water"}、{"type":"water_crops"}、{"type":"talk_to","target":"door|gu|xiaoba|yujie|weigang|chicken中的一个"}、{"type":"discuss","question":"讨论问题","guests":["可选1到5位家人ID"]}、{"type":"visit","target":"pond|farm|plaza|house|coop|bench|market中的一个"}、{"type":"rest"}、{"type":"go_home"}。普通聊天或提问 action=null；不要把引用、否定或假设当作命令。不能修改金币、库存、种子、奖励或升级，不能保证任务必然成功。';
+const BASE_NPC_ACTION_SCHEMA = '严格 JSON：{"reply":"自然贴合人设的中文回答，最多120字","action":null}。明确要求做事时 action 只能是 {"type":"fetch_water"}、{"type":"water_crops"}、{"type":"talk_to","target":"door|gu|xiaoba|yujie|weigang|chicken中的一个"}、{"type":"discuss","question":"讨论问题","guests":["可选1到5位家人ID"]}、{"type":"visit","target":"pond|farm|plaza|house|coop|bench|market中的一个"}、{"type":"rest"}、{"type":"go_home"}。普通聊天或提问 action=null；不要把引用、否定或假设当作命令。不能修改dark币、库存、种子、奖励或升级，不能保证任务必然成功。';
 
 export const NPC_ACTION_SCHEMA = BASE_NPC_ACTION_SCHEMA + ' 找人转述/询问时 talk_to 必须带 purpose（最多160字，准确总结玩家诉求并消解代词，不编造），可选 intent（ask|convey|confront|invite）。如果目标或内容不明，action=null 并自然追问。可选附加长期记忆字段：memoryUpdates（数组，最多2项：{"key":"稳定主题","text":"简洁玩家事实","evidence":"本条玩家原话中的连续子串"}，仅记录长期偏好/称呼/重要事实，绝不记录密码/秘密/猜测）和 episode（{"text":"一句话记下这轮最值得记住的事","importance":1到10整数}，普通寒暄可省略）。不得增加其他未定义字段。';

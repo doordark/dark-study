@@ -152,7 +152,7 @@ export interface PendingRewardsSettlement {
 }
 
 /**
- * 将学习闭环产生的待结算奖励（番茄专注、完成作业/复习/考试）结算到星露坡金币与生长加速时间。
+ * 将学习闭环产生的待结算奖励（番茄专注、完成作业/复习/考试）结算到doordoor农场dark币与生长加速时间。
  */
 export function applyPendingRewardsToFarmCoins(
   currentCoins: number,
@@ -209,8 +209,8 @@ export function applyPendingRewardsToFarmCoins(
         : '';
   const summary =
     titles.length > 1
-      ? `收到 ${titles.length} 份学习奖励：+${totalCoins} 金币${growthPart}${detail}`
-      : `收到学习奖励：+${totalCoins} 金币${growthPart}${detail}`;
+      ? `收到 ${titles.length} 份学习奖励：+${totalCoins} dark币${growthPart}${detail}`
+      : `收到学习奖励：+${totalCoins} dark币${growthPart}${detail}`;
   return {
     nextCoins,
     totalCoins,

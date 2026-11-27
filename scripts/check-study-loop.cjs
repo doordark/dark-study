@@ -258,7 +258,7 @@ async function run() {
   assert.equal(settlement.totalCoins, 32 + 15 + 50);
   assert.equal(settlement.nextCoins, 197);
   assert.equal(settlement.totalGrowthMin, 25 + 10 + 40);
-  assert.match(settlement.summary, /\+97 金币/);
+  assert.match(settlement.summary, /\+97 dark币/);
   const emptySettle = farmStudyLink.applyPendingRewardsToFarmCoins(100, []);
   assert.equal(emptySettle.nextCoins, 100);
   assert.equal(emptySettle.totalCoins, 0);

@@ -8,7 +8,7 @@ import { FarmButton, FarmSlotFrame, FarmText as Text } from './FarmSkin';
 
 function rewardBadges(choice: FarmRandomEventChoice): string[] {
   const tags: string[] = [];
-  if (choice.coins) tags.push(`+${choice.coins} 金币`);
+  if (choice.coins) tags.push(`+${choice.coins} dark币`);
   if (choice.compost) tags.push(`+${choice.compost} 有机肥`);
   if (choice.waterRefill) tags.push(`补水 +${choice.waterRefill}`);
   if (choice.growthBoostMinutes) tags.push(`作物加速 ${choice.growthBoostMinutes}分`);
