@@ -71,6 +71,30 @@ const mems = memory.restoreFarmMemories({
 assert.equal(mems.gu.emotion.joy, 88);
 assert.equal(mems.gu.emotion.reason, '收到花束');
 
+// 1b. Validate unified 4-archetype social reaction impacts across residents, vendors & AI visitors
+for (const actorId of ['door', 'gu', 'xiaoba', 'yujie', 'weigang', 'chicken', 'smith', 'farmer', 'chemist', 'traveler', 'huboqi', 'xushuiyin', 'huangbingqi', 'dafeiyu', 'claude', 'gpt', 'gemini']) {
+  const init = emotion.createInitialFarmEmotion(actorId, now);
+  const teased = emotion.evaluateNpcSocialImpact({ actorId, current: init, reaction: 'teasing', interested: false, now });
+  const insulted = emotion.evaluateNpcSocialImpact({ actorId, current: init, reaction: 'insult', interested: false, now });
+  assert.ok(teased.nextEmotion.joy <= init.joy, `${actorId} joy must NEVER increase on teasing`);
+  assert.ok(insulted.nextEmotion.joy < init.joy, `${actorId} joy must decrease on insult`);
+}
+// Anti-sycophancy guard: LLM returning 'warm' when player says 'hbq儿子' is forced to 'teasing'
+assert.equal(memory.resolveEffectiveSocialReaction('hbq儿子', 'warm'), 'teasing');
+assert.equal(memory.resolveEffectiveSocialReaction('你个废物', 'warm'), 'insult');
+assert.equal(memory.localSocialReaction('door有几个儿子？'), 'neutral');
+
+// Fiery Yujie plunges into angry pose immediately without silent stonewalling; Stonewall Xiaoba enters refusal immediately on insult
+const yujieHit = emotion.evaluateNpcSocialImpact({ actorId: 'yujie', current: emotion.createInitialFarmEmotion('yujie', now), reaction: 'insult', interested: false, now });
+assert.equal(emotion.describeFarmEmotion(yujieHit.nextEmotion).pose, 'angry');
+assert.equal(yujieHit.enteredRefusal, false, 'fiery Yujie stays vocal to clap back');
+const xiaobaHit = emotion.evaluateNpcSocialImpact({ actorId: 'xiaoba', current: emotion.createInitialFarmEmotion('xiaoba', now), reaction: 'insult', interested: false, now });
+assert.equal(xiaobaHit.enteredRefusal, true, 'stonewall Xiaoba enters refusal on insult');
+assert.equal(emotion.describeFarmEmotion(xiaobaHit.nextEmotion).id, 'refusing');
+const xiaobaHealed = emotion.evaluateNpcSocialImpact({ actorId: 'xiaoba', current: xiaobaHit.nextEmotion, reaction: 'apology', interested: false, now: now + 5000 });
+assert.equal(xiaobaHealed.brokeIce, true);
+assert.equal(emotion.isNpcRefusingChat(xiaobaHealed.nextEmotion, now + 5000), false);
+
 // 2. Multi-room & double-bed sleep system
 assert.equal(sleep.FARM_ROOM_IDS.length, 4);
 assert.equal(sleep.FARM_ROOMS.master.bedType, 'double');
@@ -132,8 +156,8 @@ const newAtlases = [
   ['assets/images/farm-runtime/family-emotions-pos.png', 8, 5, 112, 112],
   ['assets/images/farm-runtime/family-emotions-neg.png', 8, 5, 112, 112],
   ['assets/images/farm-runtime/misc-emotions.png', 8, 4, 112, 112],
-  ['assets/images/farm-runtime/visitors-emotions-pos.png', 8, 5, 112, 112],
-  ['assets/images/farm-runtime/visitors-emotions-neg.png', 8, 5, 112, 112],
+  ['assets/images/farm-runtime/visitors-emotions-pos.png', 8, 8, 112, 112],
+  ['assets/images/farm-runtime/visitors-emotions-neg.png', 8, 8, 112, 112],
   ['assets/images/farm-runtime/farm-sleep-sprites.png', 4, 6, 112, 128],
   ['assets/images/farm-runtime/farm-sleep-heads-night.png', 4, 5, 112, 128],
 ];

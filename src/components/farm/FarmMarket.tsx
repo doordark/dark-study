@@ -5,9 +5,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AtlasSprite } from '@/components/AtlasSprite';
 import { AnimatedAtlas } from '@/components/AnimatedAtlas';
 import { vendorChat } from '@/services/farmVendorChat';
+import { isNpcRefusingChat, normalizeFarmEmotion } from '@/utils/farmEmotion';
 import { recordFarmChatTurn, type ResidentMemory } from '@/utils/farmMemory';
 import { applyPlayerMemoryUpdates } from '@/utils/farmPersonaMemory';
 import { EXTRA_NAMES, QUALITY, qualityOf, vendorAvailable, VENDOR_NAMES, VENDORS, type BagStack, type Vendor, type VendorPriceDeal } from '@/utils/farmMarket';
+import { FarmEmotionMeter } from './FarmEmotionMeter';
 import { FarmButton, FarmText } from './FarmSkin';
 import { CropSprite } from './CropSprite';
 import { FarmPersonSprite } from './FarmPersonSprite';
@@ -261,6 +263,9 @@ export function FarmMarket({ visible, onClose, at, paused = false, initialOrders
         onClose={back}
       />
       {vendor && memory ? <>
+        <View style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
+          <FarmEmotionMeter emotion={normalizeFarmEmotion(memory.emotion, vendor, memory.mood, at)} compact />
+        </View>
         <FarmSegmentTabs
           items={[['trade', vendor === 'smith' ? '升级维修' : '购买'], ['requests', '委托'], ...(vendor === 'farmer' ? [['sell', '出售'], ['craft', '工坊'], ['guide', '图鉴']] as const : []), ['chat', '对话']] as readonly (readonly [typeof section, string])[]}
           value={section}
@@ -280,7 +285,7 @@ export function FarmMarket({ visible, onClose, at, paused = false, initialOrders
           <FarmChatConversation messages={[
             ...memory.turns.flatMap(turn => [{ id: turn.id + '-user', role: 'user' as const, text: turn.player }, { id: turn.id + '-reply', role: 'assistant' as const, text: turn.reply }]),
             ...(pendingMessage ? [{ id: pendingMessage.id + '-pending', role: 'user' as const, text: pendingMessage.text }] : []),
-          ]} busy={busy} value={draft} onChange={setDraft} onSend={() => void send()} placeholder={`和${VENDOR_NAMES[vendor].split('·').pop()}聊聊，或试着砍砍价…`} maxHeight={Math.max(150, Math.min(258, height * .32))} />
+          ]} busy={busy} value={draft} onChange={setDraft} onSend={() => void send()} placeholder={isNpcRefusingChat(memory.emotion, at) ? `${VENDOR_NAMES[vendor].split('·').pop()}正在气头上拒绝沟通，输入“对不起”道歉破冰…` : `和${VENDOR_NAMES[vendor].split('·').pop()}聊聊，或试着砍砍价…`} maxHeight={Math.max(150, Math.min(258, height * .32))} />
         </> : null}
       </> : null}
     </FarmNPCSheet>

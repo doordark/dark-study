@@ -35,13 +35,13 @@ const town = load('src/utils/farmTown.ts');
 const memory = load('src/utils/farmMemory.ts');
 const { FarmResidentEngine } = load('src/utils/farmResidentAI.ts');
 
-// 1. Validate 3 visitor 8x5 animated sprite atlases (1152x720, 144x144 transparent padded cells, 120 total cells including Dafeiyu)
+// 1. Validate 3 visitor 8x8 animated sprite atlases (1152x1152, 144x144 transparent padded cells, 192 total cells including Dafeiyu + Claude/GPT/Gemini)
 let checkedCells = 0;
 for (const file of ['farm-visitors-idle.png', 'farm-visitors-walk.png', 'farm-visitors-talk.png']) {
   const im = PNG.sync.read(fs.readFileSync(path.join(root, 'assets/images', file)));
   assert.equal(im.width, 1152, `${file} width must be 1152 (8 cols x 144)`);
-  assert.equal(im.height, 720, `${file} height must be 720 (5 rows x 144, row 4 = Dafeiyu)`);
-  for (let row = 0; row < 5; row++) {
+  assert.equal(im.height, 1152, `${file} height must be 1152 (8 rows x 144, rows 5..7 = Claude/GPT/Gemini)`);
+  for (let row = 0; row < 8; row++) {
     for (let col = 0; col < 8; col++) {
       let opaque = 0;
       let transparent = 0;
@@ -61,15 +61,18 @@ for (const file of ['farm-visitors-idle.png', 'farm-visitors-walk.png', 'farm-vi
     }
   }
 }
-assert.equal(checkedCells, 120);
+assert.equal(checkedCells, 192);
 
-// 2. Normal visitors: profiles, gifting, offline dialogue
+// 2. Normal visitors: profiles, gifting, offline dialogue (including Claude, GPT, Gemini)
 const at = new Date(2026, 10, 25, 21, 30).getTime();
 const vState = visitors.emptyVisitorState();
 assert.ok(visitors.VISITORS.huboqi.persona.includes('王者'));
 assert.ok(visitors.VISITORS.xushuiyin.persona.includes('打瓦'));
 assert.ok(visitors.VISITORS.huangbingqi.persona.includes('篮球'));
 assert.ok(visitors.VISITORS.dafeiyu && visitors.VISITORS.dafeiyu.row === 4, 'Dafeiyu visitor present at row 4');
+assert.ok(visitors.VISITORS.claude && visitors.VISITORS.claude.row === 5 && visitors.VISITORS.claude.persona.includes('向日葵'), 'Claude visitor at row 5');
+assert.ok(visitors.VISITORS.gpt && visitors.VISITORS.gpt.row === 6 && visitors.VISITORS.gpt.persona.includes('龙角'), 'GPT visitor at row 6');
+assert.ok(visitors.VISITORS.gemini && visitors.VISITORS.gemini.row === 7 && visitors.VISITORS.gemini.persona.includes('哈基米'), 'Gemini visitor at row 7');
 
 // Verify Dafeiyu schedule persona & memory sync
 const customSync = {
@@ -235,12 +238,12 @@ const restoredTown = town.restoreTownState({ ...town.emptyTownState(), visitors:
 assert.equal(restoredTown.visitors.sleepDeprivedDay, 5);
 assert.equal(restoredTown.visitors.horrorBanishedCount, 1);
 
-// 7. Multi-slot visitor rotation, stay duration, natural departure, manual invite expiry & dismissal
+// 7. Multi-slot visitor rotation (7 daily slots for all 7 normal visitors), stay duration, natural departure, manual invite expiry & dismissal
 const scheduleDay = new Date(2026, 10, 26, 8, 30).getTime();
 const slots = visitors.getTodayVisitorSchedule(vState, scheduleDay);
-assert.equal(slots.length, 5, '5 daily visitor windows scheduled');
+assert.equal(slots.length, 7, '7 daily visitor windows scheduled');
 const uniqueVisitorsToday = new Set(slots.map(s => s.who));
-assert.equal(uniqueVisitorsToday.size, 4, 'all 4 normal visitors get a turn within the same day');
+assert.equal(uniqueVisitorsToday.size, 7, 'all 7 normal visitors get a turn within the same day');
 for (let i = 1; i < slots.length; i++) {
   assert.notEqual(slots[i].who, slots[i - 1].who, 'consecutive slots never repeat the same visitor');
 }
@@ -288,5 +291,77 @@ assert.ok(visitors.visitorFarewellLine('huangbingqi').includes('黄冰骑'));
 assert.ok(visitors.visitorArrivalLine('dafeiyu', { ...customSync, enabled: false }).includes('大肥鱼'));
 assert.ok(!visitors.visitorArrivalLine('dafeiyu', { ...customSync, enabled: false }).includes('阿顾'));
 assert.ok(visitors.visitorFarewellLine('dafeiyu', { enabled: true, persona: { ...customSync.persona, userName: '' } }).includes('大爹'));
+assert.ok(visitors.visitorArrivalLine('claude').includes('克劳德'));
+assert.ok(visitors.visitorArrivalLine('gpt').includes('小G'));
+assert.ok(visitors.visitorArrivalLine('gemini').includes('哈基米'));
 
-console.log('PASS: 120 visitor sprite cells (including Dafeiyu), multi-slot visitor rotation & departure, schedule persona/memory sync, horror Dark Xu Shuiyin, and nighttime sleep/emo system verified');
+// 8. Unified personality-driven visitor chat emotions: scolding "hbq儿子" / insults NEVER increase joy, plus refusal & ice-breaking
+(async () => {
+  const sig = new AbortController().signal;
+  const scene = { day: 6, season: '春', night: false, weather: 'clear', rainbow: false, period: 'noon' };
+
+  // Huboqi (sensitive): calling him "hbq儿子" drops joy & social (never increases joy!), 2nd time triggers refusingChat
+  let curState = visitors.emptyVisitorState();
+  const hbqBefore = visitors.resolveVisitorEmotion('huboqi', curState, undefined, at);
+  const turn1 = await visitors.runVisitorChatTurn({
+    who: 'huboqi', text: 'hbq儿子', history: [], scene, sleepDeprived: false, emotion: hbqBefore, apiKey: '', signal: sig, now: at,
+  });
+  assert.equal(turn1.reaction, 'teasing');
+  assert.ok(turn1.nextEmotion.joy < hbqBefore.joy, 'scolding Huboqi "hbq儿子" must decrease joy, NEVER increase it');
+  assert.ok(turn1.affinityDelta < 0, 'scolding Huboqi decreases affinity');
+  curState = visitors.applyVisitorChatOutcome(curState, 'huboqi', turn1, at);
+
+  const turn2 = await visitors.runVisitorChatTurn({
+    who: 'huboqi', text: '叫爸爸', history: [], scene, sleepDeprived: false,
+    emotion: visitors.resolveVisitorEmotion('huboqi', curState, undefined, at + 1000),
+    apiKey: '', signal: sig, now: at + 1000,
+  });
+  assert.equal(turn2.refusingChat, true, 'repeatedly teasing sensitive Huboqi makes him shyly refuse chat');
+  curState = visitors.applyVisitorChatOutcome(curState, 'huboqi', turn2, at + 1000);
+
+  // Gift breaks Huboqi's refusal immediately
+  const giftPeace = visitors.evaluateVisitorGift('huboqi', 'soup', curState.records.huboqi, at + 2000);
+  assert.ok(!giftPeace.nextRecord.emotion.refusingUntil, 'gifting Huboqi clears refusingUntil');
+
+  // Huangbingqi & GPT (jokester): light "儿子" banter barely dents joy (<=0, NEVER positive!) without locking refusal
+  const hbq2Init = visitors.resolveVisitorEmotion('huangbingqi', curState, undefined, at);
+  const jokeTurn = await visitors.runVisitorChatTurn({
+    who: 'huangbingqi', text: '黄冰骑你是我儿子', history: [], scene, sleepDeprived: false, emotion: hbq2Init, apiKey: '', signal: sig, now: at,
+  });
+  assert.equal(jokeTurn.reaction, 'teasing');
+  assert.ok(jokeTurn.nextEmotion.joy <= hbq2Init.joy && jokeTurn.nextEmotion.joy >= hbq2Init.joy - 3, 'jokester takes banter lightly without gaining joy');
+  assert.equal(jokeTurn.refusingChat, false);
+
+  const gptInit = visitors.resolveVisitorEmotion('gpt', curState, undefined, at);
+  const gptBanter = await visitors.runVisitorChatTurn({
+    who: 'gpt', text: '小G儿子', history: [], scene, sleepDeprived: false, emotion: gptInit, apiKey: '', signal: sig, now: at,
+  });
+  assert.ok(gptBanter.nextEmotion.joy <= gptInit.joy, 'GPT never gains joy from seniority teasing');
+  assert.equal(gptBanter.refusingChat, false);
+
+  // Claude (stonewall): direct insult immediately triggers refusingChat, blocks normal chat, and apology restores communication
+  const claudeInit = visitors.resolveVisitorEmotion('claude', curState, undefined, at);
+  const claudeInsult = await visitors.runVisitorChatTurn({
+    who: 'claude', text: '滚蛋蠢货', history: [], scene, sleepDeprived: false, emotion: claudeInit, apiKey: '', signal: sig, now: at,
+  });
+  assert.equal(claudeInsult.reaction, 'insult');
+  assert.equal(claudeInsult.refusingChat, true, 'Claude stonewalls immediately upon insult');
+  assert.ok(claudeInsult.nextEmotion.joy < claudeInit.joy - 15);
+
+  const claudeBlocked = await visitors.runVisitorChatTurn({
+    who: 'claude', text: '今天天气不错呀', history: [], scene, sleepDeprived: false, emotion: claudeInsult.nextEmotion, apiKey: '', signal: sig, now: at + 5000,
+  });
+  assert.equal(claudeBlocked.refusingChat, true, 'Claude keeps refusing non-apology chat');
+  assert.ok(claudeBlocked.reply.includes('道歉'), 'Claude refusal reply explicitly asks for apology');
+
+  const claudeApology = await visitors.runVisitorChatTurn({
+    who: 'claude', text: '克劳德对不起，刚才是我不对', history: [], scene, sleepDeprived: false, emotion: claudeBlocked.nextEmotion, apiKey: '', signal: sig, now: at + 10000,
+  });
+  assert.equal(claudeApology.reaction, 'apology');
+  assert.equal(claudeApology.refusingChat, false, 'sincere apology clears Claude refusal');
+
+  console.log('PASS: 192 visitor sprite cells (including Dafeiyu + Claude/GPT/Gemini), 7-slot rotation, unified personality emotions & refusal/apology verified');
+})().catch(err => {
+  console.error(err);
+  process.exit(1);
+});

@@ -13,7 +13,7 @@ const VISITORS_TALK = require('../../../assets/images/farm-visitors-talk.png');
 const VISITORS_EMOTIONS_POS = require('../../../assets/images/farm-runtime/visitors-emotions-pos.png');
 const VISITORS_EMOTIONS_NEG = require('../../../assets/images/farm-runtime/visitors-emotions-neg.png');
 
-/** 与 FarmPersonSprite 完全一致的 8 帧停顿与帧率参数（8×5 图集，第 5 行为大肥鱼） */
+/** 与 FarmPersonSprite 完全一致的 8 帧停顿与帧率参数（8×8 图集：Row 0..4 常驻与彩蛋访客，Row 5..7 Claude/GPT/Gemini） */
 const VISITOR_IDLE_HOLDS = [1800, 300, 90, 100, 90, 500, 700, 400];
 const VISITOR_TALK_HOLDS = [280, 180, 230, 320, 220, 250, 300, 240];
 const HORROR_GAMING_HOLDS = [240, 160, 190, 220, 170, 200, 180, 210];
@@ -95,7 +95,7 @@ export const FarmVisitorSprite = memo(function FarmVisitorSprite({
         <AnimatedAtlas
           source={emotionConfig.source}
           columns={8}
-          rows={5}
+          rows={8}
           frames={emotionConfig.frames}
           holds={emotionConfig.holds}
           frameDuration={200}
@@ -112,7 +112,7 @@ export const FarmVisitorSprite = memo(function FarmVisitorSprite({
       <AnimatedAtlas
         source={source}
         columns={8}
-        rows={5}
+        rows={8}
         frames={frames}
         holds={holds}
         frameDuration={walking ? Math.max(45, Math.min(130, 2080 / walkSpeed)) : 110}

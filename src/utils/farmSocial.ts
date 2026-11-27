@@ -1,4 +1,10 @@
 import { CROP_LABELS, RECIPES, type CropKind, type Recipe } from './farmEconomy';
+import {
+  applyFarmEmotionDelta,
+  clearFarmEmotionRefusal,
+  isNpcRefusingChat,
+  normalizeFarmEmotion,
+} from './farmEmotion';
 import { RESIDENTS, RESIDENT_IDS, type ResidentId } from './farmLife';
 import { realDate } from './farmProgress';
 import type { ResidentMemory } from './farmMemory';
@@ -133,18 +139,31 @@ export function evaluateResidentGift(
 ): GiftOutcome {
   const tier = giftTierFor(who, item);
   const label = giftLabel(item);
-  const wasAngry = memory.mood === '生气' || memory.mood === '不悦';
+  const wasRefusing = isNpcRefusingChat(memory.emotion, at);
+  const wasAngry = memory.mood === '生气' || memory.mood === '不悦' || wasRefusing;
   const underCap = giftedTodayCount < DAILY_GIFT_GAIN_CAP;
   const rawGain = wasAngry ? 2 : tier === 'loved' ? 6 : tier === 'liked' ? 3 : 2;
   const affinityDelta = underCap ? rawGain : 0;
   const reward = !wasAngry && tier === 'loved' && underCap ? pickReturnGift(who, at) : undefined;
   const reply = giftReactionLine(who, label, tier, wasAngry, reward?.label);
   const nextMood: ResidentMemory['mood'] = wasAngry ? '缓和' : '开心';
+  const baseEmotion = clearFarmEmotionRefusal(normalizeFarmEmotion(memory.emotion, who, memory.mood, at));
+  const nextEmotion = applyFarmEmotionDelta(
+    baseEmotion,
+    who,
+    wasAngry
+      ? { joy: 10, calm: 20, social: 12, reason: `收到赔礼「${label}」，火气缓和了` }
+      : tier === 'loved'
+        ? { joy: 16, energy: 6, calm: 8, social: 10, reason: `收到最喜欢的礼物「${label}」` }
+        : { joy: 9, calm: 5, social: 6, reason: `收到心意礼物「${label}」` },
+    at,
+  );
 
   let nextMemory: ResidentMemory = {
     ...memory,
     affinity: Math.min(100, Math.max(0, memory.affinity + affinityDelta)),
     mood: nextMood,
+    emotion: nextEmotion,
   };
   nextMemory = recordVerifiedGiftMemory(nextMemory, {
     who,

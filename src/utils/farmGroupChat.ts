@@ -7,7 +7,13 @@ import {
 } from './farmReplyClean';
 import { FARM_FAMILY_CONTEXT, RESIDENTS, isResidentId, type ResidentConversation, type ResidentId } from './farmLife';
 import { FARM_NATURAL_VOICE_RULES, PERSONALITIES, pairDynamicContext } from './farmPersonality';
-import { SOCIAL_REACTIONS, localSocialReaction, type FarmMemories, type SocialReaction } from './farmMemory';
+import {
+  SOCIAL_REACTIONS,
+  localSocialReaction,
+  resolveEffectiveSocialReaction,
+  type FarmMemories,
+  type SocialReaction,
+} from './farmMemory';
 import { localNpcCommand, type NpcAction } from './farmActions';
 import {
   formatPersonaMemoryBlock,
@@ -609,7 +615,6 @@ export async function runFarmGroupTurn(options: {
     onRoundLines,
   } = options;
   const cleanText = banterOnly ? '' : text.trim();
-  const localReaction = banterOnly ? 'neutral' : localSocialReaction(cleanText);
 
   // Never leak private secrets like 阿绿 in group chat
   if (!banterOnly && isSensitiveFarmText(cleanText) && /阿[绿綠]/.test(cleanText)) {
@@ -663,10 +668,9 @@ export async function runFarmGroupTurn(options: {
     onRoundLines?.(parsed.lines, 0);
 
     let lastMemory = parsed.memory;
-    const effectiveReaction: SocialReaction =
-      !banterOnly && parsed.reaction === 'neutral' && (localReaction === 'insult' || localReaction === 'teasing')
-        ? localReaction
-        : parsed.reaction;
+    const effectiveReaction: SocialReaction = banterOnly
+      ? 'neutral'
+      : resolveEffectiveSocialReaction(cleanText, parsed.reaction);
 
     // === Multi-Turn Conversation Director ===
     const MAX_CONTINUATIONS = 3;

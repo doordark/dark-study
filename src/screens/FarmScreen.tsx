@@ -93,7 +93,12 @@ import {
   chickenCanHelp,
   type CoopSupply,
 } from "@/utils/farmCoop";
-import { PERSONALITIES, personalityContext, personalityReply } from "@/utils/farmPersonality";
+import {
+  npcRefusalLine,
+  PERSONALITIES,
+  personalityContext,
+  personalityReply,
+} from "@/utils/farmPersonality";
 import {
   vendorQuotedPrice,
   vendorCanTrade,
@@ -206,6 +211,7 @@ import { searchWeb, type SearchHit } from "@/services/whaleTools";
 import {
   CONTINUE_FARM_CHAT,
   localSocialReaction,
+  resolveEffectiveSocialReaction,
   affinityLabel,
   familyTopicRecall,
   farmChatContext,
@@ -271,8 +277,10 @@ import { FarmEmotionMeter } from "@/components/farm/FarmEmotionMeter";
 import { FarmRandomEventModal } from "@/components/farm/FarmRandomEventModal";
 import {
   describeFarmEmotion,
+  evaluateNpcSocialImpact,
   farmDeltaToWhaleEmotionDelta,
   formatFarmEmotionForPrompt,
+  isNpcRefusingChat,
   sleepTransitionEmotionDelta,
   weatherEmotionPulse,
 } from "@/utils/farmEmotion";
@@ -315,6 +323,7 @@ import {
   type DecorId,
 } from "@/utils/farmDecor";
 import {
+  applyVisitorChatOutcome,
   dismissActiveVisitor,
   emptyVisitorState,
   evaluateVisitorGift,
@@ -328,7 +337,6 @@ import {
   resolveVisitorEmotion,
   resolveVisitorVisit,
   runVisitorChatTurn,
-  shiftVisitorEmotion,
   shouldTriggerNightHorror,
   visitorArrivalLine,
   visitorFarewellLine,
@@ -1047,6 +1055,9 @@ export function FarmScreen() {
     huangbingqi: [],
     dark_xushuiyin: [],
     dafeiyu: [],
+    claude: [],
+    gpt: [],
+    gemini: [],
   });
   const [randomEventModalOpen, setRandomEventModalOpen] = useState(false);
   const [heroEmotionPose, setHeroEmotionPose] = useState<"neutral" | "happy">("neutral");
@@ -3579,6 +3590,7 @@ export function FarmScreen() {
         whaleSync,
         apiKey,
         signal: controller.signal,
+        now: nowAt,
       });
       if (controller.signal.aborted) return;
       setVisitorOnline(res.online);
@@ -3588,16 +3600,17 @@ export function FarmScreen() {
         [who]: [...prev[who], { id: `${chatId()}-v`, role: "assistant", text: res.reply }].slice(-36),
       }));
       if (who !== "dark_xushuiyin") {
-        const chatDelta = { joy: 5, social: 6, calm: 2, reason: "在农场里愉快地聊了天" };
         setTown((prev) => ({
           ...prev,
-          visitors: shiftVisitorEmotion(prev.visitors ?? emptyVisitorState(), who, chatDelta, nowAt),
+          visitors: applyVisitorChatOutcome(prev.visitors ?? emptyVisitorState(), who, res, nowAt),
         }));
         if (who === "dafeiyu") {
           void speakWhale(res.reply);
           if (whaleSyncEnabled) {
-            useWhaleMemory.getState().applyMood(farmDeltaToWhaleEmotionDelta(chatDelta), nowAt);
-            useWhaleMemory.getState().bumpBond("interaction", nowAt);
+            useWhaleMemory.getState().applyMood(farmDeltaToWhaleEmotionDelta(res.emotionDelta), nowAt);
+            if (res.reaction !== "insult" && res.reaction !== "teasing" && !res.refusingChat) {
+              useWhaleMemory.getState().bumpBond("interaction", nowAt);
+            }
           }
         }
       }
@@ -4053,9 +4066,23 @@ export function FarmScreen() {
           result.memory,
           at,
         );
-        if (!banterOnly && result.reaction !== "neutral") {
+        if (!banterOnly) {
+          const responderSet = new Set(result.lines.map((l) => l.speaker));
           for (const id of activeMembers) {
+            if (result.reaction === "neutral" && !responderSet.has(id)) continue;
             const p = PERSONALITIES[id];
+            const interested = Boolean(
+              p?.interests.some((topic) => text.includes(topic)) && text.length >= 6,
+            );
+            const curEm = getResidentEmotion(next[id], id, at);
+            const impact = evaluateNpcSocialImpact({
+              actorId: id,
+              current: curEm,
+              reaction: result.reaction,
+              interested,
+              now: at,
+            });
+            const desc = describeFarmEmotion(impact.nextEmotion);
             const delta =
               result.reaction === "insult"
                 ? -(p?.insultLoss ?? 8)
@@ -4066,15 +4093,15 @@ export function FarmScreen() {
                     : result.reaction === "apology"
                       ? (p?.apologyGain ?? 1)
                       : 0;
-            if (delta !== 0) {
-              next = {
-                ...next,
-                [id]: {
-                  ...next[id],
-                  affinity: Math.min(100, Math.max(0, next[id].affinity + delta)),
-                },
-              };
-            }
+            next = {
+              ...next,
+              [id]: {
+                ...next[id],
+                affinity: Math.min(100, Math.max(0, next[id].affinity + delta)),
+                emotion: impact.nextEmotion,
+                ...(desc.legacyMood ? { mood: desc.legacyMood } : {}),
+              },
+            };
           }
         }
         return next;
@@ -4191,6 +4218,8 @@ export function FarmScreen() {
     let replyEpisode: { text?: unknown; importance?: unknown; emotion?: unknown } | undefined;
     const localReaction = followUpQuestion ? "neutral" : localSocialReaction(text);
     let reaction = localReaction;
+    const residentEmotionBefore = getResidentEmotion(memory, who, eventTime());
+    const refusingBeforeChat = !followUpQuestion && isNpcRefusingChat(residentEmotionBefore, eventTime());
     const crossedBoundary = !apiKey && (reaction === "teasing" || reaction === "insult");
     const query =
       /^(?:请|能不能)?(?:帮我)?(?:联网搜(?:索)?|查(?:一)?下|搜(?:一)?下|搜索)[：:，,\s]*(.{2,120})$/u
@@ -4199,7 +4228,8 @@ export function FarmScreen() {
     let sources: SearchHit[] = [];
     setChatHint("");
     const boundaryReply = () =>
-      reaction === "teasing"
+      personalityReply(who, text, reaction, memory.mood) ??
+      (reaction === "teasing"
         ? {
             door: "别拿辈分占我便宜。叫我名字，有事直说。",
             gu: "我不喜欢你这么叫我。叫我顾就好。",
@@ -4215,7 +4245,7 @@ export function FarmScreen() {
             yujie: "骂完了？我不接受这种说话方式。",
             weigang: "这话让我挺难受的。我想先静一静。",
             chicken: "咕……你这么凶，我要躲远一点。",
-          }[who];
+          }[who]);
     const personaMemoryText = formatPersonaMemoryBlock(who, memory, {
       query: text,
       peers: ["player"],
@@ -4234,7 +4264,12 @@ export function FarmScreen() {
             }
           : null;
     try {
-      if (crossedBoundary) {
+      if (refusingBeforeChat && localReaction !== "apology") {
+        reply = npcRefusalLine(who);
+        action = null;
+        setChatHint("对方正在拒绝沟通，输入一句真诚道歉或点上方「送礼」破冰吧");
+        setChatOffline(false);
+      } else if (crossedBoundary) {
         reply = boundaryReply();
         setChatOffline(true);
       } else if (followUpQuestion && previousTarget) {
@@ -4392,7 +4427,7 @@ export function FarmScreen() {
         if (request.signal.aborted) return;
         const parsed = parseNpcReply(rawReply, true);
         if (parsed) {
-          reaction = query ? "neutral" : (parsed.reaction ?? localReaction);
+          reaction = query ? "neutral" : resolveEffectiveSocialReaction(text, parsed.reaction);
           reply = parsed.reply;
           memoryUpdates = parsed.memoryUpdates;
           replyEpisode = parsed.episode;
@@ -5914,7 +5949,13 @@ export function FarmScreen() {
             onSend={() => {
               void sendChat(draft, followUp ?? undefined);
             }}
-            placeholder={followUp ? "补充线索或输入新的追问…" : `和${speakerName}聊天，或请他打水、浇地、带话…`}
+            placeholder={
+              speaker && isNpcRefusingChat(getResidentEmotion(chatMemory, speaker, now), now)
+                ? `${speakerName}正在拒绝沟通，输入一句真诚道歉或点上方送礼破冰…`
+                : followUp
+                  ? "补充线索或输入新的追问…"
+                  : `和${speakerName}聊天，或请他打水、浇地、带话…`
+            }
             maxHeight={chatMaxH}
             inputRef={chatInputRef}
             hint={chatHint || (chatOffline ? "本轮使用本地对白" : undefined)}

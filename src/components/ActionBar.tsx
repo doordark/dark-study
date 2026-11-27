@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { GlassContainer } from "@/components/GlassContainer";
 import {
+  getWhaleDockOrigin,
   reportWhaleDockOrigin,
   triggerWhaleWave,
 } from "@/components/WhaleSummonFX";
@@ -55,6 +56,9 @@ function TabButton({ item }: { item: ActionItem }) {
   const pressY = useSharedValue(0);
   const tapRing = useSharedValue(0);
   const primaryRef = useRef<ComponentRef<typeof View> | null>(null);
+  const navFrame1Ref = useRef<number | null>(null);
+  const navFrame2Ref = useRef<number | null>(null);
+  const navPendingRef = useRef(false);
 
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme !== "light";
@@ -69,6 +73,15 @@ function TabButton({ item }: { item: ActionItem }) {
 
   useEffect(
     () => () => {
+      if (navFrame1Ref.current != null) {
+        cancelAnimationFrame(navFrame1Ref.current);
+        navFrame1Ref.current = null;
+      }
+      if (navFrame2Ref.current != null) {
+        cancelAnimationFrame(navFrame2Ref.current);
+        navFrame2Ref.current = null;
+      }
+      navPendingRef.current = false;
       cancelAnimation(scaleX);
       cancelAnimation(scaleY);
       cancelAnimation(pressY);
@@ -145,20 +158,40 @@ function TabButton({ item }: { item: ActionItem }) {
 
   const handlePress = () => {
     if (isWhaleDock) {
+      if (navPendingRef.current) return;
       tapHaptic();
       if (!reduced) {
         tapRing.set(0);
         tapRing.set(
           withTiming(1, {
-            duration: 440,
+            duration: 400,
             easing: Easing.out(Easing.cubic),
           }),
         );
       }
-      // 使用最近测得的底部中央大肥鱼按钮精确坐标向外绽放全局 UI 扩散水波纹，并刷新测量值
-      measurePrimaryOrigin();
+      // 仅在尚未缓存坐标时补测，避免点击瞬间发起多余的原生 measureInWindow 阻塞首帧
+      if (!getWhaleDockOrigin()) {
+        measurePrimaryOrigin();
+      }
       triggerWhaleWave({ kind: "enter", tint: resolvedTint });
-    } else if (isPrimary) {
+      if (reduced) {
+        item.onPress();
+        return;
+      }
+      // 错开 2 帧（约 16-32ms）再触发助手页路由挂载，避免 React 19 把重页面首次渲染合批进扩散动画首帧
+      navPendingRef.current = true;
+      const proceed = item.onPress;
+      navFrame1Ref.current = requestAnimationFrame(() => {
+        navFrame1Ref.current = null;
+        navFrame2Ref.current = requestAnimationFrame(() => {
+          navFrame2Ref.current = null;
+          navPendingRef.current = false;
+          proceed();
+        });
+      });
+      return;
+    }
+    if (isPrimary && !getWhaleDockOrigin()) {
       measurePrimaryOrigin();
     }
     item.onPress();
@@ -175,6 +208,8 @@ function TabButton({ item }: { item: ActionItem }) {
       {isWhaleDock ? (
         <Animated.View
           pointerEvents="none"
+          renderToHardwareTextureAndroid
+          shouldRasterizeIOS
           style={[
             {
               position: "absolute",

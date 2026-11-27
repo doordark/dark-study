@@ -318,7 +318,7 @@ const WhaleChatBubble = memo(function WhaleChatBubble({
         ],
       }}
     >
-      <WhaleAvatar size={36} />
+      <WhaleAvatar size={36} active={false} />
     </View>
   );
 
@@ -1140,10 +1140,17 @@ export function AssistantScreen() {
   const avatarBtnScale = useSharedValue(1);
   const popoverAvatarBounce = useSharedValue(1);
   const haloPulse = useSharedValue(0);
+  // 首帧进场与径向扩散波纹期间延后次要常驻动画，并避免首次打开触发整页 FadeIn 离屏合成
+  const [mountSettled, setMountSettled] = useState(false);
 
-  // 顶栏头像情绪呼吸光环（遵守节电与前台生命周期）
   useEffect(() => {
-    if (!whale || !voiceScreenFocused || !animationActive || reducedMotion) {
+    const timer = setTimeout(() => setMountSettled(true), 280);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // 顶栏头像情绪呼吸光环（遵守节电、前台生命周期与进场转场稳定门控）
+  useEffect(() => {
+    if (!whale || !voiceScreenFocused || !animationActive || !mountSettled || reducedMotion) {
       cancelAnimation(haloPulse);
       haloPulse.set(0);
       return;
@@ -1156,7 +1163,7 @@ export function AssistantScreen() {
       ),
     );
     return () => cancelAnimation(haloPulse);
-  }, [whale, voiceScreenFocused, animationActive, reducedMotion, haloPulse]);
+  }, [whale, voiceScreenFocused, animationActive, mountSettled, reducedMotion, haloPulse]);
 
   // 离开页面时自动收起浮层并清理定时器
   useFocusEffect(
@@ -1859,18 +1866,17 @@ export function AssistantScreen() {
   return (
     <View className="flex-1">
       <Backdrop>
-        {/* 人格切换时新旧界面交叉淡入淡出，避免退场动效结束后界面硬切 */}
+        {/* 仅在页面稳定后的人格切换时执行交叉淡入淡出，避免首次进场叠加整页 saveLayerAlpha 与扩散动画抢帧 */}
         <Animated.View
           key={whale ? "whale" : "normal"}
-          entering={FadeIn.duration(300)}
-          exiting={FadeOut.duration(240)}
+          entering={mountSettled && !reducedMotion ? FadeIn.duration(260) : undefined}
+          exiting={mountSettled && !reducedMotion ? FadeOut.duration(220) : undefined}
           className="flex-1"
           style={{ paddingBottom: kbHeight }}
         >
           {/* 悬浮液态玻璃顶栏 */}
           <View style={{ paddingHorizontal: 14, paddingTop: 4, paddingBottom: 6, zIndex: 25 }}>
-            <Animated.View entering={reducedMotion ? undefined : FadeInDown.duration(240)}>
-              <GlassContainer
+            <GlassContainer
                 radius={26}
                 variant="floating"
                 borderOpacity={0.24}
@@ -2172,12 +2178,11 @@ export function AssistantScreen() {
                   </View>
                 </View>
               </GlassContainer>
-            </Animated.View>
           </View>
 
-          {/* 消息区：鲸鱼模式下垫一层主题自适应的柔光漂浮贴图 */}
+          {/* 消息区：鲸鱼模式下垫一层主题自适应的柔光漂浮贴图（进场稳定后启动漂浮动画） */}
           <View className="flex-1">
-            {whale ? <WhaleDeco /> : null}
+            {whale ? <WhaleDeco active={mountSettled} /> : null}
 
             {selectMode ? (
               <Animated.View
@@ -2576,9 +2581,9 @@ export function AssistantScreen() {
                 className="flex-1"
                 style={{ paddingHorizontal: 16 }}
                 contentContainerStyle={{ paddingTop: 12, paddingBottom: 18 }}
-                initialNumToRender={12}
+                initialNumToRender={8}
                 maxToRenderPerBatch={6}
-                windowSize={7}
+                windowSize={5}
                 removeClippedSubviews={false}
                 overScrollMode="never"
                 keyboardShouldPersistTaps="handled"

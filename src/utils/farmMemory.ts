@@ -3,8 +3,10 @@ import { restoreAssignment, type FarmAssignment } from './farmAssignment';
 import {
   applyFarmEmotionDelta,
   describeFarmEmotion,
+  evaluateNpcSocialImpact,
+  isNpcRefusingChat,
   normalizeFarmEmotion,
-  socialReactionEmotionDelta,
+  type FarmEmotionActorId,
   type FarmEmotionDelta,
   type FarmEmotionState,
 } from './farmEmotion';
@@ -318,16 +320,74 @@ const normalized = (value: string) => value.normalize('NFKC').toLowerCase().repl
 
 export function localSocialReaction(text: string): SocialReaction {
   const line = text.normalize('NFKC').trim();
-  if (/^(?:[“「"'‘]|如果|假如|有人|他说|她说|你觉得|什么意思)/.test(line) || /(?:是什么意思|怎么理解|这个词)[？?]?$/.test(line)) return 'neutral';
-  if (/^滚[！!。\s]*$/.test(line)) return 'insult';
-  if (/(?:你(?:就是|真是|是个|这个|个)?|^)(?:傻[逼比叉]|废物|蠢货|白痴|智障)|^(?:滚蛋|滚开|去死)|你妈的/i.test(line)) return 'insult';
-  if (/^(?:儿子(?:[，,！!。\s]|$)|乖儿子|(?:你是|你就是|你个)(?:我的)?儿子|叫(?:我爸爸|爸爸|爹))/.test(line)) return 'teasing';
-  if (/^(?:对不起|抱歉|我道歉|刚才是我不对)/.test(line)) return 'apology';
-  if (/^(?:谢谢你|多亏你|辛苦你了|你做得真好)/.test(line)) return 'warm';
+  if (!line) return 'neutral';
+  // 引用、假设或询问词义不属于对 NPC 的直接攻击
+  if (
+    /^(?:[“「"'‘]|如果|假如|有人|他说|她说|别人说|你觉得|什么意思)/.test(line) ||
+    /(?:是什么意思|怎么理解|这个词|这句话)[？?]?$/.test(line)
+  ) {
+    return 'neutral';
+  }
+  // 真诚道歉（不含顺带脏话）
+  if (
+    /(?:对不起|抱歉|我道歉|向你道歉|跟?你赔不是|刚才是我不对|我错了|我不该(?:骂|凶|逗)你|原谅我|别生气了)/.test(line) &&
+    !/(?:傻[逼比叉卵]|废物|蠢货|白痴|智障|脑[残瘫]|去死|你妈的)/.test(line)
+  ) {
+    return 'apology';
+  }
+  if (/^滚[！!。，,\s]*$/.test(line)) return 'insult';
+  // 排除纯粹自我调侃或吐槽客观事物（如“我真笨”“这题太恶心了”）
+  const selfOrThingOnly =
+    /^(?:我(?:自己|真是|真|好|太)?|这(?:道?题|门?课|鬼?天气|破?游戏|把?排位))/.test(line) &&
+    !/你/.test(line);
+  if (!selfOrThingOnly) {
+    if (
+      /(?:傻[逼比叉卵]|煞笔|沙比|脑[残瘫]|智障|狗东西|贱人|畜生|王八蛋|混蛋|你妈的|妈的智障|操你|草泥马|去死|滚蛋|滚开|滚远点|滚出去|\b(?:cnm|nmsl)\b)/i.test(line) ||
+      /(?:你(?:就是|真是|真|是个|这个|个|太|好)?|^[@a-zA-Z0-9_\u4e00-\u9fa5]{0,10}[，,：:\s]*)(?:废物|蠢货|白痴|垃圾|猪脑子|蠢猪|烂人|丑八怪|讨厌鬼|闭嘴)(?:[！!。？?～~\s啊呀呢吧嘛]*$)/i.test(line) ||
+      /(?:^|(?:你|hbq|胡波奇|黄冰骑|徐睡阴|克劳德|claude|gpt|小g|gemini|哈基米|大肥鱼)[，,：:\s]*)(?:sb|SB)[！!。？?\s]*$/.test(line)
+    ) {
+      return 'insult';
+    }
+    // 占辈分便宜 / 叫儿子 / 充爹 / 轻度损人（排除“door有几个儿子/大儿子是谁/我儿子今天放假”等非冲着NPC认亲的正常提及）
+    const isDirectSonTease =
+      /^(?:[@a-zA-Z0-9_\u4e00-\u9fa5]{1,10}[，,：:\s]*)?(?:乖?儿子|好大儿|乖?孙子?|小孙子)[！!。？?～~\s]*$/i.test(line) ||
+      /(?:你是|你就是|你个|当|做|认我当?)(?:我的|我)?(?:乖?儿子|好大儿|孙子)|我是你(?:爸爸|爹|爷爷|老子|祖宗)|叫(?:我|声|一声)?(?:爸爸|爹|爷爷|老子)|喊(?:我|声)?(?:爸爸|爹)/i.test(line) ||
+      /^(?:[@a-zA-Z0-9_\u4e00-\u9fa5]{0,10}[，,：:\s]*)(?:小笨蛋|呆头鹅|小菜鸡|菜逼|笨手笨脚)[！!。？?～~\s]*$/i.test(line);
+    const benignFamilySonLore =
+      /(?:几个|三个|大|二|小|三|谁的|家的|他|她|顾的|door的)儿子/i.test(line) ||
+      (/(?:我|咱)儿子/.test(line) && !/(?:你是|你就是|你个|当|做)(?:我的|我|咱)?儿子/.test(line));
+    if (!benignFamilySonLore && isDirectSonTease) {
+      return 'teasing';
+    }
+  }
+  if (/^(?:谢谢你|多亏你|辛苦你了|你做得真好)|(?:真心谢谢你|太感谢你了|你人真好|你太棒了)/.test(line)) return 'warm';
   return 'neutral';
 }
 
-export function recordFarmChatTurn(memory: ResidentMemory, turn: FarmChatTurn, reaction: SocialReaction = localSocialReaction(turn.player), personalityId?: string): ResidentMemory {
+/**
+ * 防大模型“讨好型误判”的统一反应合成器：
+ * - 本地明确识别为 insult 时，模型绝不能美化为 teasing / neutral / warm；
+ * - 本地明确识别为 teasing（如“hbq儿子”“叫爸爸”）时，模型可判为 insult 或 teasing，绝不能判为 warm / neutral；
+ * - 本地明确识别为真诚道歉 apology 时，确保触发破冰缓和。
+ */
+export function resolveEffectiveSocialReaction(
+  playerText: string,
+  modelReaction?: SocialReaction,
+): SocialReaction {
+  const local = localSocialReaction(playerText);
+  if (local === 'insult') return 'insult';
+  if (local === 'teasing') return modelReaction === 'insult' ? 'insult' : 'teasing';
+  if (local === 'apology') return 'apology';
+  return modelReaction ?? local;
+}
+
+export function recordFarmChatTurn(
+  memory: ResidentMemory,
+  turn: FarmChatTurn,
+  reaction: SocialReaction = localSocialReaction(turn.player),
+  personalityId?: string,
+  now = Date.now(),
+): ResidentMemory {
   const cleanReply = unwrapFarmReplyText(turn.reply) || turn.reply.trim();
   const sanitizedTurn: FarmChatTurn = cleanReply === turn.reply ? turn : { ...turn, reply: cleanReply };
   const topic = normalized(sanitizedTurn.player);
@@ -338,22 +398,44 @@ export function recordFarmChatTurn(memory: ResidentMemory, turn: FarmChatTurn, r
   const last = memory.turns.at(-1);
   const turns = continuing && last && isFarmChatContinuation(last.player) ? memory.turns.slice(0, -1) : memory.turns;
   const repeated = continuing || memory.turns.some(previous => !previous.unavailable && normalized(previous.player) === topic);
-  const upset = memory.mood === '生气' || memory.mood === '不悦';
+  const actorId: FarmEmotionActorId = (personalityId ?? 'door') as FarmEmotionActorId;
+  const baseEmotion = normalizeFarmEmotion(memory.emotion, actorId, memory.mood, now);
+  const refusingBefore = isNpcRefusingChat(baseEmotion, now);
+  const upset = memory.mood === '生气' || memory.mood === '不悦' || refusingBefore;
   const p = personalityId ? PERSONALITIES[personalityId] : undefined;
   // 口头画饼送礼防白嫖好感：普通文字聊天声称“送你一个萝卜”但没有系统 gift 凭证时，严禁触发 warm/兴趣好感加成
   const verbalGiftOnly = !sanitizedTurn.gift && isVerbalGiftClaim(sanitizedTurn.player);
-  const effectiveReaction: SocialReaction = verbalGiftOnly && reaction === 'warm' ? 'neutral' : reaction;
-  const interested = !verbalGiftOnly && Boolean(p?.interests.some(topic => sanitizedTurn.player.includes(topic)) && sanitizedTurn.player.length >= 6);
-  const delta = effectiveReaction === 'insult' ? -(p?.insultLoss ?? 8) : effectiveReaction === 'teasing' ? -(p?.teaseLoss ?? 4)
-    : repeated ? 0 : effectiveReaction === 'apology' && upset ? (p?.apologyGain ?? 1) : effectiveReaction === 'warm' && !upset ? (p?.warmGain ?? 2) : effectiveReaction === 'neutral' && !upset && interested ? 1 : 0;
-  const mood = effectiveReaction === 'neutral' || effectiveReaction === 'warm' && upset ? memory.mood : SOCIAL_MOODS[effectiveReaction];
-  const actorId: ResidentId = (personalityId && (RESIDENT_IDS as readonly string[]).includes(personalityId) ? personalityId : 'door') as ResidentId;
-  const baseEmotion = normalizeFarmEmotion(memory.emotion, actorId, memory.mood);
-  const nextEmotion = applyFarmEmotionDelta(
-    baseEmotion,
+  const guardedReaction = resolveEffectiveSocialReaction(sanitizedTurn.player, reaction);
+  const effectiveReaction: SocialReaction = verbalGiftOnly && guardedReaction === 'warm' ? 'neutral' : guardedReaction;
+  const interested = !verbalGiftOnly && !refusingBefore && Boolean(p?.interests.some(topic => sanitizedTurn.player.includes(topic)) && sanitizedTurn.player.length >= 6);
+  const delta = effectiveReaction === 'insult'
+    ? -(p?.insultLoss ?? 8)
+    : effectiveReaction === 'teasing'
+      ? -(p?.teaseLoss ?? 4)
+      : refusingBefore && effectiveReaction !== 'apology'
+        ? 0
+        : repeated
+          ? 0
+          : effectiveReaction === 'apology' && upset
+            ? (p?.apologyGain ?? 1)
+            : effectiveReaction === 'warm' && !upset
+              ? (p?.warmGain ?? 2)
+              : effectiveReaction === 'neutral' && !upset && interested
+                ? 1
+                : 0;
+  const impact = evaluateNpcSocialImpact({
     actorId,
-    socialReactionEmotionDelta(effectiveReaction, interested),
-  );
+    current: baseEmotion,
+    reaction: effectiveReaction,
+    interested,
+    now,
+  });
+  const nextEmotion = impact.nextEmotion;
+  const mood: SocialMood | undefined = isNpcRefusingChat(nextEmotion, now)
+    ? '生气'
+    : effectiveReaction === 'neutral' || (effectiveReaction === 'warm' && upset)
+      ? memory.mood
+      : SOCIAL_MOODS[effectiveReaction];
   return {
     affinity: Math.min(MAX_AFFINITY, Math.max(0, memory.affinity + delta)),
     ...(memory.assignment ? { assignment: memory.assignment } : {}),

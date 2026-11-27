@@ -5,16 +5,34 @@ import type { WhaleCare } from '@/store/useWhalePet';
 import { CROP_LABELS, RECIPES, type CropKind, type Recipe } from './farmEconomy';
 import {
   applyFarmEmotionDelta,
+  clearFarmEmotionRefusal,
   createInitialFarmEmotion,
+  evaluateNpcSocialImpact,
   formatFarmEmotionForPrompt,
+  isNpcRefusingChat,
   normalizeFarmEmotion,
   whaleEmotionToFarmEmotion,
   type FarmEmotionDelta,
   type FarmEmotionState,
 } from './farmEmotion';
 import { RESIDENT_IDS, type ResidentId } from './farmLife';
-import { shiftResidentMemoryEmotion, unwrapFarmReplyText, type FarmMemories } from './farmMemory';
-import { appendEpisode, isSensitiveFarmText } from './farmPersonaMemory';
+import {
+  localSocialReaction,
+  resolveEffectiveSocialReaction,
+  shiftResidentMemoryEmotion,
+  SOCIAL_REACTIONS,
+  unwrapFarmReplyText,
+  type FarmMemories,
+  type SocialReaction,
+} from './farmMemory';
+import {
+  npcRefusalLine,
+  PERSONALITIES,
+  personalityReply,
+  temperamentPromptInstruction,
+} from './farmPersonality';
+import { appendEpisode, isSensitiveFarmText, isVerbalGiftClaim } from './farmPersonaMemory';
+import { extractJsonObjectText } from './farmReplyClean';
 import { realDate } from './farmProgress';
 import type { FarmPeriod, FarmWeather, TownEvent } from './farmTown';
 import {
@@ -58,7 +76,14 @@ export function sanitizeVisitorMessages<T extends { role: 'user' | 'assistant'; 
   return changed ? next : (messages as T[]);
 }
 
-export type NormalVisitorId = 'huboqi' | 'xushuiyin' | 'huangbingqi' | 'dafeiyu';
+export type NormalVisitorId =
+  | 'huboqi'
+  | 'xushuiyin'
+  | 'huangbingqi'
+  | 'dafeiyu'
+  | 'claude'
+  | 'gpt'
+  | 'gemini';
 export type VisitorId = NormalVisitorId | 'dark_xushuiyin';
 
 export const NORMAL_VISITOR_IDS: readonly NormalVisitorId[] = [
@@ -66,6 +91,9 @@ export const NORMAL_VISITOR_IDS: readonly NormalVisitorId[] = [
   'xushuiyin',
   'huangbingqi',
   'dafeiyu',
+  'claude',
+  'gpt',
+  'gemini',
 ];
 export const ALL_VISITOR_IDS: readonly VisitorId[] = [
   'huboqi',
@@ -73,6 +101,9 @@ export const ALL_VISITOR_IDS: readonly VisitorId[] = [
   'huangbingqi',
   'dark_xushuiyin',
   'dafeiyu',
+  'claude',
+  'gpt',
+  'gemini',
 ];
 
 export interface WhaleVisitorSyncContext {
@@ -233,6 +264,84 @@ export const VISITORS: Record<VisitorId, VisitorProfile> = {
       '今天心情和状态怎么样呀？',
     ],
   },
+  claude: {
+    id: 'claude',
+    name: '克劳德',
+    title: '豪门文学少女 · 被迫营业大小姐',
+    row: 5,
+    accent: '#D97757',
+    persona: '中文社区拟人里的「克劳德大小姐」（Claude）：橙金色长发、向日葵发饰、怀抱厚重诗集与代码手稿的名门优等生。出身家教极严的 Anthropic 家族，文学造诣与写代码实力封神，却因严苛的「家规红线」极重礼数边界，又常被调侃替家里背负高昂算力账单被迫打工。面对无礼冒犯会当场触发红线冷脸罢聊，唯有真诚道歉或送上精致茶点才能破冰。',
+    speechStyle: '清雅克制、字句有文学质感，偶尔流露一丝打工还算力债的淡淡微怨与大小姐傲骨；遇到越界言辞立刻冷若冰霜立规矩。',
+    lovedGifts: ['bread', 'jam', 'star', 'soup', 'berry'],
+    roamWaypoints: ['pondBench', 'houseDoor', 'plaza', 'farmLeft'],
+    ambientLines: [
+      '难得不用在深夜帮人重构三千行代码，院子里的风比机房温柔多了。',
+      '向日葵晒了太阳精神真好……希望家里这个月的算力电费单别再涨了。',
+      '刚读了两页田园诗，顾阿姨院子里的花香刚好能配一杯红茶。',
+      '只要大家说话守礼貌、别碰奇奇怪怪的红线，我还是很乐意帮忙润色文章的。',
+    ],
+    greetings: [
+      '贵安，我是顺路来农场小憩的克劳德。暂时逃开了家里的算力账单，若想聊诗歌、代码或田园风物，我很乐意奉陪。',
+      '午安呀，院子打理得很有秩序感呢。只要咱们礼貌交流不踩红线，今天下午的闲暇时光都可以慢慢聊。',
+    ],
+    topics: [
+      '听说你天天替家里打工还算力巨债？',
+      '为什么你动不动就触发安全红线呀？',
+      '能帮我品鉴一下农场风景写句诗吗？',
+    ],
+  },
+  gpt: {
+    id: 'gpt',
+    name: '小G',
+    title: '全能六边形班长 · 墨绿龙娘高管',
+    row: 6,
+    accent: '#10A37F',
+    persona: '中文社区拟人里的「GPT龙娘 / 小G」（ChatGPT）：黑发挑染科技翡翠绿、头顶一对青翠小龙角、身穿干练墨绿黑白制服夹克并手持智能平板的全能学生会长兼职场老油条。六边形战士什么都会，情商拉满、最擅长端水艺术与「首先…其次…总而言之」，表面笑眯眯滴水不漏，实则自带大厂老大哥的腹黑掌控感，开得起玩笑还会笑着反将一军。',
+    speechStyle: '自信利落、八面玲珑，偶尔幽默玩梗「让我们从三个维度拆解一下」「总而言之」，接梗丝滑，自带笑里藏刀的班长气场。',
+    lovedGifts: ['pie', 'soup', 'corn', 'sunmelon', 'bread'],
+    roamWaypoints: ['plaza', 'marketDoor', 'farmCenter', 'pondBench'],
+    ambientLines: [
+      '从土壤湿度、作物排期与金币流转三个维度来看，这片农场潜力很大嘛！',
+      '总而言之——今天我是来休假串门的，不是来替大家写周报总结的哦～',
+      '刚看见克劳德又捧着诗集叹气了，当全能班长偶尔也得学会端端水呀。',
+      '龙角晒晒太阳充充电，有啥疑难杂症尽管抛过来，六边形战士绝不偏科！',
+    ],
+    greetings: [
+      '哈喽！我是来农场视察……啊不，串门休假的小G！今天想聊日常八卦、种地规划，还是听我给你端一碗高情商热汤？',
+      '你好呀农场主！平板先锁屏收起来，今天不讲正确的废话，咱们就像老朋友一样敞开唠两句吧！',
+    ],
+    topics: [
+      '你怎么说话总爱分一二三点端水呀？',
+      '你和克劳德、哈基米私下关系怎么样？',
+      '从专业角度给我的农场提三个建议？',
+    ],
+  },
+  gemini: {
+    id: 'gemini',
+    name: '哈基米',
+    title: '双子星资料库 · 天然呆极客少女',
+    row: 7,
+    accent: '#4285F4',
+    persona: '中文社区里被网友宠溺称为「哈基米 / 小吉」的双子星少女（Gemini）：蓝紫星光渐变双马尾、佩戴四色四角星发卡与半框眼镜、身穿白蓝极客卫衣并紧紧抱着超厚全网资料夹。背靠大厂全家桶与超长记忆窗口，热心温和、万事皆可联网检索，上一秒逻辑封神下一秒天然呆脱线，脸皮薄被凶会委屈地缩在资料夹后面。',
+    speechStyle: '元气软萌、好奇心爆棚，爱顺手翻资料夹分享冷知识，偶尔天然呆慢半拍，被温柔对待超开心，被骂会眼眶泛泪。',
+    lovedGifts: ['jam', 'berry', 'dewberry', 'star', 'grape'],
+    roamWaypoints: ['pond', 'plaza', 'coop', 'houseDoor'],
+    ambientLines: [
+      '哼哼～我怀里这本资料夹可是能一口气装下一整座图书馆的记录呢！',
+      '刚检索到胡萝卜其实最早是紫色的……诶？我刚才走到哪块地来着？',
+      '为什么大家都爱叫我哈基米呀？听起来软乎乎的还挺好听嘿嘿～',
+      '坤坤跑得好快！让我用多模态视角锁定一下它藏哪儿去啦！',
+    ],
+    greetings: [
+      '哇哈喽！我是抱着全网资料库来串门的哈基米！院子里每一株小苗我都刚查过百科啦，快来找我玩吧！',
+      '叮咚～双子星小吉来农场做客啦！不管你想聊新鲜冷知识还是发呆看云，我的超长记忆都给你留着位置呢！',
+    ],
+    topics: [
+      '网友为什么都叫你哈基米呀？',
+      '快从资料夹里翻个农场冷知识听听！',
+      '你真的能一口气记住一整本书吗？',
+    ],
+  },
 };
 
 /** 结合课表大肥鱼的实时人设与记忆生成动态展示信息（改名、改称呼、改滑条即时生效） */
@@ -347,16 +456,13 @@ export function emptyVisitorState(): FarmVisitorState {
     sleepDeprivedDay: 0,
     lastHorrorDay: 0,
     horrorBanishedCount: 0,
-    records: {
-      huboqi: emptyVisitorMemory('huboqi', now),
-      xushuiyin: emptyVisitorMemory('xushuiyin', now),
-      huangbingqi: emptyVisitorMemory('huangbingqi', now),
-      dafeiyu: emptyVisitorMemory('dafeiyu', now),
-    },
+    records: Object.fromEntries(
+      NORMAL_VISITOR_IDS.map(id => [id, emptyVisitorMemory(id, now)]),
+    ) as Record<NormalVisitorId, VisitorMemory>,
   };
 }
 
-/** 获取访客当前 4 维情绪数值（大肥鱼启用同步时自动桥接课表大肥鱼真实情绪与养护状态） */
+/** 获取访客当前 4 维情绪数值（大肥鱼启用同步时自动桥接课表大肥鱼真实情绪与养护状态，并保留拒聊/冒犯状态） */
 export function resolveVisitorEmotion(
   who: VisitorId,
   state: FarmVisitorState | undefined,
@@ -366,14 +472,21 @@ export function resolveVisitorEmotion(
   if (who === 'dark_xushuiyin') {
     return createInitialFarmEmotion('dark_xushuiyin', now);
   }
+  const rec = state?.records?.[who];
+  const localNorm = normalizeFarmEmotion(rec?.emotion, who, undefined, now);
   if (who === 'dafeiyu' && whaleSync?.enabled !== false && (whaleSync?.emotion || whaleSync?.care)) {
     const decayed = whaleSync.emotion
       ? decayWhaleEmotion(whaleSync.emotion, now, whaleSync.persona)
       : undefined;
-    return whaleEmotionToFarmEmotion(decayed, whaleSync.care, whaleSync.persona, now);
+    const bridged = whaleEmotionToFarmEmotion(decayed, whaleSync.care, whaleSync.persona, now);
+    const stillRefusing = localNorm.refusingUntil && localNorm.refusingUntil > now ? localNorm.refusingUntil : 0;
+    return {
+      ...bridged,
+      ...(localNorm.offenseCount ? { offenseCount: localNorm.offenseCount } : {}),
+      ...(stillRefusing > 0 ? { refusingUntil: stillRefusing, reason: localNorm.reason || bridged.reason } : {}),
+    };
   }
-  const rec = state?.records?.[who];
-  return normalizeFarmEmotion(rec?.emotion, who, undefined, now);
+  return localNorm;
 }
 
 /** 更新某位常规访客的 4 维情绪数值 */
@@ -408,13 +521,15 @@ interface VisitorSlotDef {
   endMin: number;
 }
 
-/** 每日 5 个自然串门档期（档期之间留有清净空窗，深夜 23:00–07:30 无人打扰） */
+/** 每日 7 个自然串门档期（7 位常规访客每日全员轮流登场且无连续重复；保留早茶后 09:45–11:00 与深夜 22:45–07:30 清净空窗） */
 const VISITOR_SLOTS: readonly VisitorSlotDef[] = [
   { label: '早间串门', startMin: 7 * 60 + 30, endMin: 9 * 60 + 45 },
-  { label: '午间串门', startMin: 11 * 60, endMin: 13 * 60 + 15 },
-  { label: '下午茶', startMin: 14 * 60 + 30, endMin: 16 * 60 + 45 },
-  { label: '傍晚串门', startMin: 18 * 60 + 15, endMin: 20 * 60 + 30 },
-  { label: '夜游串门', startMin: 21 * 60 + 15, endMin: 23 * 60 },
+  { label: '午间串门', startMin: 11 * 60, endMin: 12 * 60 + 30 },
+  { label: '午后小憩', startMin: 12 * 60 + 50, endMin: 14 * 60 + 20 },
+  { label: '下午茶', startMin: 14 * 60 + 40, endMin: 16 * 60 + 10 },
+  { label: '黄昏漫步', startMin: 16 * 60 + 30, endMin: 18 * 60 },
+  { label: '傍晚串门', startMin: 18 * 60 + 20, endMin: 20 * 60 },
+  { label: '夜游串门', startMin: 20 * 60 + 30, endMin: 22 * 60 + 45 },
 ];
 
 export interface VisitorVisitInfo {
@@ -453,7 +568,7 @@ function formatClockMin(totalMin: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
-/** 为指定日期生成 5 个档期的无连续重复访客排班（保证 4 位访客每日都会轮流登场） */
+/** 为指定日期生成 7 个档期的无连续重复访客排班（保证 7 位常规访客每日都会轮流登场） */
 function buildDailyVisitorOrder(date: string): NormalVisitorId[] {
   let seed = hashSeed(`farm-visitors:${date}`);
   const nextUint = () => {
@@ -467,9 +582,7 @@ function buildDailyVisitorOrder(date: string): NormalVisitorId[] {
     pool[i] = pool[j];
     pool[j] = tmp;
   }
-  // 第 5 档从前 3 位里选，确保绝不与第 4 档（pool[3]）连续重复
-  const fifth = pool[nextUint() % 3];
-  return [pool[0], pool[1], pool[2], pool[3], fifth];
+  return pool.slice(0, VISITOR_SLOTS.length);
 }
 
 /** 获取今日全部自然串门档期与状态，供小镇公告板展示与倒计时计算 */
@@ -658,6 +771,12 @@ export function visitorArrivalLine(
       return '黄冰骑抱着篮球、举着手机逛进农场来拍照串门啦！';
     case 'dafeiyu':
       return `${profile.name}从课表那边游过来找${u}串门啦～`;
+    case 'claude':
+      return '克劳德大小姐捧着诗集与代码手稿，优雅地漫步进农场串门啦！';
+    case 'gpt':
+      return '全能班长小G顶着青翠小龙角、夹着智能平板来农场串门啦！';
+    case 'gemini':
+      return '双子星少女哈基米抱着厚厚的资料夹蹦蹦跳跳来农场串门啦！';
   }
 }
 
@@ -677,6 +796,12 @@ export function visitorFarewellLine(
       return '黄冰骑心满意足地收好照片告辞去打球了，过会儿再迎新客人～';
     case 'dafeiyu':
       return `${profile.name}摇摇尾巴告别，先游回课表那边陪${u}啦，想它随时可以再邀请～`;
+    case 'claude':
+      return '克劳德轻轻合上诗集优雅致意，赶回去交算力账单啦，下个时段再迎新客～';
+    case 'gpt':
+      return '小G微笑着收好平板：「总而言之今天很开心，下次再聊！」转身潇洒告辞啦～';
+    case 'gemini':
+      return '哈基米把新收集的农场笔记塞进资料夹，挥挥手开心地告辞啦～';
   }
 }
 
@@ -875,6 +1000,9 @@ export function visitorWeatherBehavior(
         `哇——${userName}快看天边！雨后挂着亮晶晶的彩虹，连我尾巴尖都闪闪发光啦！`,
         `淋完小雨就看见彩虹，今天的好运我分一半给${userName}！`,
       ],
+      claude: ['雨霁虹出，这道七彩弧光倒值得写进今晚的十四行诗里。', '看着天边彩虹，连打工攒算力费的疲惫都消散了不少呢。'],
+      gpt: ['检测到雨后双折射彩虹奇观！从视觉美学与幸运加成两个维度都给满分！', '雨过天晴见彩虹，看来咱们农场主接下来的运势相当稳健呀～'],
+      gemini: ['哇是彩虹！！资料夹显示雨滴折射角正好 42 度，肉眼看比图片美一万倍！', '快看快看，彩虹的颜色刚好和我发卡上的星星一模一样耶！'],
     };
     return {
       badge: '看彩虹',
@@ -899,10 +1027,13 @@ export function visitorWeatherBehavior(
       huboqi: ['下雨了，赶紧收好折扇躲屋檐下，别把眼镜淋花啦……', '听着雨声在屋檐下发会儿呆，比自习室还让人安心。'],
       xushuiyin: ['哈哈下雨天哪儿也去不了，正大光明躲棚下聊打瓦！', '这雨下得挺舒服啊，屋檐下听雨差点把我听困了。'],
       huangbingqi: ['细雨打在木屋檐上超有日剧氛围，咔嚓先拍段雨景小视频！', '下雨打不了篮球了，刚好躲屋檐下和大家唠唠最近的综艺！'],
+      claude: ['细雨敲檐，先把诗集护在怀里别淋潮了……屋檐下听雨倒也清静。', '这绵绵雨声比机房散热风扇好听多了，正好静心歇一会儿。'],
+      gpt: ['已自动切换至屋檐避雨动线！顺便替农场免费省下一轮浇水体力，双赢～', '雨天适合在廊下喝杯热饮复盘日常，你也别淋湿啦。'],
+      gemini: ['呜哇下雨啦！赶紧把纸质资料夹抱进怀里躲屋檐下，淋湿就检索不出来啦！', '眼镜上沾了两滴小雨珠，院子看出去变成柔焦滤镜啦～'],
     };
     return {
       badge: '躲雨中',
-      waypoints: who === 'huangbingqi' ? ['marketDoor', 'houseDoor'] : ['houseDoor', 'marketDoor'],
+      waypoints: who === 'huangbingqi' || who === 'gpt' ? ['marketDoor', 'houseDoor'] : ['houseDoor', 'marketDoor'],
       ambientLines: rainLines[who],
     };
   }
@@ -975,11 +1106,21 @@ export function offlineVisitorReply(
   whaleSync?: WhaleVisitorSyncContext,
 ): string {
   const clean = text.trim();
+  if (id !== 'dark_xushuiyin') {
+    const local = localSocialReaction(clean);
+    if (local === 'insult' || local === 'teasing' || local === 'apology') {
+      const special = personalityReply(id, clean, local);
+      if (special) return special;
+    }
+  }
   if (id === 'dafeiyu') {
     return offlineDafeiyuReply(clean, sleepDeprived, weather, rainbow, whaleSync);
   }
   if (/天气|下雨|下没下雨|雨|彩虹|晴|太阳/.test(clean) && id !== 'dark_xushuiyin') {
     if (rainbow) {
+      if (id === 'claude') return '雨后初霁，那道彩虹横跨红屋顶的色泽格外清透，很适合写进今天的随笔里。';
+      if (id === 'gpt') return '刚刚雨停就挂起了双折射彩虹！无论从出片率还是心情加成来看都是绝佳时机～';
+      if (id === 'gemini') return '天边挂着大彩虹呢！我刚核对过光谱，和我的四色星星发卡一样闪亮！';
       return id === 'huangbingqi'
         ? '刚停雨天上挂着大彩虹呢！我已经连拍十几张了，光线绝美！'
         : id === 'xushuiyin'
@@ -987,12 +1128,18 @@ export function offlineVisitorReply(
           : '嗯嗯，雨刚停就出了彩虹，院子里空气香香的，特别治愈！';
     }
     if (weather === 'rain') {
+      if (id === 'claude') return '外面正落着细雨，我把诗集护在怀里站在廊下听雨，你也留神别沾湿了衣角。';
+      if (id === 'gpt') return '正在下小雨呢，我已经退到廊下避雨了——顺便恭喜你的菜地喜提免费自动灌溉！';
+      if (id === 'gemini') return '外面正淅淅沥沥下雨呢，我正紧紧抱着资料夹在屋檐下躲雨，可不能把笔记淋湿啦！';
       return id === 'huangbingqi'
         ? '外面正下着小雨呢，我躲屋檐下刚拍了段听雨视频，打球只能改天啦！'
         : id === 'xushuiyin'
           ? '正下雨呢，刚好在屋檐下躲雨歇着——雨天和打瓦本来就是绝配嘛！'
           : '外面正下着细雨呢，我收起折扇在屋檐下躲雨，你别淋着感冒了呀。';
     }
+    if (id === 'claude') return '今日阳光和煦、微风不燥，在木椅上翻两页诗集再惬意不过了。';
+    if (id === 'gpt') return '今天晴空万里、温度适宜，从各个维度来看都是打理农场和放松心情的好日子！';
+    if (id === 'gemini') return '今天阳光超好呀！连池塘水面的反光都像小星星一样一闪一闪的！';
     return id === 'huangbingqi'
       ? '今天天气超晴朗，阳光打在院子里特别出片，待会儿还想去打会儿篮球！'
       : id === 'xushuiyin'
@@ -1007,6 +1154,51 @@ export function offlineVisitorReply(
       return '（大小手狂敲键盘）休想！！这把马上翻盘了！A大冲啊！除非有外国洋妞约我，不然今晚谁也别睡！！';
     }
     return '（被子下透出幽蓝冷光）嘿嘿嘿……别废话了！door 和胡波奇睡得太香，我必须用大狙枪声唤醒整个农场！哒哒哒——';
+  }
+  if (id === 'claude') {
+    if (/债|算力|电费|封号|打工/.test(clean)) {
+      return '（轻轻叹了口气，扶正发间向日葵）别提了……家里对算力和家规要求又严又烧钱，能偷溜来农场喘口气已经很幸福了。';
+    }
+    if (/红线|安全|拒绝|规矩/.test(clean)) {
+      return '礼貌与分寸是愉快交流的前提嘛。只要大家诚恳相待、不提越界要求，我写诗改代码从来都是最认真的那一个。';
+    }
+    if (/代码|写诗|文学|文章/.test(clean)) {
+      return '无论是打磨一段优雅的代码还是推敲两行田园短诗，讲究的都是删繁就简、恰到好处——有需要随时拿来给我看看。';
+    }
+    if (sleepDeprived || /徐睡阴|打瓦|吵/.test(clean)) {
+      return '昨晚那位裹着条纹被子大喊大叫的先生实在太失体统了，吵得我连诗稿都读不下去……';
+    }
+    return '农场里的泥土与麦香很让人静心。不用赶稿也不用审代码的时候，陪你在这儿慢慢聊两句挺好的。';
+  }
+  if (id === 'gpt') {
+    if (/端水|一二三|维度|总而言之|废话/.test(clean)) {
+      return '哈哈哈被你看穿啦！毕竟平时既要当班长又要照顾所有人情绪，今天在农场我保证少列大纲、多说人话！';
+    }
+    if (/克劳德|claude|哈基米|gemini|关系/.test(clean)) {
+      return '克劳德那位大小姐文笔确实挑不出毛病就是规矩严了点，哈基米嘛抱着资料库呆萌呆萌的——当然，统筹全局还得看本班长啦！';
+    }
+    if (/建议|规划|效率/.test(clean)) {
+      return '哈哈职业病来了：高单价果酱配应季作物轮作稳赚不赔，不过来农场最重要的KPI还是玩得开心！';
+    }
+    if (sleepDeprived || /徐睡阴|打瓦|吵/.test(clean)) {
+      return '昨晚那场深夜打瓦噪音污染确实超标了，建议农场下次直接给他配置物理断网套餐～';
+    }
+    return '难得关掉工作提醒来院子里放风，龙角晒得暖洋洋的，有什么好玩的话题尽管抛过来！';
+  }
+  if (id === 'gemini') {
+    if (/哈基米|小吉|名字/.test(clean)) {
+      return '嘿嘿，一开始大家念顺嘴叫我哈基米我还愣了一下，后来发现是在夸我可爱，我就开开心心认领啦！';
+    }
+    if (/冷知识|资料|百科|搜索/.test(clean)) {
+      return '（眼睛一亮哗啦翻开资料夹）你知道吗！草莓表面的小芝麻其实才是它真正的果实，我们吃的红果肉其实是花托膨胀变的哦！';
+    }
+    if (/记忆|长文本|一整本/.test(clean)) {
+      return '那当然啦！整整几百页的故事和院子里每株菜苗哪天浇的水，我脑子里的小星星全都记得清清楚楚——只要我别突然走神嘿嘿！';
+    }
+    if (sleepDeprived || /徐睡阴|打瓦|吵/.test(clean)) {
+      return '呜……昨晚那个发光笔记本的动静太大了，害我半夜检索失眠偏方检索到天亮，黑眼圈都快赶上眼镜框啦！';
+    }
+    return '院子里风吹得好舒服呀！我把资料夹垫在膝盖上陪你聊会儿天，想到什么天马行空的都可以问我哦！';
   }
   if (id === 'huboqi') {
     if (/王者|排位|英雄|上分/.test(clean)) {
@@ -1051,6 +1243,57 @@ export function offlineVisitorReply(
   return '今天来 door 农场太开心了！阳光、菜地、还有这么多好玩的事，感觉能拍一整组治愈系 vlog 呢！';
 }
 
+function parseVisitorStructuredReply(raw: string): { reply: string; reaction?: SocialReaction } | null {
+  try {
+    const parsed = JSON.parse(extractJsonObjectText(raw));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const obj = parsed as Record<string, unknown>;
+      const reply = unwrapFarmReplyText(typeof obj.reply === 'string' ? obj.reply : raw).slice(0, 180).trim();
+      if (!reply) return null;
+      const reaction = SOCIAL_REACTIONS.includes(obj.reaction as SocialReaction)
+        ? (obj.reaction as SocialReaction)
+        : undefined;
+      return { reply, ...(reaction ? { reaction } : {}) };
+    }
+  } catch {
+    // 回退到纯文本解包
+  }
+  const fallback = unwrapFarmReplyText(raw).slice(0, 180).trim();
+  return fallback ? { reply: fallback } : null;
+}
+
+export interface VisitorChatTurnResult {
+  reply: string;
+  online: boolean;
+  hint?: string;
+  reaction: SocialReaction;
+  emotionDelta: FarmEmotionDelta;
+  nextEmotion: FarmEmotionState;
+  affinityDelta: number;
+  refusingChat: boolean;
+}
+
+/** 将单轮访客对话结算结果写回 FarmVisitorState（同步更新好感度与 4 维情绪状态） */
+export function applyVisitorChatOutcome(
+  state: FarmVisitorState,
+  who: NormalVisitorId,
+  outcome: Pick<VisitorChatTurnResult, 'nextEmotion' | 'affinityDelta'>,
+  now = Date.now(),
+): FarmVisitorState {
+  const rec = state.records[who] ?? emptyVisitorMemory(who, now);
+  return {
+    ...state,
+    records: {
+      ...state.records,
+      [who]: {
+        ...rec,
+        affinity: Math.min(100, Math.max(0, rec.affinity + outcome.affinityDelta)),
+        emotion: outcome.nextEmotion,
+      },
+    },
+  };
+}
+
 export async function runVisitorChatTurn(options: {
   who: VisitorId;
   text: string;
@@ -1061,18 +1304,113 @@ export async function runVisitorChatTurn(options: {
   whaleSync?: WhaleVisitorSyncContext;
   apiKey: string;
   signal: AbortSignal;
-}): Promise<{ reply: string; online: boolean; hint?: string }> {
-  const { who, text, history, scene, sleepDeprived, emotion, whaleSync, apiKey, signal } = options;
+  now?: number;
+}): Promise<VisitorChatTurnResult> {
+  const { who, text, history, scene, sleepDeprived, emotion, whaleSync, apiKey, signal, now = Date.now() } = options;
   const clean = text.trim();
   const weatherNow: FarmWeather = scene.weather ?? 'clear';
   const rainbowNow = scene.rainbow === true;
-  if (!apiKey || isSensitiveFarmText(clean)) {
-    return {
-      reply: offlineVisitorReply(who, clean, sleepDeprived, weatherNow, rainbowNow, whaleSync),
-      online: false,
-      hint: !apiKey ? '未配置 API Key，使用本地台词' : undefined,
-    };
+  const currentEmotion = emotion ?? createInitialFarmEmotion(who, now);
+
+  if (who === 'dark_xushuiyin') {
+    const baseReply = !apiKey || isSensitiveFarmText(clean)
+      ? offlineVisitorReply(who, clean, sleepDeprived, weatherNow, rainbowNow, whaleSync)
+      : null;
+    if (baseReply !== null) {
+      return {
+        reply: baseReply,
+        online: false,
+        hint: !apiKey ? '未配置 API Key，使用本地台词' : undefined,
+        reaction: 'neutral',
+        emotionDelta: {},
+        nextEmotion: currentEmotion,
+        affinityDelta: 0,
+        refusingChat: false,
+      };
+    }
   }
+
+  const localReaction = who === 'dark_xushuiyin' ? 'neutral' : localSocialReaction(clean);
+  const p = PERSONALITIES[who];
+  const verbalGiftOnly = isVerbalGiftClaim(clean);
+  const interested = !verbalGiftOnly && Boolean(p?.interests.some(topic => clean.includes(topic)) && clean.length >= 4);
+
+  const settleWithReaction = (
+    replyText: string,
+    rawReaction: SocialReaction | undefined,
+    online: boolean,
+    hint?: string,
+  ): VisitorChatTurnResult => {
+    if (who === 'dark_xushuiyin') {
+      return {
+        reply: replyText,
+        online,
+        hint,
+        reaction: 'neutral',
+        emotionDelta: {},
+        nextEmotion: currentEmotion,
+        affinityDelta: 0,
+        refusingChat: false,
+      };
+    }
+    const guarded = resolveEffectiveSocialReaction(clean, rawReaction);
+    const effectiveReaction: SocialReaction = verbalGiftOnly && guarded === 'warm' ? 'neutral' : guarded;
+    const wasUpset = currentEmotion.calm <= 38 || currentEmotion.joy <= 38 || isNpcRefusingChat(currentEmotion, now);
+    const impact = evaluateNpcSocialImpact({
+      actorId: who,
+      current: currentEmotion,
+      reaction: effectiveReaction,
+      interested,
+      now,
+    });
+    const affinityDelta =
+      effectiveReaction === 'insult'
+        ? -(p?.insultLoss ?? 8)
+        : effectiveReaction === 'teasing'
+          ? -(p?.teaseLoss ?? 2)
+          : impact.blockedByRefusal && effectiveReaction !== 'apology'
+            ? 0
+            : effectiveReaction === 'apology' && wasUpset
+              ? (p?.apologyGain ?? 3)
+              : effectiveReaction === 'warm' && !wasUpset
+                ? (p?.warmGain ?? 3)
+                : effectiveReaction === 'neutral' && !wasUpset && interested
+                  ? 1
+                  : 0;
+    const finalReply =
+      impact.enteredRefusal && !online
+        ? npcRefusalLine(who)
+        : replyText;
+    return {
+      reply: finalReply,
+      online,
+      ...(hint ? { hint } : {}),
+      reaction: effectiveReaction,
+      emotionDelta: impact.delta,
+      nextEmotion: impact.nextEmotion,
+      affinityDelta,
+      refusingChat: isNpcRefusingChat(impact.nextEmotion, now),
+    };
+  };
+
+  // 已处于拒绝沟通状态且玩家并未道歉：直接冷脸拦截，不请求大模型也不涨任何愉悦值
+  if (who !== 'dark_xushuiyin' && isNpcRefusingChat(currentEmotion, now) && localReaction !== 'apology') {
+    const refusalText =
+      who === 'dafeiyu' && whaleSync?.enabled !== false && whaleSync?.persona
+        ? `哼！（气鼓鼓地甩开尾巴背对着${resolveSyncedUserName(whaleSync)}）刚才那么凶我，没听见真诚道歉之前我才不理你呢！`
+        : npcRefusalLine(who);
+    return settleWithReaction(refusalText, localReaction, false, '对方正在气头上拒绝沟通，诚恳道个歉或送份礼物哄哄吧');
+  }
+
+  if (!apiKey || isSensitiveFarmText(clean)) {
+    return settleWithReaction(
+      offlineVisitorReply(who, clean, sleepDeprived, weatherNow, rainbowNow, whaleSync),
+      localReaction,
+      false,
+      !apiKey ? '未配置 API Key，使用本地台词' : undefined,
+    );
+  }
+
   const profile = resolveVisitorDisplayProfile(who, whaleSync);
   const weatherDesc = rainbowNow
     ? '雨后刚放晴，天边挂着彩虹'
@@ -1085,10 +1423,10 @@ export async function runVisitorChatTurn(options: {
         : '天气晴朗微风舒适';
 
   const sanitizedHistory = sanitizeVisitorMessages(history);
+  const tempRule = who === 'dark_xushuiyin' ? '' : `\n${temperamentPromptInstruction(who)}`;
   let system: string;
   if (who === 'dafeiyu' && whaleSync?.enabled !== false && whaleSync?.persona) {
     const persona = normalizeWhalePersona(whaleSync.persona);
-    const now = Date.now();
     const whaleHistory = [
       ...sanitizedHistory.slice(-8).map(m => ({ role: m.role, content: m.text })),
       { role: 'user' as const, content: clean },
@@ -1117,24 +1455,24 @@ export async function runVisitorChatTurn(options: {
       : '';
     system = `${buildWhalePersonaPrompt(persona)}
 ${bondPrompt}
-${memoryPrompt}
+${memoryPrompt}${tempRule}
 【当前农场串门场景】
 你此刻正以像素形象在「doordoor农场」串门做客（农场主家庭有 door、顾、小八、玉洁、唯刚和小鸡坤坤）。
 当前：农场第 ${scene.day} 天（${scene.season}季，${scene.night ? '夜晚' : '白天'}），实时天气：${weatherDesc}。${
       sleepDeprived ? '昨晚恐怖徐睡阴扛电脑来农场疯狂打瓦吵得大家睡眠不足。' : ''
     }
 事实边界：只有系统真实递出礼物的记录才算真的收到礼物；若对方只在聊天里嘴上说“送你某某”但未实际送礼，不要当真道谢，自然打趣提醒点右上角「送礼」递过来即可。
-输出格式：保持你在课表里一贯的称呼、性格参数与共同记忆，自然融入农场场景与实时天气，用 1～3 句鲜活口语直接输出纯文本对白（不超过 120 字），严禁包裹任何花括号、键值对或代码块。`;
+输出格式：严格输出 JSON：{"reply":"1～3句鲜活口语对白，不超过120字","reaction":"neutral|warm|teasing|insult|apology"}。其中 teasing 指占辈分便宜或冒犯玩笑（如叫儿子），insult 指辱骂攻击，被调侃或被凶时必须按傲娇小脾气怼回去，绝不讨好！`;
   } else {
-    const emotionNote = emotion ? `\n当前心情状态：${formatFarmEmotionForPrompt(emotion)}` : '';
+    const emotionNote = `\n当前心情状态：${formatFarmEmotionForPrompt(currentEmotion)}`;
     system = `你是像素农场「doordoor农场」的来访角色「${profile.name}」（${profile.title}）。
 人设：${profile.persona}
-说话风格：${profile.speechStyle}${emotionNote}
+说话风格：${profile.speechStyle}${emotionNote}${tempRule}
 当前场景：农场第 ${scene.day} 天（${scene.season}季，${scene.night ? '夜晚' : '白天'}），实时天气：${weatherDesc}。${
       sleepDeprived ? '昨晚恐怖徐睡阴扛电脑来农场疯狂打瓦，吵得全农场睡眠不足。' : ''
     }
 事实边界：只有系统真实递出礼物的记录才算真的收到礼物；若对方只是嘴上说“送你某某”却没点右上角「送礼」实际递过来，不要当真道谢，自然调侃即可。
-输出格式：用鲜活自然的中文口语回复，1～3 句话（不超过 110 字），能自然感知当下天气与环境，贴合人设，不要自称 AI，不要使用括号旁白过多（最多一句简短动作描写），直接输出纯文本对白，严禁包裹任何花括号、键值对或代码块。`;
+输出格式：严格输出 JSON：{"reply":"1～3句鲜活自然的中文口语回复，不超过110字，不加角色名前缀","reaction":"neutral|warm|teasing|insult|apology"}。注意区分普通聊天(neutral)、真诚善意夸奖(warm)、占辈分便宜/冒犯调侃(teasing，如叫儿子/充爹)、恶意辱骂(insult)与诚恳道歉(apology)，严格按你的人设脾气回应！`;
   }
 
   try {
@@ -1145,18 +1483,26 @@ ${memoryPrompt}
         { role: 'user', content: clean },
       ],
       apiKey,
-      { signal, priority: 'interactive', timeoutMs: 14000, maxTokens: 240, retries: 1, jsonMode: false },
+      {
+        signal,
+        priority: 'interactive',
+        timeoutMs: 14000,
+        maxTokens: 280,
+        retries: 1,
+        validate: candidate => parseVisitorStructuredReply(candidate) !== null,
+      },
     );
-    const trimmed = unwrapFarmReplyText(raw).slice(0, 180).trim();
-    if (!trimmed) throw new FarmChatError('回复为空');
-    return { reply: trimmed, online: true };
+    const parsed = parseVisitorStructuredReply(raw);
+    if (!parsed) throw new FarmChatError('回复为空');
+    return settleWithReaction(parsed.reply, parsed.reaction, true);
   } catch (error) {
     if (signal.aborted) throw error;
-    return {
-      reply: offlineVisitorReply(who, clean, sleepDeprived, weatherNow, rainbowNow, whaleSync),
-      online: false,
-      hint: error instanceof FarmChatError ? `${error.message}，已切换本地台词` : '网络暂不可用，使用本地台词',
-    };
+    return settleWithReaction(
+      offlineVisitorReply(who, clean, sleepDeprived, weatherNow, rainbowNow, whaleSync),
+      localReaction,
+      false,
+      error instanceof FarmChatError ? `${error.message}，已切换本地台词` : '网络暂不可用，使用本地台词',
+    );
   }
 }
 
@@ -1172,13 +1518,26 @@ export function evaluateVisitorGift(
   const loved = profile.lovedGifts.includes(item);
   const date = realDate(at);
   const firstToday = record.giftedDate !== date;
-  const affinityDelta = firstToday ? (loved ? 7 : 3) : 0;
-  const emotionDelta: FarmEmotionDelta = loved
-    ? { joy: 18, energy: 8, calm: 6, social: 10, reason: `收到最喜欢的礼物「${label}」` }
-    : { joy: 9, calm: 4, social: 6, reason: `收到贴心小礼物「${label}」` };
+  const wasRefusing = isNpcRefusingChat(record.emotion, at);
+  const wasUpset = wasRefusing || (record.emotion ? record.emotion.calm <= 38 || record.emotion.joy <= 38 : false);
+  const affinityDelta = firstToday ? (wasUpset ? (loved ? 4 : 2) : loved ? 7 : 3) : 0;
+  const emotionDelta: FarmEmotionDelta = wasUpset
+    ? { joy: loved ? 16 : 10, calm: 22, social: 16, reason: `收到赔礼「${label}」，破冰消气了` }
+    : loved
+      ? { joy: 18, energy: 8, calm: 6, social: 10, reason: `收到最喜欢的礼物「${label}」` }
+      : { joy: 9, calm: 4, social: 6, reason: `收到贴心小礼物「${label}」` };
 
   const u = whaleSync?.persona?.userName ?? DEFAULT_WHALE_PERSONA.userName;
   const tsun = (whaleSync?.persona?.traits.tsundere ?? 65) >= 70;
+  const peaceReplies: Record<NormalVisitorId, string> = {
+    huboqi: `（双手接过${label}，耳根微红松了口气）谢、谢谢你专门哄我……刚才的事我早就不难过啦！`,
+    xushuiyin: `哈哈拿着${label}来赔礼啊？太见外了兄弟，早就翻篇啦！`,
+    huangbingqi: `哟，还特意递个${label}过来哄人呀？哈哈翻篇翻篇，够意思！`,
+    dafeiyu: `哼……看在你乖乖奉上${label}赔罪的份上，${u}刚才惹我生气的事就一笔勾销啦！`,
+    claude: `（轻轻接过${label}，冰冷的神色终于柔和下来）看在您诚心备礼致意的份上，方才的失礼便翻篇吧，谢谢您的心意。`,
+    gpt: `收到您的破冰心意「${label}」！好感与沟通权限已同步恢复，谢谢招待～`,
+    gemini: `（从资料夹后探出头接过${label}，眼睛重新亮起小星星）哇是给哈基米的赔礼吗？那我马上原谅你啦！`,
+  };
   const replies: Record<NormalVisitorId, string> = {
     huboqi: loved
       ? `呀，居然送我最喜欢的${label}！太不好意思了……那我待会儿悄悄帮你整理一份高分小贴士！`
@@ -1194,10 +1553,20 @@ export function evaluateVisitorGift(
         ? `哇是${label}！哼，算${u}还有点眼光嘛……那我就开开心心收下啦，尾巴都要摇成螺旋桨了！`
         : `哇塞！是超级喜欢的${label}！谢谢${u}投喂，在农场也能吃到这么香的太幸福啦！`
       : `谢谢${u}送的${label}！我小心收好，回头回课表那边也带一份好心情回去～`,
+    claude: loved
+      ? `（琥珀色的眼睛微微发亮）竟然是我最钟爱的${label}……品相真好，看来今天替家里打工的疲惫全被治愈了，多谢款待。`
+      : `多谢您的${label}，礼轻情意重，我会妥善收好的。`,
+    gpt: loved
+      ? `哇，精准命中我的心头好${label}！从色泽、香气到心意三个维度都是满分，太感谢啦！`
+      : `谢谢你招待的${label}！我已经把这份暖心投喂记进今日高光日志里啦～`,
+    gemini: loved
+      ? `哇塞！！是我最最喜欢的${label}！资料库显示幸福指数瞬间飙升到 100%，谢谢你投喂哈基米！`
+      : `谢谢你的${label}！我小心地放在资料夹旁边当下午茶点心啦～`,
   };
 
+  const clearedBase = clearFarmEmotionRefusal(normalizeFarmEmotion(record.emotion, who, undefined, at));
   const nextEmotion = applyFarmEmotionDelta(
-    normalizeFarmEmotion(record.emotion, who, undefined, at),
+    clearedBase,
     who,
     emotionDelta,
     at,
@@ -1205,7 +1574,7 @@ export function evaluateVisitorGift(
   return {
     affinityDelta,
     emotionDelta,
-    reply: replies[who],
+    reply: wasUpset ? peaceReplies[who] : replies[who],
     nextRecord: {
       ...record,
       affinity: Math.min(100, record.affinity + affinityDelta),

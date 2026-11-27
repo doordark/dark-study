@@ -18,6 +18,9 @@ const SPEAKER_ALIAS_MAP: Record<string, readonly string[]> = {
   xushuiyin: ['徐睡阴'],
   dark_xushuiyin: ['恐怖徐睡阴', '黑暗徐睡阴'],
   huangbingqi: ['黄冰骑', '黄炳棋'],
+  claude: ['克劳德', 'Claude', 'claude', '克劳德大小姐'],
+  gpt: ['小G', '小g', 'ChatGPT', 'GPT', 'gpt', '龙娘'],
+  gemini: ['哈基米', 'Gemini', 'gemini', '小吉', '双子星'],
 };
 
 const DEFAULT_SPEAKER_NAMES = [

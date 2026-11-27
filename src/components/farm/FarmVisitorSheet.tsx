@@ -12,6 +12,7 @@ import {
 } from '@/utils/farmEconomy';
 import {
   describeFarmEmotion,
+  isNpcRefusingChat,
   type FarmEmotionState,
 } from '@/utils/farmEmotion';
 import {
@@ -591,7 +592,13 @@ export function FarmVisitorSheet({
           value={draft}
           onChange={onChangeDraft}
           onSend={() => onSend()}
-          placeholder={isHorror ? '当面吐槽恐怖徐睡阴，或提外国洋妞试试…' : `和来串门的${profile.name}聊聊天…`}
+          placeholder={
+            isHorror
+              ? '当面吐槽恐怖徐睡阴，或提外国洋妞试试…'
+              : isNpcRefusingChat(emotion)
+                ? `${profile.name}正在拒绝沟通，输入一句真诚道歉或点右上角送礼破冰…`
+                : `和来串门的${profile.name}聊聊天…`
+          }
           maxHeight={isHorror ? Math.max(120, maxHeight - 130) : maxHeight}
           hint={hint}
         />

@@ -1,6 +1,7 @@
+import { LinearGradient } from "expo-linear-gradient";
 import { usePathname } from "expo-router";
 import { useEffect, useId } from "react";
-import { StyleSheet, View } from "react-native";
+import { Image, StyleSheet, View } from "react-native";
 import { useColorScheme } from "nativewind";
 import Animated, {
   cancelAnimation,
@@ -32,23 +33,184 @@ const AVATAR = require("../../assets/whale/avatar-sheet.png");
 const FRAMES = [0, 1, 2, 1, 0, 3, 0];
 const HOLDS = [2600, 90, 110, 90, 2100, 350, 1800];
 
-/**
- * 大肥鱼近景头像：
- * - `dock` 变体：用于底部悬浮栏中央，采用圆润液态玻璃珍珠徽章 + 柔边水波托底，
- *   彻底消除原图下半身生硬直线切割，并配自然呼吸浮游、微光光晕与小泡泡星闪细节。
- * - `plain` 变体：用于聊天与设置页，同样以圆弧裁切与轻柔底雾柔和收边。
- */
-export function WhaleAvatar({
-  size = 40,
-  variant = "plain",
-  active = true,
-}: {
-  size?: number;
-  variant?: "plain" | "dock";
-  /** 可选外部动画门控，默认 true */
-  active?: boolean;
-}) {
-  const isDock = variant === "dock";
+/** 静态首帧裁切：历史消息气泡 / 流畅档 / 减弱动效下零 useFrameCallback、零 Reanimated 开销 */
+function StaticWhalePortrait({ size }: { size: number }) {
+  return (
+    <View pointerEvents="none" style={{ width: size, height: size, overflow: "hidden" }}>
+      <Image
+        source={AVATAR}
+        fadeDuration={0}
+        resizeMode="stretch"
+        style={{
+          position: "absolute",
+          left: 0,
+          top: 0,
+          width: size * 2,
+          height: size * 2,
+        }}
+      />
+    </View>
+  );
+}
+
+/** 静态极简头像：专供聊天历史列表使用（零 SVG、零 Reanimated、零路由/设置订阅） */
+function StaticPlainWhaleAvatar({ size }: { size: number }) {
+  const { colorScheme } = useColorScheme();
+  const isDark = colorScheme !== "light";
+  const radius = size / 2;
+  const portraitSize = Math.round(size * 1.07);
+  const portraitOffsetY = Math.round(size * 0.055);
+  const poolTop = isDark ? "rgba(13,43,76,0.9)" : "rgba(230,246,255,0.85)";
+  const poolBot = isDark ? "rgba(21,106,138,0.85)" : "rgba(139,214,255,0.72)";
+  const mistMid = isDark ? "rgba(15,76,108,0.28)" : "rgba(221,243,255,0.34)";
+  const mistBot = isDark ? "rgba(15,76,108,0.62)" : "rgba(221,243,255,0.74)";
+  const rimBorder = isDark ? "rgba(125,211,252,0.48)" : "rgba(255,255,255,0.85)";
+
+  return (
+    <View
+      style={{
+        width: size,
+        height: size,
+        borderRadius: radius,
+        overflow: "hidden",
+        alignItems: "center",
+        justifyContent: "center",
+        borderWidth: 1.25,
+        borderColor: rimBorder,
+      }}
+    >
+      <LinearGradient
+        pointerEvents="none"
+        colors={[poolTop, poolBot]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+      <View
+        style={{
+          width: portraitSize,
+          height: portraitSize,
+          transform: [{ translateY: portraitOffsetY }],
+        }}
+      >
+        <StaticWhalePortrait size={portraitSize} />
+      </View>
+      <LinearGradient
+        pointerEvents="none"
+        colors={["transparent", mistMid, mistBot]}
+        locations={[0.62, 0.84, 1]}
+        start={{ x: 0.5, y: 0 }}
+        end={{ x: 0.5, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+    </View>
+  );
+}
+
+/** 动态普通头像：用于顶栏、空态主头像与浮层（去 SVG 化，按画质/减弱动效自动降级静态首帧） */
+function AnimatedPlainWhaleAvatar({ size }: { size: number }) {
+  const { colorScheme } = useColorScheme();
+  const isDark = colorScheme !== "light";
+  const quality = useSettings((s) => s.renderQuality);
+  const qualitySpec = renderQuality(quality);
+  const reduced = useReducedMotion();
+  const animationActive = useAnimationActive(!reduced && qualitySpec.idleAnimation);
+  const breath = useSharedValue(0);
+
+  useEffect(() => {
+    if (!animationActive) {
+      cancelAnimation(breath);
+      breath.value = 0;
+      return;
+    }
+    breath.value = withRepeat(
+      withTiming(1, {
+        duration: 2500,
+        easing: Easing.inOut(Easing.sin),
+      }),
+      -1,
+      true,
+    );
+    return () => cancelAnimation(breath);
+  }, [breath, animationActive]);
+
+  const bodyStyle = useAnimatedStyle(() => {
+    const b = breath.value;
+    return {
+      transform: [
+        { translateY: b * -1 },
+        { scale: 1 + b * 0.014 },
+      ],
+    };
+  });
+
+  const radius = size / 2;
+  const portraitSize = Math.round(size * 1.07);
+  const portraitOffsetY = Math.round(size * 0.055);
+  const poolTop = isDark ? "rgba(13,43,76,0.9)" : "rgba(230,246,255,0.85)";
+  const poolBot = isDark ? "rgba(21,106,138,0.85)" : "rgba(139,214,255,0.72)";
+  const mistMid = isDark ? "rgba(15,76,108,0.28)" : "rgba(221,243,255,0.34)";
+  const mistBot = isDark ? "rgba(15,76,108,0.62)" : "rgba(221,243,255,0.74)";
+  const rimBorder = isDark ? "rgba(125,211,252,0.48)" : "rgba(255,255,255,0.85)";
+
+  return (
+    <Animated.View
+      style={[
+        {
+          width: size,
+          height: size,
+          borderRadius: radius,
+          overflow: "hidden",
+          alignItems: "center",
+          justifyContent: "center",
+          borderWidth: 1.25,
+          borderColor: rimBorder,
+        },
+        bodyStyle,
+      ]}
+    >
+      <LinearGradient
+        pointerEvents="none"
+        colors={[poolTop, poolBot]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+      <View
+        style={{
+          width: portraitSize,
+          height: portraitSize,
+          transform: [{ translateY: portraitOffsetY }],
+        }}
+      >
+        {animationActive ? (
+          <AnimatedAtlas
+            source={AVATAR}
+            columns={2}
+            rows={2}
+            frames={FRAMES}
+            holds={HOLDS}
+            width={portraitSize}
+            active={animationActive}
+          />
+        ) : (
+          <StaticWhalePortrait size={portraitSize} />
+        )}
+      </View>
+      <LinearGradient
+        pointerEvents="none"
+        colors={["transparent", mistMid, mistBot]}
+        locations={[0.62, 0.84, 1]}
+        start={{ x: 0.5, y: 0 }}
+        end={{ x: 0.5, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+    </Animated.View>
+  );
+}
+
+/** 底部悬浮栏中央大肥鱼珍珠徽章 */
+function DockWhaleAvatar({ size, active }: { size: number; active: boolean }) {
   const pathname = usePathname();
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme !== "light";
@@ -58,11 +220,11 @@ export function WhaleAvatar({
   const reduced = useReducedMotion();
 
   // 兼顾前台状态、主页焦点（dock 仅在主页显示时运行）、系统减弱动态效果与画质节电档
-  const dockFocused = !isDock || pathname === "/";
+  const dockFocused = pathname === "/";
   const animationActive = useAnimationActive(
     active && dockFocused && !reduced && qualitySpec.idleAnimation,
   );
-  const showMicroDeco = isDock && qualitySpec.particles > 0;
+  const showMicroDeco = qualitySpec.particles > 0;
   const uid = useId().replace(/[^a-zA-Z0-9_-]/g, "");
 
   const breath = useSharedValue(0);
@@ -81,46 +243,44 @@ export function WhaleAvatar({
     }
     breath.value = withRepeat(
       withTiming(1, {
-        duration: isDock ? 2350 : 2500,
+        duration: 2350,
         easing: Easing.inOut(Easing.sin),
       }),
       -1,
       true,
     );
-    if (isDock) {
-      shimmer.value = withDelay(
-        260,
+    shimmer.value = withDelay(
+      260,
+      withRepeat(
+        withTiming(1, {
+          duration: 3100,
+          easing: Easing.inOut(Easing.sin),
+        }),
+        -1,
+        true,
+      ),
+    );
+    if (showMicroDeco) {
+      bubbleFloat.value = withDelay(
+        140,
         withRepeat(
           withTiming(1, {
-            duration: 3100,
+            duration: 2800,
             easing: Easing.inOut(Easing.sin),
           }),
           -1,
           true,
         ),
       );
-      if (showMicroDeco) {
-        bubbleFloat.value = withDelay(
-          140,
-          withRepeat(
-            withTiming(1, {
-              duration: 2800,
-              easing: Easing.inOut(Easing.sin),
-            }),
-            -1,
-            true,
-          ),
-        );
-      }
     }
     return () => {
       cancelAnimation(breath);
       cancelAnimation(shimmer);
       cancelAnimation(bubbleFloat);
     };
-  }, [breath, shimmer, bubbleFloat, animationActive, isDock, showMicroDeco]);
+  }, [breath, shimmer, bubbleFloat, animationActive, showMicroDeco]);
 
-  const badgeSize = isDock ? Math.round((size * 1.18) / 2) * 2 : size;
+  const badgeSize = Math.round((size * 1.18) / 2) * 2;
   const radius = badgeSize / 2;
   // 轻微放大并顺势下沉，让头像下半身自然没入圆形水波托底曲线，彻底隐藏原图底部直切边
   const portraitSize = Math.round(badgeSize * 1.07);
@@ -132,14 +292,6 @@ export function WhaleAvatar({
 
   const bodyStyle = useAnimatedStyle(() => {
     const b = breath.value;
-    if (!isDock) {
-      return {
-        transform: [
-          { translateY: b * -1 },
-          { scale: 1 + b * 0.014 },
-        ],
-      };
-    }
     return {
       transform: [
         { translateY: 0.9 - b * 2.4 },
@@ -190,87 +342,6 @@ export function WhaleAvatar({
   const rimAccent = isDark ? "#38BDF8" : "#7DD3FC";
   const shadowColor = isDark ? "#22D3EE" : "#38BDF8";
 
-  if (!isDock) {
-    return (
-      <Animated.View
-        style={[
-          {
-            width: badgeSize,
-            height: badgeSize,
-            borderRadius: radius,
-            overflow: "hidden",
-            alignItems: "center",
-            justifyContent: "center",
-          },
-          bodyStyle,
-        ]}
-      >
-        <Svg
-          pointerEvents="none"
-          style={StyleSheet.absoluteFill}
-          width={badgeSize}
-          height={badgeSize}
-          viewBox={`0 0 ${badgeSize} ${badgeSize}`}
-        >
-          <Defs>
-            <SvgLinearGradient id={`${uid}-pb`} x1="0%" y1="0%" x2="100%" y2="100%">
-              <Stop offset="0" stopColor={poolTop} stopOpacity={isDark ? 0.9 : 0.85} />
-              <Stop offset="1" stopColor={poolBot} stopOpacity={isDark ? 0.85 : 0.72} />
-            </SvgLinearGradient>
-          </Defs>
-          <Circle cx={radius} cy={radius} r={radius} fill={`url(#${uid}-pb)`} />
-        </Svg>
-
-        <View
-          style={{
-            width: portraitSize,
-            height: portraitSize,
-            transform: [{ translateY: portraitOffsetY }],
-          }}
-        >
-          <AnimatedAtlas
-            source={AVATAR}
-            columns={2}
-            rows={2}
-            frames={FRAMES}
-            holds={HOLDS}
-            width={portraitSize}
-            active={animationActive}
-          />
-        </View>
-
-        <Svg
-          pointerEvents="none"
-          style={StyleSheet.absoluteFill}
-          width={badgeSize}
-          height={badgeSize}
-          viewBox={`0 0 ${badgeSize} ${badgeSize}`}
-        >
-          <Defs>
-            <SvgLinearGradient id={`${uid}-pm`} x1="0%" y1="62%" x2="0%" y2="100%">
-              <Stop offset="0" stopColor={mistColor} stopOpacity="0" />
-              <Stop offset="0.65" stopColor={mistColor} stopOpacity={isDark ? 0.28 : 0.34} />
-              <Stop offset="1" stopColor={mistColor} stopOpacity={isDark ? 0.62 : 0.74} />
-            </SvgLinearGradient>
-            <SvgLinearGradient id={`${uid}-pr`} x1="15%" y1="0%" x2="85%" y2="100%">
-              <Stop offset="0" stopColor={rimHighlight} stopOpacity={isDark ? 0.55 : 0.9} />
-              <Stop offset="1" stopColor={rimAccent} stopOpacity={isDark ? 0.45 : 0.5} />
-            </SvgLinearGradient>
-          </Defs>
-          <Circle cx={radius} cy={radius} r={radius} fill={`url(#${uid}-pm)`} />
-          <Circle
-            cx={radius}
-            cy={radius}
-            r={radius - 0.75}
-            fill="none"
-            stroke={`url(#${uid}-pr)`}
-            strokeWidth={1.3}
-          />
-        </Svg>
-      </Animated.View>
-    );
-  }
-
   return (
     <View
       style={{
@@ -284,6 +355,8 @@ export function WhaleAvatar({
       {/* 外层柔和呼吸水波光晕（融合当前主题色调与海洋星光） */}
       <Animated.View
         pointerEvents="none"
+        renderToHardwareTextureAndroid
+        shouldRasterizeIOS
         style={[
           {
             position: "absolute",
@@ -524,4 +597,29 @@ export function WhaleAvatar({
       ) : null}
     </View>
   );
+}
+
+/**
+ * 大肥鱼近景头像：
+ * - `dock` 变体：用于底部悬浮栏中央，采用圆润液态玻璃珍珠徽章 + 柔边水波托底，
+ *   彻底消除原图下半身生硬直线切割，并配自然呼吸浮游、微光光晕与小泡泡星闪细节。
+ * - `plain` 变体：用于聊天与设置页，采用原生渐变与静态快速路径，彻底消除列表滚动与进场 SVG/帧回调开销。
+ */
+export function WhaleAvatar({
+  size = 40,
+  variant = "plain",
+  active = true,
+}: {
+  size?: number;
+  variant?: "plain" | "dock";
+  /** 可选外部动画门控，默认 true */
+  active?: boolean;
+}) {
+  if (variant === "dock") {
+    return <DockWhaleAvatar size={size} active={active} />;
+  }
+  if (!active) {
+    return <StaticPlainWhaleAvatar size={size} />;
+  }
+  return <AnimatedPlainWhaleAvatar size={size} />;
 }

@@ -164,8 +164,9 @@ function easeOutBack(t: number) {
 /*  全局 UI 径向水波纹扩散覆盖层（挂在 _layout.tsx，空闲时完全不渲染）             */
 /* -------------------------------------------------------------------------- */
 
-const BLOOM_BASE = 320;
-const RING_BASE = 220;
+const BLOOM_BASE = 128;
+const RING_BASE = 180;
+const ORIGIN_FLASH_BASE = 56;
 const WAVE_SPARKLES = [
   { angle: -Math.PI * 0.88, reach: 56, size: 7, star: false },
   { angle: -Math.PI * 0.70, reach: 72, size: 10, star: true },
@@ -174,6 +175,51 @@ const WAVE_SPARKLES = [
   { angle: -Math.PI * 0.30, reach: 70, size: 6, star: false },
   { angle: -Math.PI * 0.12, reach: 54, size: 8, star: true },
 ] as const;
+
+/** 纯原生 View 四角星芒：零 SVG 构造与光栅化开销，配合硬件纹理缓存实现 120fps 合成 */
+function NativeSparkleStar({ size, color }: { size: number; color: string }) {
+  const arm = Math.max(1.4, size * 0.2);
+  const core = Math.max(2.6, size * 0.38);
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        width: size,
+        height: size,
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <View
+        style={{
+          position: "absolute",
+          width: arm,
+          height: size,
+          borderRadius: arm,
+          backgroundColor: color,
+        }}
+      />
+      <View
+        style={{
+          position: "absolute",
+          width: size,
+          height: arm,
+          borderRadius: arm,
+          backgroundColor: color,
+        }}
+      />
+      <View
+        style={{
+          width: core,
+          height: core,
+          borderRadius: 1,
+          backgroundColor: color,
+          transform: [{ rotate: "45deg" }],
+        }}
+      />
+    </View>
+  );
+}
 
 function WaveSparkle({
   p,
@@ -204,6 +250,28 @@ function WaveSparkle({
     };
   });
 
+  if (spec.star) {
+    return (
+      <Animated.View
+        pointerEvents="none"
+        renderToHardwareTextureAndroid
+        shouldRasterizeIOS
+        style={[
+          {
+            position: "absolute",
+            left: ox - spec.size / 2,
+            top: oy - spec.size / 2,
+            width: spec.size,
+            height: spec.size,
+          },
+          style,
+        ]}
+      >
+        <NativeSparkleStar size={spec.size} color={color} />
+      </Animated.View>
+    );
+  }
+
   return (
     <Animated.View
       pointerEvents="none"
@@ -214,30 +282,14 @@ function WaveSparkle({
           top: oy - spec.size / 2,
           width: spec.size,
           height: spec.size,
+          borderRadius: spec.size / 2,
+          borderWidth: 1.2,
+          borderColor: color,
+          backgroundColor: "rgba(255,255,255,0.28)",
         },
         style,
       ]}
-    >
-      {spec.star ? (
-        <Svg width={spec.size} height={spec.size} viewBox="0 0 12 12">
-          <Path
-            d="M6 0.4 L7.5 4.5 L11.6 6 L7.5 7.5 L6 11.6 L4.5 7.5 L0.4 6 L4.5 4.5 Z"
-            fill={color}
-          />
-        </Svg>
-      ) : (
-        <View
-          style={{
-            width: spec.size,
-            height: spec.size,
-            borderRadius: spec.size / 2,
-            borderWidth: 1.2,
-            borderColor: color,
-            backgroundColor: "rgba(255,255,255,0.28)",
-          }}
-        />
-      )}
-    </Animated.View>
+    />
   );
 }
 
@@ -266,10 +318,9 @@ function ActiveWaveScene({
     wave.origin?.y ??
     lastDockOrigin?.y ??
     height - Math.max(insets.bottom, 12) - 36;
-  const maxRadius =
-    Math.hypot(Math.max(ox, width - ox), Math.max(oy, height - oy)) * 1.12;
-  const bloomTargetScale = (maxRadius * 2.15) / BLOOM_BASE;
-  const ringTargetScale = (maxRadius * 2.04) / RING_BASE;
+  const coverRadius = Math.hypot(Math.max(ox, width - ox), Math.max(oy, height - oy));
+  const bloomTargetScale = (coverRadius * 2.06) / BLOOM_BASE;
+  const ringTargetScale = (coverRadius * 2.02) / RING_BASE;
 
   const resolvedTint = resolveTint(wave.tint ?? bgTint);
   const preset = BACKGROUND_PRESETS[resolvedTint];
@@ -293,12 +344,12 @@ function ActiveWaveScene({
   const sparkleColor = isDark ? "#E0F2FE" : `rgb(${primaryRgb})`;
 
   const duration = reduced
-    ? 240
+    ? 220
     : isSmooth
-      ? 420
+      ? 380
       : isRetreat
-        ? 560
-        : 680;
+        ? 500
+        : 600;
 
   const p = useSharedValue(0);
   const finishRef = useRef(onFinish);
@@ -308,6 +359,7 @@ function ActiveWaveScene({
   }, [onFinish]);
 
   useEffect(() => {
+    cancelAnimation(p);
     p.value = 0;
     p.value = withTiming(1, {
       duration,
@@ -329,11 +381,11 @@ function ActiveWaveScene({
     const t = p.value;
     const scale = isRetreat
       ? interpolate(t, [0, 0.36, 1], [0.22, bloomTargetScale * 0.72, 0.14], Extrapolation.CLAMP)
-      : 0.14 + t * (bloomTargetScale - 0.14);
-    const alphaPeak = isDark ? 0.46 : 0.40;
+      : 0.18 + t * (bloomTargetScale - 0.18);
+    const alphaPeak = isDark ? 0.44 : 0.38;
     const opacity = isRetreat
       ? interpolate(t, [0, 0.22, 0.72, 1], [0, alphaPeak * 0.82, alphaPeak * 0.42, 0], Extrapolation.CLAMP)
-      : interpolate(t, [0, 0.14, 0.62, 1], [0, alphaPeak, alphaPeak * 0.52, 0], Extrapolation.CLAMP);
+      : interpolate(t, [0, 0.14, 0.62, 1], [0, alphaPeak, alphaPeak * 0.5, 0], Extrapolation.CLAMP);
     return {
       opacity,
       transform: [{ scale }],
@@ -343,12 +395,12 @@ function ActiveWaveScene({
   const ring1Style = useAnimatedStyle(() => {
     const t = p.value;
     const scale = isRetreat
-      ? interpolate(t, [0, 1], [ringTargetScale * 0.64, 0.16], Extrapolation.CLAMP)
-      : 0.18 + t * (ringTargetScale - 0.18);
+      ? interpolate(t, [0, 1], [ringTargetScale * 0.64, 0.18], Extrapolation.CLAMP)
+      : 0.2 + t * (ringTargetScale - 0.2);
     const opacity = interpolate(
       t,
-      [0, 0.12, 0.65, 1],
-      [0, isDark ? 0.82 : 0.74, 0.32, 0],
+      [0, 0.12, 0.62, 1],
+      [0, isDark ? 0.8 : 0.72, 0.3, 0],
       Extrapolation.CLAMP,
     );
     return {
@@ -360,12 +412,12 @@ function ActiveWaveScene({
   const ring2Style = useAnimatedStyle(() => {
     const t = phase(p.value, 0.12, 1);
     const scale = isRetreat
-      ? interpolate(t, [0, 1], [ringTargetScale * 0.46, 0.12], Extrapolation.CLAMP)
-      : 0.16 + t * (ringTargetScale * 0.92 - 0.16);
+      ? interpolate(t, [0, 1], [ringTargetScale * 0.46, 0.14], Extrapolation.CLAMP)
+      : 0.18 + t * (ringTargetScale * 0.9 - 0.18);
     const opacity = interpolate(
       t,
-      [0, 0.16, 0.68, 1],
-      [0, isDark ? 0.68 : 0.58, 0.24, 0],
+      [0, 0.16, 0.66, 1],
+      [0, isDark ? 0.66 : 0.56, 0.22, 0],
       Extrapolation.CLAMP,
     );
     return {
@@ -378,7 +430,7 @@ function ActiveWaveScene({
     const t = phase(p.value, 0, 0.42);
     return {
       opacity: Math.sin(t * Math.PI) * (isDark ? 0.85 : 0.75),
-      transform: [{ scale: 0.55 + t * 1.15 }],
+      transform: [{ scale: 0.58 + t * 1.25 }],
     };
   });
 
@@ -404,8 +456,10 @@ function ActiveWaveScene({
       importantForAccessibility="no-hide-descendants"
       style={[StyleSheet.absoluteFill, { overflow: "hidden", zIndex: 35 }]}
     >
-      {/* 第一层：丝滑色温径向光晕扩散（GPU scale 缩放预渲染柔和径向光盘，零掉帧） */}
+      {/* 第一层：硬件纹理缓存的轻量径向光晕（128px 一次光栅化，纯 GPU 缩放合成，杜绝逐帧 saveLayerAlpha） */}
       <Animated.View
+        renderToHardwareTextureAndroid
+        shouldRasterizeIOS
         style={[
           {
             position: "absolute",
@@ -436,8 +490,10 @@ function ActiveWaveScene({
         </Svg>
       </Animated.View>
 
-      {/* 第二层：主水波纹光环 */}
+      {/* 第二层：主水波纹光环（GPU 纹理缓存避免超大圆环逐帧路径细分） */}
       <Animated.View
+        renderToHardwareTextureAndroid
+        shouldRasterizeIOS
         style={[
           {
             position: "absolute",
@@ -446,7 +502,7 @@ function ActiveWaveScene({
             width: RING_BASE,
             height: RING_BASE,
             borderRadius: RING_BASE / 2,
-            borderWidth: 2.2,
+            borderWidth: 1.5,
             borderColor: isDark ? "rgba(224,242,254,0.88)" : `rgba(${primaryRgb},0.78)`,
           },
           ring1Style,
@@ -456,6 +512,8 @@ function ActiveWaveScene({
       {/* 第三层：错峰伴随水波纹光环（流畅档自动省略） */}
       {!isSmooth ? (
         <Animated.View
+          renderToHardwareTextureAndroid
+          shouldRasterizeIOS
           style={[
             {
               position: "absolute",
@@ -464,7 +522,7 @@ function ActiveWaveScene({
               width: RING_BASE,
               height: RING_BASE,
               borderRadius: RING_BASE / 2,
-              borderWidth: 1.6,
+              borderWidth: 1.15,
               borderColor: `rgba(${secondaryRgb},0.82)`,
             },
             ring2Style,
@@ -472,22 +530,28 @@ function ActiveWaveScene({
         />
       ) : null}
 
-      {/* 起点珍珠微光脉冲 + 星闪水珠飞溅（流畅档自动省略） */}
+      {/* 起点珍珠微光脉冲 + 纯原生星闪水珠飞溅（流畅档自动省略） */}
       {!isSmooth ? (
         <>
           <Animated.View
+            renderToHardwareTextureAndroid
+            shouldRasterizeIOS
             style={[
               {
                 position: "absolute",
-                left: ox - 36,
-                top: oy - 36,
-                width: 72,
-                height: 72,
+                left: ox - ORIGIN_FLASH_BASE / 2,
+                top: oy - ORIGIN_FLASH_BASE / 2,
+                width: ORIGIN_FLASH_BASE,
+                height: ORIGIN_FLASH_BASE,
               },
               originFlashStyle,
             ]}
           >
-            <Svg width={72} height={72} viewBox="0 0 72 72">
+            <Svg
+              width={ORIGIN_FLASH_BASE}
+              height={ORIGIN_FLASH_BASE}
+              viewBox={`0 0 ${ORIGIN_FLASH_BASE} ${ORIGIN_FLASH_BASE}`}
+            >
               <Defs>
                 <RadialGradient id={`${uid}-origin`} cx="50%" cy="50%" r="50%">
                   <Stop offset="0" stopColor="#FFFFFF" stopOpacity="0.92" />
@@ -495,7 +559,12 @@ function ActiveWaveScene({
                   <Stop offset="1" stopColor={coreColor} stopOpacity="0" />
                 </RadialGradient>
               </Defs>
-              <Circle cx="36" cy="36" r="36" fill={`url(#${uid}-origin)`} />
+              <Circle
+                cx={ORIGIN_FLASH_BASE / 2}
+                cy={ORIGIN_FLASH_BASE / 2}
+                r={ORIGIN_FLASH_BASE / 2}
+                fill={`url(#${uid}-origin)`}
+              />
             </Svg>
           </Animated.View>
           {WAVE_SPARKLES.map((spec, index) => (
@@ -514,7 +583,7 @@ function ActiveWaveScene({
   );
 }
 
-/** 挂载于根布局的全局径向扩散覆盖层：无动效时返回 null，零常驻内存与过度绘制 */
+/** 挂载于根布局的全局径向扩散覆盖层：无动效时返回 null，连续触发直接复用实例 */
 export function WhaleWaveOverlay() {
   const [wave, setWave] = useState<ActiveWave | null>(null);
 
@@ -531,7 +600,6 @@ export function WhaleWaveOverlay() {
   if (!wave) return null;
   return (
     <ActiveWaveScene
-      key={wave.id}
       wave={wave}
       onFinish={(id) => setWave((cur) => (cur?.id === id ? null : cur))}
     />
@@ -708,7 +776,11 @@ function Portal({ p, mode, front = false }: Timeline & { front?: boolean }) {
 
   if (front) {
     return (
-      <Animated.View style={[styles.portal, styles.portalFront, style]}>
+      <Animated.View
+        renderToHardwareTextureAndroid
+        shouldRasterizeIOS
+        style={[styles.portal, styles.portalFront, style]}
+      >
         <Svg width={236} height={56} viewBox="0 0 236 56">
           <Defs>
             <SvgLinearGradient id={`${uid}-front`} x1="0%" y1="0%" x2="100%" y2="0%">
@@ -731,7 +803,11 @@ function Portal({ p, mode, front = false }: Timeline & { front?: boolean }) {
   }
 
   return (
-    <Animated.View style={[styles.portal, style]}>
+    <Animated.View
+      renderToHardwareTextureAndroid
+      shouldRasterizeIOS
+      style={[styles.portal, style]}
+    >
       <Svg width={236} height={56} viewBox="0 0 236 56">
         <Defs>
           <RadialGradient id={`${uid}-pool`} cx="50%" cy="50%" r="50%">
@@ -811,13 +887,15 @@ function WaterParticle({ p, mode, index }: Timeline & { index: number }) {
 
   if (kind === 1) {
     return (
-      <Animated.View style={[styles.particle, { width: size, height: size }, style]}>
-        <Svg width={size} height={size} viewBox="0 0 12 12">
-          <Path
-            d="M6 0.4 L7.4 4.6 L11.6 6 L7.4 7.4 L6 11.6 L4.6 7.4 L0.4 6 L4.6 4.6 Z"
-            fill={index % 2 === 0 ? "#E0F2FE" : "#7DD3FC"}
-          />
-        </Svg>
+      <Animated.View
+        renderToHardwareTextureAndroid
+        shouldRasterizeIOS
+        style={[styles.particle, { width: size, height: size }, style]}
+      >
+        <NativeSparkleStar
+          size={size}
+          color={index % 2 === 0 ? "#E0F2FE" : "#7DD3FC"}
+        />
       </Animated.View>
     );
   }
@@ -921,7 +999,11 @@ function WhaleTransition({ mode, onDone }: { mode: Mode; onDone: () => void }) {
       <View style={[styles.scene, { transform: [{ scale: sceneScale }] }]}>
         {/* 柔和海面星辉光场，烘托大肥鱼立体层次 */}
         {!reduced ? (
-          <Animated.View style={[styles.aura, aura]}>
+          <Animated.View
+            renderToHardwareTextureAndroid
+            shouldRasterizeIOS
+            style={[styles.aura, aura]}
+          >
             <Svg width={296} height={296} viewBox="0 0 296 296">
               <Defs>
                 <RadialGradient id={`${uid}-scene-aura`} cx="50%" cy="50%" r="50%">

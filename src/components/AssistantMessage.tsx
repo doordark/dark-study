@@ -43,7 +43,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message: m, wha
           {checkDot}
           {whale ? (
             <View className="mr-2.5 self-end">
-              <WhaleAvatar size={44} />
+              <WhaleAvatar size={44} active={false} />
             </View>
           ) : null}
           <Image
@@ -66,7 +66,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message: m, wha
         {!isUser ? checkDot : null}
         {!isUser && whale ? (
           <View className="mr-2.5 self-end">
-            <WhaleAvatar size={44} />
+            <WhaleAvatar size={44} active={false} />
           </View>
         ) : null}
         <View

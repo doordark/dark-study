@@ -194,7 +194,7 @@ function Floating({
 }
 
 /** 鲸鱼模式下聊天区的主题自适应轻盈装饰层：柔色渐变薄雾 + 边角漂浮小贴图 */
-export function WhaleDeco() {
+export function WhaleDeco({ active = true }: { active?: boolean }) {
   const focused = useIsFocused();
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme !== "light";
@@ -228,7 +228,7 @@ export function WhaleDeco() {
         style={StyleSheet.absoluteFill}
       />
       {ITEMS.slice(0, count).map((item) => (
-        <Floating key={item.key} item={item} active={focused} isDark={isDark} />
+        <Floating key={item.key} item={item} active={focused && active} isDark={isDark} />
       ))}
     </View>
   );

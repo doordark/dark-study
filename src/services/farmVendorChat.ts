@@ -1,8 +1,17 @@
 import { farmChat, FarmChatError } from './farmChat';
 import { extractJsonObjectText, speakerAliasesFor, unwrapModelReplyText } from '../utils/farmReplyClean';
 import { searchWeb } from './whaleTools';
-import { farmChatContext, localSocialReaction, SOCIAL_REACTIONS, NPC_CHAT_UNAVAILABLE, type ResidentMemory, type SocialReaction } from '../utils/farmMemory';
-import { personalityContext, personalityReply } from '../utils/farmPersonality';
+import { isNpcRefusingChat, normalizeFarmEmotion } from '../utils/farmEmotion';
+import {
+  farmChatContext,
+  localSocialReaction,
+  resolveEffectiveSocialReaction,
+  SOCIAL_REACTIONS,
+  NPC_CHAT_UNAVAILABLE,
+  type ResidentMemory,
+  type SocialReaction,
+} from '../utils/farmMemory';
+import { npcRefusalLine, personalityContext, personalityReply } from '../utils/farmPersonality';
 import { formatPersonaMemoryBlock } from '../utils/farmPersonaMemory';
 import { EXTRA_NAMES, VENDOR_NAMES, VENDOR_PERSONAS, marketOffers, vendorQuotedPrice, vendorDiscountLimit, type Vendor, type VendorPriceDeal } from '../utils/farmMarket';
 import { CROP_LABELS } from '../utils/farmEconomy';
@@ -80,6 +89,13 @@ export async function vendorChat(options: {
 }): Promise<VendorChatReply> {
   const { vendor, text, memory, apiKey, webSearch, signal } = options;
   const local = localSocialReaction(text);
+  const currentEmotion = normalizeFarmEmotion(memory.emotion, vendor, memory.mood, options.at);
+  if (isNpcRefusingChat(currentEmotion, options.at) && local !== 'apology') {
+    return {
+      reply: npcRefusalLine(vendor),
+      reaction: local,
+    };
+  }
   if (local === 'insult' || (local === 'teasing' && !apiKey)) {
     return {
       reply: personalityReply(vendor, text, local, memory.mood) ?? '哎，咱们有话好好说，别带火气呀。',
@@ -124,8 +140,11 @@ export async function vendorChat(options: {
       delete parsed.discountPercent;
       delete parsed.memoryUpdates;
       delete parsed.episode;
-    } else if (local === 'teasing' && parsed.reaction === 'neutral') {
-      parsed.reaction = 'teasing';
+    } else {
+      parsed.reaction = resolveEffectiveSocialReaction(text, parsed.reaction);
+      if (parsed.reaction === 'insult' || parsed.reaction === 'teasing') {
+        delete parsed.discountPercent;
+      }
     }
     if (hits.length) parsed.reply += '\n参考：' + hits[0].url;
     return parsed;
