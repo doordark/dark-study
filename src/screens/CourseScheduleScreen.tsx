@@ -37,6 +37,7 @@ import { CourseEditorPanel } from "@/components/CourseEditorPanel";
 import { CourseSearchStatsModal } from "@/components/CourseSearchStatsModal";
 import { CourseStudyModal } from "@/components/CourseStudyModal";
 import { CourseTaskSheet } from "@/components/CourseTaskSheet";
+import { FocusMiniBanner } from "@/components/FocusMiniBanner";
 import {
   GlassContainer,
   GlassTargetProvider,
@@ -62,7 +63,10 @@ import {
 import { useDataSession } from "@/store/useDataSession";
 import { useSettings } from "@/store/useSettings";
 import { useActiveSchedule, useStore } from "@/store/useStore";
-import { useStudyProgress } from "@/store/useStudyProgress";
+import {
+  useStudyProgress,
+  type FocusSessionCompletion,
+} from "@/store/useStudyProgress";
 import { useWhaleMemory } from "@/store/useWhaleMemory";
 import { useWhalePet } from "@/store/useWhalePet";
 import type { Course } from "@/types";
@@ -105,7 +109,7 @@ export interface CourseScheduleScreenProps {
   onGrades: () => void;
   /** 打开设置 */
   onSettings: () => void;
-  /** 通往星露坡的小径（隐藏） */
+  /** 通往doordoor农场的小径（隐藏） */
   onFarm?: () => void;
   /** 外部控制的主题层容器样式 */
   style?: StyleProp<ViewStyle>;
@@ -244,6 +248,9 @@ export function CourseScheduleScreen({
 
   const attendanceByCourse = useStudyProgress((s) => s.attendanceByCourse);
   const customAbsenceLimits = useStudyProgress((s) => s.customAbsenceLimits);
+  const activeFocusSession = useStudyProgress((s) => s.activeFocusSession);
+  const [focusDoneNotice, setFocusDoneNotice] =
+    useState<FocusSessionCompletion | null>(null);
   const dataRevision = useDataSession((s) => s.revision);
 
   // 桌面小组件单课深链（dark-study://?courseId=...&week=...）：每个参数值仅自动定位并弹一次
@@ -302,7 +309,7 @@ export function CourseScheduleScreen({
     return () => clearTimeout(timer);
   }, [rawLinkCourseId, rawLinkWeek, schedule.courses, setWeekday, totalWeeks]);
 
-  // 勾掉作业/复习/考试时自动掉落星露坡奖励（过滤备份恢复与重复勾选）
+  // 勾掉作业/复习/考试时自动掉落doordoor农场奖励（过滤备份恢复与重复勾选）
   const prevTasksMapRef = useRef<Map<string, boolean> | null>(null);
   const prevRevisionRef = useRef(dataRevision);
   const rewardedTaskIdsRef = useRef<Set<string>>(new Set());
@@ -1145,6 +1152,17 @@ export function CourseScheduleScreen({
               <Text className="ml-1 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
                 专注 / 考勤
               </Text>
+              {activeFocusSession ? (
+                <View
+                  className={`ml-1 h-2 w-2 rounded-full ${
+                    activeFocusSession.running
+                      ? activeFocusSession.mode === "break"
+                        ? "bg-emerald-500"
+                        : "bg-sky-500"
+                      : "bg-amber-400"
+                  }`}
+                />
+              ) : null}
               {attendanceRiskCount > 0 ? (
                 <View className="ml-1 rounded-full bg-rose-500/85 px-1.5 py-[1px]">
                   <Text className="text-[9.5px] font-bold text-white">
@@ -1211,6 +1229,71 @@ export function CourseScheduleScreen({
             </Pressable>
           </ScrollView>
         </View>
+
+        {/* ---------- 番茄专注 / 短休迷你悬浮条（关闭学习弹窗后仍持续计时） ---------- */}
+        {activeFocusSession && !studyModalOpen ? (
+          <FocusMiniBanner
+            isDark={isDark}
+            onOpenModal={() => {
+              const matched =
+                schedule.courses.find(
+                  (c) => courseIdentityKey(c) === activeFocusSession.courseKey,
+                ) ?? null;
+              openStudyModal(matched, "focus");
+            }}
+            onSessionFinished={(completion) => {
+              setFocusDoneNotice(completion);
+            }}
+          />
+        ) : null}
+
+        {focusDoneNotice && !activeFocusSession && !studyModalOpen ? (
+          <View className="px-4 pt-1.5">
+            <GlassContainer radius={16} intensity={40} borderOpacity={0.25}>
+              <View className="flex-row items-center px-3 py-2">
+                <Ionicons
+                  name={
+                    focusDoneNotice.mode === "break"
+                      ? "cafe-outline"
+                      : "sparkles"
+                  }
+                  size={14}
+                  color="#10B981"
+                />
+                <Pressable
+                  onPress={() => {
+                    const matched =
+                      schedule.courses.find(
+                        (c) =>
+                          courseIdentityKey(c) === focusDoneNotice.courseKey,
+                      ) ?? null;
+                    setFocusDoneNotice(null);
+                    openStudyModal(matched, "focus");
+                  }}
+                  className="mx-2 min-w-0 flex-1"
+                >
+                  <Text
+                    numberOfLines={1}
+                    className="text-[11.5px] font-bold text-emerald-700 dark:text-emerald-300"
+                  >
+                    {focusDoneNotice.mode === "break"
+                      ? `短休结束 · 准备回到「${focusDoneNotice.courseName}」`
+                      : `「${focusDoneNotice.courseName}」专注完成 · +${focusDoneNotice.reward?.coins ?? 0} dark币`}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setFocusDoneNotice(null)}
+                  accessibilityRole="button"
+                  accessibilityLabel="关闭专注完成提示"
+                  hitSlop={8}
+                  className="p-1"
+                >
+                  <Ionicons name="close" size={13} color="#94A3B8" />
+                </Pressable>
+              </View>
+            </GlassContainer>
+          </View>
+        ) : null}
 
         {/* ---------- 考试 / DDL 倒计时条（有未完成任务时显示，可折叠） ---------- */}
         {upcomingTasks.length > 0 ? (() => {
